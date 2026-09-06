@@ -1,6 +1,7 @@
 import { sanitizePhilippinesPhone } from "../utils/formatters";
 import { readFileAsDataUrl } from "../utils/mediaUtils";
 import { normalizeBarangayName } from "../utils/locationUtils";
+import { MAX_WORKER_SKILLS } from "../constants/appConstants";
 
 export function useGawaGoFormHandlers({
   setHouseholdForm,
@@ -301,6 +302,10 @@ export function useGawaGoFormHandlers({
   function toggleSkill(skill) {
     setWorkerForm((prev) => {
       const exists = prev.skills.includes(skill);
+      if (!exists && prev.skills.length >= MAX_WORKER_SKILLS) {
+        alert(`You can select up to ${MAX_WORKER_SKILLS} skills only.`);
+        return prev;
+      }
       return {
         ...prev,
         skills: exists ? prev.skills.filter((s) => s !== skill) : [...prev.skills, skill],
@@ -311,6 +316,10 @@ export function useGawaGoFormHandlers({
   function toggleWorkerProfileSkill(skill) {
     setWorkerProfileForm((prev) => {
       const exists = prev.skills.includes(skill);
+      if (!exists && prev.skills.length >= MAX_WORKER_SKILLS) {
+        alert(`You can select up to ${MAX_WORKER_SKILLS} skills only.`);
+        return prev;
+      }
       return {
         ...prev,
         skills: exists ? prev.skills.filter((s) => s !== skill) : [...prev.skills, skill],

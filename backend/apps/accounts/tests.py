@@ -66,6 +66,27 @@ class RegisterLoginFlowTests(TestCase):
         self.assertIn("service_rate", response.json())
         self.assertFalse(User.objects.filter(username="IncompleteWorker").exists())
 
+    def test_worker_registration_rejects_more_than_four_skills(self):
+        response = self.client.post(
+            reverse("register"),
+            {
+                "username": "TooManySkillsWorker",
+                "email": "too.many.skills@gmail.com",
+                "password": "worker-pass123",
+                "role": UserProfile.ROLE_WORKER,
+                "hourly_rate": "150.00",
+                "location_label": "Isabang, Tayabas City",
+                "latitude": "13.9622745",
+                "longitude": "121.5632841",
+                "skills": ["House Cleaning", "Cooking", "Laundry", "Gardening", "Driving"],
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("skills", response.json())
+        self.assertFalse(User.objects.filter(username="TooManySkillsWorker").exists())
+
     def test_household_registration_does_not_require_worker_rates(self):
         response = self.client.post(
             reverse("register"),

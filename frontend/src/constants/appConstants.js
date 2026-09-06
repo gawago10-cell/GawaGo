@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "../api/apiClient";
 
+export const MAX_WORKER_SKILLS = 4;
 export const SKILLS = [
   "House Cleaning",
   "Cooking",

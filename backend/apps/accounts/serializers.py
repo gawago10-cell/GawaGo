@@ -33,10 +33,19 @@ def validate_tayabas_coordinates(attrs):
     return attrs
 
 
+MAX_WORKER_SKILLS = 4
+
+
 def validate_worker_profile_requirements(attrs, *, role, profile=None):
     attrs = validate_tayabas_coordinates(attrs)
     if role != UserProfile.ROLE_WORKER:
         return attrs
+
+    skills = attrs.get("skills")
+    if skills is not None and len(skills) > MAX_WORKER_SKILLS:
+        raise serializers.ValidationError(
+            {"skills": f"Workers can list at most {MAX_WORKER_SKILLS} skills."}
+        )
 
     hourly_rate = attrs.get("hourly_rate", getattr(profile, "hourly_rate", None))
     daily_rate = attrs.get("daily_rate", getattr(profile, "daily_rate", None))
