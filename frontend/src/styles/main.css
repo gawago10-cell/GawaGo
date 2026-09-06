@@ -41,7 +41,7 @@ body {
 
 .gawago-toast-viewport {
   position: fixed;
-  top: 78px;
+  bottom: 18px;
   right: 18px;
   z-index: 2000;
   display: grid;
@@ -153,7 +153,7 @@ body {
 @keyframes gawagoToastIn {
   from {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -2728,14 +2728,19 @@ body {
 
 .household-dashboard-worker-facts {
   display: grid;
-  gap: 0.65rem;
+  gap: 0;
+  border: 1px solid rgba(173, 197, 255, 0.55);
+  border-radius: 0.5rem;
+  background: #ffffff;
+  overflow: hidden;
 }
 
 .household-dashboard-worker-facts div {
-  padding: 0.75rem;
-  border: 1px solid rgba(173, 197, 255, 0.72);
-  border-radius: 0.5rem;
-  background: #ffffff;
+  padding: 0.6rem 0.85rem;
+}
+
+.household-dashboard-worker-facts div:not(:last-child) {
+  border-bottom: 1px solid rgba(173, 197, 255, 0.35);
 }
 
 .household-dashboard-worker-facts strong,

@@ -5,6 +5,7 @@ import ComplaintModal from "./ComplaintModal";
 import HouseholdJobMapPanel from "./HouseholdJobMapPanel";
 import JobImageUpload from "./JobImageUpload";
 import LocationDistanceMap from "./LocationDistanceMap";
+import SkillRatingForm from "./SkillRatingForm";
 import WorkerLocationPicker from "./WorkerLocationPicker";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
@@ -2196,16 +2197,13 @@ export default function AppViews({
                       </div>
                       <div className="px-4 pb-4">
                         <p className="mb-1 small">
-                          <strong>Barangay:</strong>
-                          {workerProfileForm.barangay || "Not set"}
+                          <strong>Barangay:</strong> {workerProfileForm.barangay || "Not set"}
                         </p>
                         <p className="mb-1 small">
-                          <strong>Phone:</strong>
-                          {workerProfileForm.phone || "Not set"}
+                          <strong>Phone:</strong> {workerProfileForm.phone || "Not set"}
                         </p>
                         <p className="mb-2 small">
-                          <strong>Email:</strong>
-                          {workerProfileForm.email || "Not set"}
+                          <strong>Email:</strong> {workerProfileForm.email || "Not set"}
                         </p>
                         <hr className="my-2" />
                         <p className="mb-1 small">
@@ -5910,10 +5908,20 @@ export default function AppViews({
                               <strong>Rating</strong>
                               <span>{householdDashboardDetailWorker?.rating || "No ratings yet"}</span>
                             </div>
-                            <div>
-                              <strong>Skills</strong>
-                              <span>{(householdDashboardDetailWorker?.skills || [householdDashboardDetailJob.serviceType]).join(", ")}</span>
-                            </div>
+                            {(householdDashboardDetailWorker?.skills?.length
+                              ? householdDashboardDetailWorker.skills
+                              : [householdDashboardDetailJob.serviceType].filter(Boolean)
+                            ).length > 0 && (
+                              <div>
+                                <strong>Skills</strong>
+                                <span>
+                                  {(householdDashboardDetailWorker?.skills?.length
+                                    ? householdDashboardDetailWorker.skills
+                                    : [householdDashboardDetailJob.serviceType].filter(Boolean)
+                                  ).join(", ")}
+                                </span>
+                              </div>
+                            )}
                             <div>
                               <strong>Location</strong>
                               <span>
@@ -5977,36 +5985,39 @@ export default function AppViews({
                                     ? "Review the completed work, then confirm completion."
                                     : "No worker is assigned yet, so completion controls are not available."}
                             </div>
-                            <ol className="household-dashboard-completion-steps">
-                              <li className="done">
-                                <span>1</span>
-                                <p>
-                                  <strong>Worker hired</strong>
-                                  Job started after household accepted the worker.
-                                </p>
-                              </li>
-                              <li className={householdDashboardDetailWorker ? "done" : ""}>
-                                <span>2</span>
-                                <p>
-                                  <strong>Worker requests completion</strong>
-                                  Worker marks service as done.
-                                </p>
-                              </li>
-                              <li className={householdDashboardDetailJob.status === "Completed" ? "done" : "active"}>
-                                <span>3</span>
-                                <p>
-                                  <strong>Confirm completed</strong>
-                                  Household confirms completion.
-                                </p>
-                              </li>
-                              <li className={householdDashboardDetailJob.status === "Completed" ? "active" : ""}>
-                                <span>4</span>
-                                <p>
-                                  <strong>Rate worker</strong>
-                                  Household submits rating and feedback.
-                                </p>
-                              </li>
-                            </ol>
+                            {householdDashboardDetailJob.status !== "Completed" &&
+                              householdDashboardDetailJob.status !== "Cancelled" && (
+                                <ol className="household-dashboard-completion-steps">
+                                  <li className="done">
+                                    <span>1</span>
+                                    <p>
+                                      <strong>Worker hired</strong>
+                                      Job started after household accepted the worker.
+                                    </p>
+                                  </li>
+                                  <li className={householdDashboardDetailWorker ? "done" : ""}>
+                                    <span>2</span>
+                                    <p>
+                                      <strong>Worker requests completion</strong>
+                                      Worker marks service as done.
+                                    </p>
+                                  </li>
+                                  <li className="active">
+                                    <span>3</span>
+                                    <p>
+                                      <strong>Confirm completed</strong>
+                                      Household confirms completion.
+                                    </p>
+                                  </li>
+                                  <li>
+                                    <span>4</span>
+                                    <p>
+                                      <strong>Rate worker</strong>
+                                      Household submits rating and feedback.
+                                    </p>
+                                  </li>
+                                </ol>
+                              )}
                             {householdDashboardDetailJob.status !== "Completed" && (
                               <div className="household-dashboard-completion-actions">
                                 <button
