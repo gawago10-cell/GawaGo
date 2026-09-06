@@ -109,14 +109,17 @@ This table stores Django admin activity logs, including the admin user, affected
 | 7 | hourly_rate | DECIMAL(10,2) | 0 | NULL | 0 |
 | 8 | daily_rate | DECIMAL(10,2) | 0 | NULL | 0 |
 | 9 | verification_status | VARCHAR(20) | 1 | pending | 0 |
-| 10 | location_label | VARCHAR(255) | 1 | '' | 0 |
-| 11 | latitude | DECIMAL(10,7) | 0 | NULL | 0 |
-| 12 | longitude | DECIMAL(10,7) | 0 | NULL | 0 |
-| 13 | profile_photo | VARCHAR(100) | 0 | NULL | 0 |
-| 14 | average_rating | DECIMAL(3,2) | 0 | NULL | 0 |
-| 15 | rating_count | INTEGER UNSIGNED | 1 | 0 | 0 |
+| 10 | primary_id_type | VARCHAR(50) | 1 | national_id | 0 |
+| 11 | location_label | VARCHAR(255) | 1 | '' | 0 |
+| 12 | latitude | DECIMAL(10,7) | 0 | NULL | 0 |
+| 13 | longitude | DECIMAL(10,7) | 0 | NULL | 0 |
+| 14 | profile_photo | VARCHAR(100) | 0 | NULL | 0 |
+| 15 | average_rating | DECIMAL(3,2) | 0 | NULL | 0 |
+| 16 | rating_count | INTEGER UNSIGNED | 1 | 0 | 0 |
+| 17 | reputation_tier | VARCHAR(20) | 1 | new | 0 |
+| 18 | rating_trend | VARCHAR(20) | 1 | neutral | 0 |
 
-This table stores profile information for household and worker users. It includes skills, service rates, verification status, location coordinates, profile image, and rating summary.
+This table stores profile information for household and worker users. It includes skills (capped at 4 per worker), service rates, verification status, the worker's chosen government ID type, location coordinates, profile image, and rating/reputation summary. `reputation_tier` (`new`/`established`/`trusted`/`elite`) and `rating_trend` (`improving`/`declining`/`neutral`) are recalculated after every new review.
 
 ## Table 10: `accounts_workeravailability`
 
@@ -131,20 +134,7 @@ This table stores profile information for household and worker users. It include
 
 This table stores date-specific availability windows for workers.
 
-## Table 11: `accounts_workerweeklyavailability`
-
-| cid | name | type | notnull | dflt_value | pk |
-|---:|---|---|---:|---|---:|
-| 0 | id | BIGINT | 1 | NULL | 1 |
-| 1 | worker_id | INTEGER | 1 | NULL | 0 |
-| 2 | weekday | SMALLINT UNSIGNED | 1 | NULL | 0 |
-| 3 | start_time | TIME | 1 | NULL | 0 |
-| 4 | end_time | TIME | 1 | NULL | 0 |
-| 5 | is_available | BOOLEAN | 1 | TRUE | 0 |
-
-This table stores recurring weekly availability windows for workers. The weekday value ranges from 0 to 6, representing Monday through Sunday.
-
-## Table 12: `accounts_passwordresetrequest`
+## Table 11: `accounts_passwordresetrequest`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -159,7 +149,7 @@ This table stores recurring weekly availability windows for workers. The weekday
 
 This table stores secure password reset requests.
 
-## Table 13: `accounts_signupverificationrequest`
+## Table 12: `accounts_signupverificationrequest`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -173,7 +163,106 @@ This table stores secure password reset requests.
 
 This table stores email verification requests created during registration.
 
-## Table 14: `jobs_jobposting`
+## Table 13: `accounts_workerportfolio`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | worker_id | INTEGER | 1 | NULL | 0 |
+| 2 | bio | TEXT | 1 | '' | 0 |
+| 3 | years_experience | INTEGER UNSIGNED | 1 | 0 | 0 |
+| 4 | created_at | DATETIME | 1 | NULL | 0 |
+| 5 | updated_at | DATETIME | 1 | NULL | 0 |
+
+This table stores the one-to-one worker portfolio record shown on a worker's public profile (bio and years of experience). Skills, certifications, and work samples are stored in the related tables below.
+
+## Table 14: `accounts_workerskill`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | worker_id | INTEGER | 1 | NULL | 0 |
+| 2 | skill_name | VARCHAR(120) | 1 | NULL | 0 |
+| 3 | proficiency | VARCHAR(20) | 1 | beginner | 0 |
+| 4 | average_rating | DECIMAL(3,2) | 0 | NULL | 0 |
+| 5 | rating_count | INTEGER UNSIGNED | 1 | 0 | 0 |
+| 6 | created_at | DATETIME | 1 | NULL | 0 |
+| 7 | updated_at | DATETIME | 1 | NULL | 0 |
+
+This table stores individually-listed portfolio skills (beginner/intermediate/expert) with a per-skill rating aggregated from household feedback. This is distinct from the short skill list on `accounts_userprofile` used for job matching.
+
+## Table 15: `accounts_workercertification`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | worker_id | INTEGER | 1 | NULL | 0 |
+| 2 | certificate_type | VARCHAR(50) | 1 | certification | 0 |
+| 3 | certificate_name | VARCHAR(255) | 1 | NULL | 0 |
+| 4 | issuer | VARCHAR(255) | 1 | '' | 0 |
+| 5 | issue_date | DATE | 0 | NULL | 0 |
+| 6 | expiry_date | DATE | 0 | NULL | 0 |
+| 7 | certificate_file | VARCHAR(100) | 0 | NULL | 0 |
+| 8 | is_verified | BOOLEAN | 1 | FALSE | 0 |
+| 9 | verification_status | VARCHAR(20) | 1 | pending | 0 |
+| 10 | verified_by_id | INTEGER | 0 | NULL | 0 |
+| 11 | verification_notes | TEXT | 1 | '' | 0 |
+| 12 | verified_at | DATETIME | 0 | NULL | 0 |
+| 13 | created_at | DATETIME | 1 | NULL | 0 |
+| 14 | updated_at | DATETIME | 1 | NULL | 0 |
+
+This table stores uploaded worker credentials (TESDA certificate, professional license, credential, certification, or other) and the admin approval workflow (`verification_status`, reviewing admin, notes, timestamp) used to grant the verified badge.
+
+## Table 16: `accounts_workerportfolioitem`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | worker_id | INTEGER | 1 | NULL | 0 |
+| 2 | title | VARCHAR(255) | 1 | '' | 0 |
+| 3 | description | TEXT | 1 | '' | 0 |
+| 4 | image | VARCHAR(100) | 1 | NULL | 0 |
+| 5 | before_image | VARCHAR(100) | 0 | NULL | 0 |
+| 6 | after_image | VARCHAR(100) | 0 | NULL | 0 |
+| 7 | created_at | DATETIME | 1 | NULL | 0 |
+
+This table stores work-sample images on a worker's portfolio, including optional before/after image pairs.
+
+## Table 17: `accounts_skillrating`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | job_id | BIGINT | 1 | NULL | 0 |
+| 2 | household_id | INTEGER | 1 | NULL | 0 |
+| 3 | worker_id | INTEGER | 1 | NULL | 0 |
+| 4 | skill_id | BIGINT | 1 | NULL | 0 |
+| 5 | rating | DECIMAL(2,1) | 1 | NULL | 0 |
+| 6 | feedback | TEXT | 1 | '' | 0 |
+| 7 | created_at | DATETIME | 1 | NULL | 0 |
+
+This table stores a household's per-skill rating of a worker for one completed job, feeding the average rating shown on each `accounts_workerskill` entry.
+
+## Table 18: `accounts_verificationdocument`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | user_id | INTEGER | 1 | NULL | 0 |
+| 2 | id_type | VARCHAR(50) | 1 | national_id | 0 |
+| 3 | id_number | VARCHAR(255) | 1 | '' | 0 |
+| 4 | document_file | VARCHAR(100) | 1 | NULL | 0 |
+| 5 | is_primary | BOOLEAN | 1 | TRUE | 0 |
+| 6 | verification_status | VARCHAR(20) | 1 | pending | 0 |
+| 7 | verified_by_id | INTEGER | 0 | NULL | 0 |
+| 8 | verification_notes | TEXT | 1 | '' | 0 |
+| 9 | verified_at | DATETIME | 0 | NULL | 0 |
+| 10 | created_at | DATETIME | 1 | NULL | 0 |
+| 11 | updated_at | DATETIME | 1 | NULL | 0 |
+
+This table stores multiple-ID-type identity documents (national ID, passport, driver's license, voter ID, TIN, UMID, postal ID, or other) submitted by any user, with the same admin approval workflow as certifications. It supersedes the older single-document `common_verificationrequest` table below, which is retained for existing records.
+
+## Table 19: `jobs_jobposting`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -193,12 +282,17 @@ This table stores email verification requests created during registration.
 | 13 | service_rate | DECIMAL(10,2) | 1 | NULL | 0 |
 | 14 | worker_slots | INTEGER UNSIGNED | 1 | 1 | 0 |
 | 15 | status | VARCHAR(20) | 1 | open | 0 |
-| 16 | created_at | DATETIME | 1 | NULL | 0 |
-| 17 | completed_at | DATETIME | 0 | NULL | 0 |
+| 16 | job_start_date | DATE | 0 | NULL | 0 |
+| 17 | job_end_date | DATE | 0 | NULL | 0 |
+| 18 | estimated_working_days | INTEGER | 0 | NULL | 0 |
+| 19 | max_distance_km | FLOAT | 1 | 1.0 | 0 |
+| 20 | geographic_boundary | VARCHAR(20) | 1 | 1km | 0 |
+| 21 | created_at | DATETIME | 1 | NULL | 0 |
+| 22 | completed_at | DATETIME | 0 | NULL | 0 |
 
-This table stores job postings created by household users.
+This table stores job postings created by household users, including the job schedule window (`job_start_date`/`job_end_date`/`estimated_working_days`) and the geographic search radius applied as a hard distance filter during worker matching (`max_distance_km`, with a `geographic_boundary` label of `1km`/`2km`/`5km`/`10km`/`unlimited`).
 
-## Table 15: `jobs_jobimage`
+## Table 20: `jobs_jobimage`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -210,7 +304,7 @@ This table stores job postings created by household users.
 
 This table stores images attached to job postings.
 
-## Table 16: `jobs_jobapplication`
+## Table 21: `jobs_jobapplication`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -222,9 +316,9 @@ This table stores images attached to job postings.
 | 5 | updated_at | DATETIME | 1 | NULL | 0 |
 | 6 | note | TEXT | 1 | '' | 0 |
 
-This table stores worker applications to job postings.
+This table stores worker applications to job postings. `status` uses the terms `pending`, `hired`, `rejected`, and `completed` (a separate job-completion marker, distinct from the household's hire/reject decision) to avoid the earlier ambiguity between an application still awaiting a decision and a job that has finished.
 
-## Table 17: `reviews_review`
+## Table 22: `reviews_review`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -236,12 +330,16 @@ This table stores worker applications to job postings.
 | 5 | job_id | BIGINT | 0 | NULL | 0 |
 | 6 | job_title | VARCHAR(255) | 1 | '' | 0 |
 | 7 | rating | DECIMAL(2,1) | 0 | NULL | 0 |
-| 8 | feedback | TEXT | 1 | '' | 0 |
-| 9 | created_at | DATETIME | 1 | NULL | 0 |
+| 8 | quality_of_work | INTEGER | 0 | NULL | 0 |
+| 9 | punctuality | INTEGER | 0 | NULL | 0 |
+| 10 | communication | INTEGER | 0 | NULL | 0 |
+| 11 | professionalism | INTEGER | 0 | NULL | 0 |
+| 12 | feedback | TEXT | 1 | '' | 0 |
+| 13 | created_at | DATETIME | 1 | NULL | 0 |
 
-This table stores post-completion reviews and feedback.
+This table stores post-completion reviews and feedback. `rating` is the single overall score; the four 1-5 metric columns (`quality_of_work`, `punctuality`, `communication`, `professionalism`) are optional e-commerce-style ratings whose average becomes the review's overall rating when they are provided. A review may only be submitted after the related job has reached `completed` status and the reviewer's application/hire relationship for that job has also completed.
 
-## Table 18: `notifications_notification`
+## Table 23: `notifications_notification`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -259,9 +357,9 @@ This table stores post-completion reviews and feedback.
 | 11 | is_read | BOOLEAN | 1 | FALSE | 0 |
 | 12 | created_at | DATETIME | 1 | NULL | 0 |
 
-This table stores in-system notifications, including recipient, optional actor, action context, read status, and creation date.
+This table stores in-system notifications, including recipient, optional actor, action context, read status, and creation date. `notification_type` covers nine types: application, acceptance, rejection, hiring, completion, verification, review reminder, account activity, and analytics/admin alerts; each is also mirrored by an automated email.
 
-## Table 19: `common_verificationrequest`
+## Table 24: `common_verificationrequest`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -277,9 +375,27 @@ This table stores in-system notifications, including recipient, optional actor, 
 | 9 | reviewed_at | DATETIME | 0 | NULL | 0 |
 | 10 | review_note | TEXT | 1 | '' | 0 |
 
-This table stores worker verification submissions and administrator review information.
+This table stores the original two-document worker verification submissions and administrator review information, kept for backward compatibility alongside the newer multi-document `accounts_verificationdocument` table.
 
-## Table 20: `matching_routedistancecache`
+## Table 25: `complaints_complaint`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | complainant_id | INTEGER | 1 | NULL | 0 |
+| 2 | respondent_id | INTEGER | 0 | NULL | 0 |
+| 3 | job_id | BIGINT | 0 | NULL | 0 |
+| 4 | complaint_type | VARCHAR(50) | 1 | NULL | 0 |
+| 5 | description | TEXT | 1 | NULL | 0 |
+| 6 | status | VARCHAR(20) | 1 | submitted | 0 |
+| 7 | resolution | TEXT | 0 | NULL | 0 |
+| 8 | admin_notes | TEXT | 0 | NULL | 0 |
+| 9 | created_at | DATETIME | 1 | NULL | 0 |
+| 10 | updated_at | DATETIME | 1 | NULL | 0 |
+
+This table stores dispute/issue reports filed by a household or worker (`complaint_type`: payment issue, quality of work, no show, safety concern, inappropriate behavior, or other) and the admin resolution workflow (`status`: submitted, under review, resolved, closed).
+
+## Table 26: `matching_routedistancecache`
 
 | cid | name | type | notnull | dflt_value | pk |
 |---:|---|---|---:|---|---:|
@@ -295,7 +411,7 @@ This table stores worker verification submissions and administrator review infor
 | 9 | created_at | DATETIME | 1 | NULL | 0 |
 | 10 | updated_at | DATETIME | 1 | NULL | 0 |
 
-This table stores cached route distance results between job locations and worker profile locations.
+This table stores cached road-route distance results (fetched from the OSRM routing service) between job locations and worker profile locations, keyed by job and worker coordinates so repeated matching requests avoid re-fetching the route.
 
 ## Relationship Summary
 
@@ -312,9 +428,15 @@ This table stores cached route distance results between job locations and worker
 | `auth_user` to `django_admin_log` | 1:N | One admin user can create many admin log records. |
 | `auth_user` to `accounts_userprofile` | 1:1 | Each user account has one household or worker profile. |
 | `auth_user` to `accounts_workeravailability` | 1:N | One worker can create many date-specific availability windows. |
-| `auth_user` to `accounts_workerweeklyavailability` | 1:N | One worker can create many recurring weekly availability windows. |
 | `auth_user` to `accounts_passwordresetrequest` | 1:N | One user can have many password reset requests. |
 | `auth_user` to `accounts_signupverificationrequest` | 1:1 | Each user can have one signup verification request record. |
+| `auth_user` to `accounts_workerportfolio` | 1:1 | Each worker has one portfolio record. |
+| `auth_user` to `accounts_workerskill` | 1:N | One worker can list many portfolio skills. |
+| `auth_user` to `accounts_workercertification` | 1:N | One worker can upload many certifications. |
+| `auth_user` to `accounts_workerportfolioitem` | 1:N | One worker can add many work-sample items. |
+| `jobs_jobposting` to `accounts_skillrating` | 1:N | One completed job can produce many per-skill ratings. |
+| `accounts_workerskill` to `accounts_skillrating` | 1:N | One portfolio skill can receive many household ratings. |
+| `auth_user` to `accounts_verificationdocument` | 1:N | One user can submit many identity documents. |
 | `auth_user` to `jobs_jobposting` | 1:N | One household can create many job postings. |
 | `jobs_jobposting` to `jobs_jobimage` | 1:N | One job posting can have many uploaded images. |
 | `jobs_jobposting` to `jobs_jobapplication` | 1:N | One job posting can receive many worker applications. |
@@ -322,8 +444,8 @@ This table stores cached route distance results between job locations and worker
 | `auth_user` to `reviews_review` | 1:N | One user can write and receive many reviews through author and target relationships. |
 | `jobs_jobposting` to `reviews_review` | 1:N | One completed job can have reviews from both parties. |
 | `auth_user` to `notifications_notification` | 1:N | One user can receive many notifications and can also act as the notification actor. |
-| `auth_user` to `common_verificationrequest` | 1:N | One worker can submit many verification requests. |
+| `auth_user` to `common_verificationrequest` | 1:N | One worker can submit many legacy verification requests. |
+| `auth_user` to `complaints_complaint` | 1:N | One user can file many complaints and be named as respondent in many others. |
+| `jobs_jobposting` to `complaints_complaint` | 1:N | One job can have many complaints filed against it. |
 | `jobs_jobposting` to `matching_routedistancecache` | 1:N | One job can have cached distance records for many worker profiles. |
 | `accounts_userprofile` to `matching_routedistancecache` | 1:N | One worker profile can appear in many cached job distance records. |
-
-The current full database schema contains 20 tables: 8 Django framework tables and 12 GawaGo application tables. Notification job and application references are stored as logical integer references, while the other listed relationships are enforced through Django foreign key or one-to-one fields.
