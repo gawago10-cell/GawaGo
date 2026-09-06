@@ -1,0 +1,9 @@
+{
+  "name": "gawago-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Mobile app workspace for GawaGo",
+  "scripts": {
+    "start": "echo Setup mobile framework (e.g., React Native or Expo) here"
+  }
+}
