@@ -53,6 +53,7 @@ export const STORAGE_KEYS = {
   workers: "gawago-registered-workers",
   households: "gawago-registered-households",
   jobs: "gawago-posted-jobs",
+  chatMessages: "gawago-chat-messages",
   verificationRequests: "gawago-verification-requests",
   notificationReads: "gawago-notification-reads",
 };
@@ -95,8 +96,24 @@ export const EMPTY_HOUSEHOLD_FORM = {
   password: "",
   confirmPassword: "",
 };
-export const EMPTY_HOUSEHOLD_REVIEW_FORM = { rating: "5", feedback: "", jobId: "" };
-export const EMPTY_WORKER_FEEDBACK_FORM = { rating: "5", feedback: "", jobId: "" };
+export const EMPTY_HOUSEHOLD_REVIEW_FORM = {
+  rating: "5",
+  feedback: "",
+  jobId: "",
+  quality_of_work: "",
+  punctuality: "",
+  communication: "",
+  professionalism: "",
+};
+export const EMPTY_WORKER_FEEDBACK_FORM = {
+  rating: "5",
+  feedback: "",
+  jobId: "",
+  quality_of_work: "",
+  punctuality: "",
+  communication: "",
+  professionalism: "",
+};
 export const GMAIL_ADDRESS_PATTERN = /^[A-Z0-9._%+-]+@gmail\.com$/i;
 export const OPENROUTESERVICE_API_KEY = import.meta.env.VITE_OPENROUTESERVICE_API_KEY || "";
 export const OPENROUTESERVICE_SEARCH_URL =
@@ -115,10 +132,10 @@ export const PHILIPPINES_MAP_BOUNDS = {
 };
 export const TAYABAS_CITY_CENTER = { latitude: 13.956, longitude: 121.592 };
 export const TAYABAS_MAP_BOUNDS = {
-  south: 13.905,
-  west: 121.535,
-  north: 14.005,
-  east: 121.635,
+  south: 13.9,
+  west: 121.5,
+  north: 14.11,
+  east: 121.73,
 };
 export const ANALYTICS_CHART_COLORS = ["#667eea", "#28a745", "#ffc107", "#dc3545", "#17a2b8", "#4f2ea4"];
 export const ANALYTICS_SERVICE_CATEGORIES = SKILLS.filter((skill) => skill !== "Other");

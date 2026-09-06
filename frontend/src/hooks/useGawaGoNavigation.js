@@ -38,6 +38,10 @@ export function useGawaGoNavigation({
   }
 
   function goBack() {
+    if (currentUser?.role === "superadmin") {
+      setView("superadmin-dashboard");
+      return;
+    }
     if (currentUser?.role === "admin") {
       setView("admin-dashboard");
       return;
@@ -112,6 +116,26 @@ export function useGawaGoNavigation({
 
   function openWorkerProfile() {
     if (currentWorker) {
+      const savedWeeklyAvailability = currentWorker.weeklyAvailability || [];
+      const weeklyAvailability = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+      ].map((weekdayLabel, weekday) => {
+        const savedWindow = savedWeeklyAvailability.find((window) => Number(window.weekday) === weekday);
+        return {
+          id: savedWindow?.id || `weekly-${weekday}`,
+          weekday,
+          weekdayLabel,
+          startTime: savedWindow?.startTime || "09:00",
+          endTime: savedWindow?.endTime || "17:00",
+          isAvailable: Boolean(savedWindow?.isAvailable),
+        };
+      });
       setWorkerProfileForm({
         firstName: currentWorker.firstName || "",
         lastName: currentWorker.lastName || "",
@@ -133,6 +157,7 @@ export function useGawaGoNavigation({
         skills: currentWorker.skills || [],
         availability: true,
         availabilityWindows: currentWorker.availabilityWindows || [],
+        weeklyAvailability,
         profilePhotoFile: null,
         profilePhotoPreview:
           currentWorker.profilePhotoPreview || currentWorker.verificationSubmission?.primaryIdPreview || "",
@@ -165,6 +190,11 @@ export function useGawaGoNavigation({
   }
 
   function openHouseholdPostJob() {
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can post a job.");
+      setView("household-get-verified");
+      return;
+    }
     const savedLocation = getSavedHouseholdLocation(currentHousehold, currentUser);
     setHouseholdJobForm((prev) => ({
       ...prev,
@@ -192,6 +222,10 @@ export function useGawaGoNavigation({
       });
     }
     setView("household-profile");
+  }
+
+  function openHouseholdGetVerified() {
+    setView("household-get-verified");
   }
 
   function openHouseholdFeedbackAll() {
@@ -372,6 +406,7 @@ export function useGawaGoNavigation({
     openForgotPassword,
     openHouseholdDashboard,
     openHouseholdFeedbackAll,
+    openHouseholdGetVerified,
     openHouseholdJobDetail,
     openHouseholdMyJobs,
     openHouseholdNotificationWorker,

@@ -68,7 +68,12 @@ function createPinIcon(L, label, color, markerType) {
 function buildCoordinatePoint(latitude, longitude) {
   const resolvedLatitude = Number(latitude);
   const resolvedLongitude = Number(longitude);
-  if (!Number.isFinite(resolvedLatitude) || !Number.isFinite(resolvedLongitude)) {
+  const insideTayabas =
+    resolvedLatitude >= 13.9 &&
+    resolvedLatitude <= 14.11 &&
+    resolvedLongitude >= 121.5 &&
+    resolvedLongitude <= 121.73;
+  if (!Number.isFinite(resolvedLatitude) || !Number.isFinite(resolvedLongitude) || !insideTayabas) {
     return null;
   }
   return { latitude: resolvedLatitude, longitude: resolvedLongitude };
@@ -77,7 +82,27 @@ function buildCoordinatePoint(latitude, longitude) {
 function normalizeRoutePoints(routePoints) {
   return (Array.isArray(routePoints) ? routePoints : [])
     .map((point) => [Number(point?.[0]), Number(point?.[1])])
-    .filter(([latitude, longitude]) => Number.isFinite(latitude) && Number.isFinite(longitude));
+    .filter(
+      ([latitude, longitude]) =>
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        latitude >= 13.9 &&
+        latitude <= 14.11 &&
+        longitude >= 121.5 &&
+        longitude <= 121.73,
+    );
+}
+
+function createPopupContent(title, location, point) {
+  const wrapper = document.createElement("div");
+  const heading = document.createElement("strong");
+  const address = document.createElement("div");
+  const coordinates = document.createElement("small");
+  heading.textContent = title;
+  address.textContent = location || "Registered coordinates";
+  coordinates.textContent = `${point[0].toFixed(6)}, ${point[1].toFixed(6)}`;
+  wrapper.append(heading, address, coordinates);
+  return wrapper;
 }
 
 function getMarkerConfig(markerType) {
@@ -108,7 +133,8 @@ export default function LocationDistanceMap({
   });
   const [status, setStatus] = useState("loading");
   const [mapStatus, setMapStatus] = useState("idle");
-  const normalizedRoutePoints = useMemo(() => normalizeRoutePoints(routePoints), [routePoints]);
+  const routePointsKey = useMemo(() => JSON.stringify(Array.isArray(routePoints) ? routePoints : []), [routePoints]);
+  const normalizedRoutePoints = useMemo(() => normalizeRoutePoints(routePoints), [routePointsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,7 +151,7 @@ export default function LocationDistanceMap({
     return () => {
       cancelled = true;
     };
-  }, [userLatitude, userLongitude, targetLatitude, targetLongitude, userLocation, targetLocation]);
+  }, [userLatitude, userLongitude, targetLatitude, targetLongitude]);
 
   useEffect(() => {
     onRouteDistanceChange?.(distanceKm ?? null);
@@ -137,7 +163,10 @@ export default function LocationDistanceMap({
     }
     return null;
   }, [distanceKm]);
-  const distanceLabel = (formatDistanceFn || localFormatDistance)(resolvedDistanceKm);
+  const hasRoadRoute = normalizedRoutePoints.length > 1 && distanceKm !== null && distanceKm !== undefined && distanceKm !== "";
+  const distanceLabel = hasRoadRoute
+    ? (formatDistanceFn || localFormatDistance)(resolvedDistanceKm)
+    : "Driving route unavailable";
 
   useEffect(() => {
     let cancelled = false;
@@ -183,18 +212,35 @@ export default function LocationDistanceMap({
         const targetIcon = createPinIcon(L, targetMarker.label, targetMarker.color, targetMarker.type);
         L.marker(userPoint, { icon: userIcon })
           .addTo(map)
-          .bindPopup(userLocation || "User location");
+          .bindPopup(
+            createPopupContent(
+              userMarker.type === "household" ? "Job site" : "Worker location",
+              userLocation,
+              userPoint,
+            ),
+          );
         L.marker(targetPoint, { icon: targetIcon })
           .addTo(map)
-          .bindPopup(targetLocation || "Target location");
+          .bindPopup(
+            createPopupContent(
+              targetMarker.type === "worker" ? "Worker registered location" : "Household location",
+              targetLocation,
+              targetPoint,
+            ),
+          );
         if (normalizedRoutePoints.length > 1) {
           L.polyline(normalizedRoutePoints, {
             color: "#0d6efd",
-            weight: 4,
-            opacity: 0.85,
+            weight: 5,
+            opacity: 0.95,
           }).addTo(map);
         }
         map.fitBounds(L.latLngBounds(boundsPoints).pad(0.28));
+        window.setTimeout(() => {
+          if (!cancelled && mapInstanceRef.current === map) {
+            map.invalidateSize({ pan: false });
+          }
+        }, 0);
         mapRendered = true;
         window.clearTimeout(fallbackTimer);
         setMapStatus("ready");
@@ -213,7 +259,17 @@ export default function LocationDistanceMap({
         mapInstanceRef.current = null;
       }
     };
-  }, [resolvedPoints, normalizedRoutePoints, userLocation, targetLocation, userMarkerType, targetMarkerType]);
+  }, [
+    resolvedPoints.user?.latitude,
+    resolvedPoints.user?.longitude,
+    resolvedPoints.target?.latitude,
+    resolvedPoints.target?.longitude,
+    routePointsKey,
+    userLocation,
+    targetLocation,
+    userMarkerType,
+    targetMarkerType,
+  ]);
 
   return (
     <div className="location-distance-map">
@@ -237,7 +293,7 @@ export default function LocationDistanceMap({
               <strong>{distanceLabel}</strong>
               <small>
                 {mapStatus === "fallback"
-                  ? "Map tiles unavailable. Road distance may be unavailable."
+                  ? "Map tiles unavailable. Driving route may be unavailable."
                   : "Preparing map view..."}
               </small>
             </div>
@@ -247,7 +303,8 @@ export default function LocationDistanceMap({
       <div className="location-distance-summary">
         <span>{distanceLabel}</span>
         <small>
-          Road route: {userLocation || "User location"} to {targetLocation || "target location"}
+          {hasRoadRoute ? "Driving route" : "No road route available"}:{" "}
+          {userLocation || "Job site"} to {targetLocation || "worker location"}
         </small>
       </div>
     </div>

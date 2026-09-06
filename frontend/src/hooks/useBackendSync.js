@@ -64,7 +64,7 @@ export function useBackendSync({
           if (normalizedRequests.some((item) => item.id === prevSelectedId)) {
             return prevSelectedId;
           }
-          if (currentUser.role === "worker") {
+          if (currentUser.role === "worker" || currentUser.role === "household") {
             return (
               normalizedRequests.find((item) => item.workerUsername === currentUser.username)?.id ||
               normalizedRequests[0]?.id ||
@@ -73,7 +73,7 @@ export function useBackendSync({
           }
           return normalizedRequests[0]?.id || null;
         });
-        if (currentUser.role === "worker") {
+        if (currentUser.role === "worker" || currentUser.role === "household") {
           const matchingRequest = normalizedRequests.find((item) => item.workerUsername === currentUser.username);
           if (!getAuthToken() && matchingRequest) {
             const nextVerificationStatus =
@@ -95,7 +95,7 @@ export function useBackendSync({
                 : prev,
             );
           }
-          if (matchingRequest) {
+          if (matchingRequest && currentUser.role === "worker") {
             const nextVerificationLabel =
               matchingRequest.status === "Approved"
                 ? "Verified"
@@ -117,7 +117,7 @@ export function useBackendSync({
                   : worker,
               ),
             );
-          } else {
+          } else if (currentUser.role === "worker") {
             setRegisteredWorkers((prev) =>
               prev.map((worker) =>
                 worker.username === currentUser.username
@@ -130,9 +130,35 @@ export function useBackendSync({
               ),
             );
           }
+          if (matchingRequest && currentUser.role === "household") {
+            const nextVerificationLabel =
+              matchingRequest.status === "Approved"
+                ? "Verified"
+                : matchingRequest.status === "Rejected"
+                  ? "Rejected"
+                  : "Under Review";
+            setRegisteredHouseholds((prev) =>
+              prev.map((household) =>
+                household.username === currentUser.username
+                  ? {
+                      ...household,
+                      verification: nextVerificationLabel,
+                      verificationRequestId: matchingRequest.id,
+                      verificationSubmission: matchingRequest,
+                      verificationReviewedAt:
+                        matchingRequest.reviewedAt || household.verificationReviewedAt || "",
+                      verificationReviewedBy:
+                        matchingRequest.reviewedBy || household.verificationReviewedBy || "",
+                      verificationRejectionNote:
+                        matchingRequest.reviewNote || household.verificationRejectionNote || "",
+                    }
+                  : household,
+              ),
+            );
+          }
         }
       }
-      if (currentUser.role === "worker" && getAuthToken()) {
+      if (getAuthToken()) {
         const accountData = await fetchCurrentAccount(currentUser);
         if (accountData) {
           setCurrentUser((prev) =>
@@ -143,7 +169,9 @@ export function useBackendSync({
                 }
               : prev,
           );
-          mergeBackendWorkerIntoState(accountData.worker);
+          if (currentUser.role === "worker") {
+            mergeBackendWorkerIntoState(accountData.worker);
+          }
         }
       }
     } catch (error) {
@@ -188,7 +216,7 @@ export function useBackendSync({
             phone: workerProfile.phone || existing?.phone || "",
             yearsExperience: workerProfile.yearsExperience ?? existing?.yearsExperience ?? "0",
             status: existing?.status || "Available",
-            distanceKm: existing?.distanceKm || "0.00",
+            distanceKm: existing?.distanceKm ?? null,
             distanceLabel: existing?.distanceLabel || "",
           };
         }),
@@ -212,7 +240,8 @@ export function useBackendSync({
           };
         }),
       );
-      if (currentUser?.role && currentUser.role !== "admin") {
+      const isPlatformAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
+      if (currentUser?.role && !isPlatformAdmin) {
         const userStillExists = normalizedProfiles.some((profile) => profile.username === currentUser.username);
         if (!userStillExists) {
           clearAuthToken();
@@ -263,8 +292,8 @@ export function useBackendSync({
               result.distance_km !== undefined &&
               result.distance_km !== "" &&
               Number.isFinite(Number(result.distance_km))
-                ? Number(result.distance_km).toFixed(1)
-                : "",
+                ? Number(result.distance_km)
+                : null,
             distanceLabel,
             routePoints: result.route_points || result.routePoints || [],
             matchScore: result.match_score,

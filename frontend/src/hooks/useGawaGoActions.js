@@ -150,6 +150,11 @@ export function useGawaGoActions({
       window.alert("Please login as a household first.");
       return;
     }
+    if (currentHousehold.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can hire workers.");
+      setView("household-get-verified");
+      return;
+    }
     if (!selectedWorker) {
       window.alert("Worker profile not found.");
       return;
@@ -391,6 +396,11 @@ export function useGawaGoActions({
     })();
   }
   function handleRejectApplication(workerId = selectedWorker?.id, jobId = selectedJob?.id) {
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can manage job applications.");
+      setView("household-get-verified");
+      return;
+    }
     const job = postedJobs.find((item) => item.id === jobId);
     const worker = registeredWorkers.find((item) => String(item.id) === String(workerId)) || selectedWorker || null;
     if (!job || !worker) {
@@ -506,6 +516,7 @@ export function useGawaGoActions({
         }
         setAuthToken(data?.access || "");
         const resolvedRole = data?.role || data?.profile?.role || (data?.is_staff ? "superadmin" : "worker");
+        const isSuperAdmin = resolvedRole === "superadmin";
         setCurrentUser({
           id: data?.id || data?.user_id || username,
           role: resolvedRole,
@@ -516,7 +527,7 @@ export function useGawaGoActions({
           displayName: data?.display_name || data?.username || username,
           profile: data?.profile || null,
           is_staff: Boolean(data?.is_staff),
-          isSuperAdmin: Boolean(data?.is_staff),
+          isSuperAdmin,
         });
         const backendWorker = normalizeBackendWorkerPayload({
           user: {
@@ -534,7 +545,7 @@ export function useGawaGoActions({
           mergeBackendWorkerIntoState(backendWorker);
         }
         setView(
-          resolvedRole === "superadmin" || Boolean(data?.is_staff)
+          isSuperAdmin
             ? "superadmin-dashboard"
             : resolvedRole === "admin"
               ? "admin-dashboard"
@@ -652,7 +663,7 @@ export function useGawaGoActions({
           rating: "No ratings yet",
           reviewsDone: 0,
           status: "Available",
-          distanceKm: "0.00",
+          distanceKm: null,
           barangay: normalizedBarangay,
           streetAddress: workerForm.streetAddress,
           locationLabel: workerLocationLabel,
@@ -815,6 +826,7 @@ export function useGawaGoActions({
         yearsExperience: workerProfileForm.yearsExperience,
         skills: workerProfileForm.skills,
         availabilityWindows: workerProfileForm.availabilityWindows || [],
+        weeklyAvailability: workerProfileForm.weeklyAvailability || [],
         locationLabel: workerLocationLabel,
         latitude: workerLatitude,
         longitude: workerLongitude,
@@ -902,6 +914,7 @@ export function useGawaGoActions({
               longitude: nextWorkerPatch.longitude,
                 profilePhotoPreview: savedProfilePhoto,
                 availabilityWindows: nextWorkerPatch.availabilityWindows,
+                weeklyAvailability: nextWorkerPatch.weeklyAvailability,
               });
             nextWorkerPatch.profilePhotoPreview = savedProfilePhoto;
           }
@@ -939,6 +952,9 @@ export function useGawaGoActions({
                   hourly_rate: workerProfileForm.hourlyRate,
                   daily_rate: workerProfileForm.dailyRate,
                   availability_windows: nextWorkerPatch.availabilityWindows,
+                  weekly_availability: nextWorkerPatch.weeklyAvailability.filter(
+                    (window) => window.isAvailable,
+                  ),
                   location_label: workerLocationLabel,
                   latitude: nextWorkerPatch.latitude,
                   longitude: nextWorkerPatch.longitude,
@@ -964,9 +980,23 @@ export function useGawaGoActions({
       window.alert("Please upload both required verification documents.");
       return;
     }
-    const worker = currentWorker;
-    if (!worker) {
-      window.alert("Please login as a worker first.");
+    const account = currentUser?.role === "worker" ? currentWorker : registeredHouseholds.find(
+      (item) => item.username === currentUser?.username,
+    );
+    if (!account || !["worker", "household"].includes(currentUser?.role)) {
+      window.alert("Please login with a worker or household account first.");
+      return;
+    }
+    if (
+      account.verification === "Verified" ||
+      (account.verificationSubmission &&
+        ["Pending", "Under Review"].includes(account.verificationSubmission.status))
+    ) {
+      window.alert(
+        account.verification === "Verified"
+          ? "Your account is already verified."
+          : "Your verification request is already under review.",
+      );
       return;
     }
     (async () => {
@@ -987,17 +1017,19 @@ export function useGawaGoActions({
           throw new Error(getApiErrorMessage(data, "Unable to submit verification request."));
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
-        const backendWorker = normalizeBackendWorkerPayload(data.worker);
+        const backendAccount = data.account || data.worker;
+        const backendWorker =
+          currentUser.role === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => {
           const existingIndex = prev.findIndex(
-            (item) => item.workerUsername === worker.username && item.status !== "Rejected",
+            (item) => item.workerUsername === account.username && item.status !== "Rejected",
           );
           if (existingIndex >= 0) {
             return prev.map((item, index) => (index === existingIndex ? normalizedRequest : item));
           }
           return [normalizedRequest, ...prev];
         });
-        if (backendWorker) {
+        if (currentUser.role === "worker" && backendWorker) {
           mergeBackendWorkerIntoState({
             ...backendWorker,
             verification: "Under Review",
@@ -1013,10 +1045,10 @@ export function useGawaGoActions({
               },
             ],
           });
-        } else {
+        } else if (currentUser.role === "worker") {
           setRegisteredWorkers((prev) =>
             prev.map((item) =>
-              item.username === worker.username
+              item.username === account.username
                 ? {
                     ...item,
                     verification: "Under Review",
@@ -1035,13 +1067,26 @@ export function useGawaGoActions({
                 : item,
             ),
           );
+        } else {
+          setRegisteredHouseholds((prev) =>
+            prev.map((item) =>
+              item.username === account.username
+                ? {
+                    ...item,
+                    verification: "Under Review",
+                    verificationRequestId: normalizedRequest.id,
+                    verificationSubmission: normalizedRequest,
+                  }
+                : item,
+            ),
+          );
         }
         setCurrentUser((prev) =>
           prev
             ? {
                 ...prev,
                 profile:
-                  data?.worker?.profile ||
+                  backendAccount?.profile ||
                   (prev.profile
                     ? {
                         ...prev.profile,
@@ -1194,6 +1239,11 @@ export function useGawaGoActions({
     })();
   }
   function handleConfirmJobCompleted(jobId = selectedJob?.id) {
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can complete a job.");
+      setView("household-get-verified");
+      return;
+    }
     if (!jobId) {
       window.alert("Select a job first.");
       return;
@@ -1242,16 +1292,23 @@ export function useGawaGoActions({
     }
     (async () => {
       try {
+        const body = {
+          target_username: selectedWorker.username,
+          job_id: selectedJob?.id,
+          job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
+          rating,
+          feedback: householdReviewForm.feedback.trim(),
+        };
+
+        if (householdReviewForm.quality_of_work) body.quality_of_work = parseInt(householdReviewForm.quality_of_work);
+        if (householdReviewForm.punctuality) body.punctuality = parseInt(householdReviewForm.punctuality);
+        if (householdReviewForm.communication) body.communication = parseInt(householdReviewForm.communication);
+        if (householdReviewForm.professionalism) body.professionalism = parseInt(householdReviewForm.professionalism);
+
         const response = await apiRequest("reviews/", {
           method: "POST",
           auth: true,
-          body: {
-            target_username: selectedWorker.username,
-            job_id: selectedJob?.id,
-            job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
-            rating,
-            feedback: householdReviewForm.feedback.trim(),
-          },
+          body,
         });
         const data = await readResponseData(response);
         if (!response.ok) {
@@ -1285,16 +1342,23 @@ export function useGawaGoActions({
     }
     (async () => {
       try {
+        const body = {
+          target_username: household.username,
+          job_id: selectedJob?.id,
+          job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
+          rating,
+          feedback: workerFeedbackForm.feedback.trim(),
+        };
+
+        if (workerFeedbackForm.quality_of_work) body.quality_of_work = parseInt(workerFeedbackForm.quality_of_work);
+        if (workerFeedbackForm.punctuality) body.punctuality = parseInt(workerFeedbackForm.punctuality);
+        if (workerFeedbackForm.communication) body.communication = parseInt(workerFeedbackForm.communication);
+        if (workerFeedbackForm.professionalism) body.professionalism = parseInt(workerFeedbackForm.professionalism);
+
         const response = await apiRequest("reviews/", {
           method: "POST",
           auth: true,
-          body: {
-            target_username: household.username,
-            job_id: selectedJob?.id,
-            job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
-            rating,
-            feedback: workerFeedbackForm.feedback.trim(),
-          },
+          body,
         });
         const data = await readResponseData(response);
         if (!response.ok) {
@@ -1367,6 +1431,11 @@ export function useGawaGoActions({
       window.alert("Please login as a household account first.");
       return;
     }
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can post a job.");
+      setView("household-get-verified");
+      return;
+    }
     const serviceType = householdJobForm.serviceType === "Other"
       ? (householdJobForm.customServiceType || "").trim()
       : householdJobForm.serviceType;
@@ -1409,6 +1478,8 @@ export function useGawaGoActions({
           longitude: resolvedLongitude,
         });
       }
+      const distanceKmMap = { '1km': 1.0, '2km': 2.0, '5km': 5.0, '10km': 10.0, 'unlimited': 999999 };
+      const geoBoundary = householdJobForm.geographicBoundary || '1km';
       const payload = {
         title: householdJobForm.jobTitle.trim() || serviceType,
         job_type: serviceType,
@@ -1425,6 +1496,11 @@ export function useGawaGoActions({
         longitude: resolvedLongitude,
         service_rate: householdJobForm.offeredRate,
         worker_slots: getWorkersNeeded(householdJobForm),
+        job_start_date: householdJobForm.jobStartDate || null,
+        job_end_date: householdJobForm.jobEndDate || null,
+        estimated_working_days: householdJobForm.estimatedWorkingDays ? parseInt(householdJobForm.estimatedWorkingDays, 10) : null,
+        max_distance_km: distanceKmMap[geoBoundary] || 1.0,
+        geographic_boundary: geoBoundary,
       };
       const imageFiles = Array.isArray(householdJobImages) ? householdJobImages : [];
       let shouldResetHouseholdJobForm = false;
@@ -1468,7 +1544,7 @@ export function useGawaGoActions({
             jobTitle: "",
             serviceType: "",
             customServiceType: "",
-            scheduleType: "One - Time",
+            scheduleType: "One-Time",
             preferredDate: "",
             preferredTime: "",
             description: "",
@@ -1477,6 +1553,10 @@ export function useGawaGoActions({
             offeredRate: "0.00",
             rateType: "Per Day",
             workersNeeded: "1",
+            jobStartDate: "",
+            jobEndDate: "",
+            estimatedWorkingDays: "",
+            geographicBoundary: "1km",
           });
           setView("household-my-jobs");
         }
@@ -1505,9 +1585,11 @@ export function useGawaGoActions({
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
         const reviewedAt = normalizedRequest.reviewedAt || new Date().toLocaleString("en-PH");
-        const backendWorker = normalizeBackendWorkerPayload(data.worker);
+        const backendAccount = data.account || data.worker;
+        const backendWorker =
+          normalizedRequest.accountRole === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => prev.map((item) => (item.id === requestId ? normalizedRequest : item)));
-        if (backendWorker) {
+        if (normalizedRequest.accountRole === "worker" && backendWorker) {
           mergeBackendWorkerIntoState({
             ...backendWorker,
             verification: "Verified",
@@ -1524,7 +1606,7 @@ export function useGawaGoActions({
               },
             ],
           });
-        } else {
+        } else if (normalizedRequest.accountRole === "worker") {
           setRegisteredWorkers((prev) =>
             prev.map((worker) =>
               worker.id === normalizedRequest.workerId
@@ -1547,10 +1629,25 @@ export function useGawaGoActions({
                 : worker,
             ),
           );
+        } else {
+          setRegisteredHouseholds((prev) =>
+            prev.map((household) =>
+              String(household.id) === String(normalizedRequest.workerId) ||
+              household.username === normalizedRequest.workerUsername
+                ? {
+                    ...household,
+                    verification: "Verified",
+                    verificationReviewedAt: reviewedAt,
+                    verificationReviewedBy: currentUser?.displayName || "Admin",
+                    verificationSubmission: normalizedRequest,
+                  }
+                : household,
+            ),
+          );
         }
         await refreshVerificationStateFromBackend();
         await refreshNotificationsFromBackend();
-        window.alert("Verification approved. Worker is now Verified.");
+        window.alert(`Verification approved. ${normalizedRequest.accountRole === "household" ? "Household" : "Worker"} is now Verified.`);
         setSelectedVerificationRequestId(requestId);
         setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
       } catch (error) {
@@ -1585,9 +1682,11 @@ export function useGawaGoActions({
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
         const reviewedAt = normalizedRequest.reviewedAt || new Date().toLocaleString("en-PH");
-        const backendWorker = normalizeBackendWorkerPayload(data.worker);
+        const backendAccount = data.account || data.worker;
+        const backendWorker =
+          normalizedRequest.accountRole === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => prev.map((item) => (item.id === requestId ? normalizedRequest : item)));
-        if (backendWorker) {
+        if (normalizedRequest.accountRole === "worker" && backendWorker) {
           mergeBackendWorkerIntoState({
             ...backendWorker,
             verification: "Rejected",
@@ -1605,7 +1704,7 @@ export function useGawaGoActions({
               },
             ],
           });
-        } else {
+        } else if (normalizedRequest.accountRole === "worker") {
           setRegisteredWorkers((prev) =>
             prev.map((worker) =>
               worker.id === normalizedRequest.workerId
@@ -1627,6 +1726,22 @@ export function useGawaGoActions({
                     ],
                   }
                 : worker,
+            ),
+          );
+        } else {
+          setRegisteredHouseholds((prev) =>
+            prev.map((household) =>
+              String(household.id) === String(normalizedRequest.workerId) ||
+              household.username === normalizedRequest.workerUsername
+                ? {
+                    ...household,
+                    verification: "Rejected",
+                    verificationReviewedAt: reviewedAt,
+                    verificationReviewedBy: currentUser?.displayName || "Admin",
+                    verificationRejectionNote: reviewNote,
+                    verificationSubmission: normalizedRequest,
+                  }
+                : household,
             ),
           );
         }

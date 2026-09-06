@@ -341,6 +341,18 @@ export async function geocodeAddressLocation(barangay, streetAddress) {
   if (!Number.isFinite(resolvedLatitude) || !Number.isFinite(resolvedLongitude)) {
     return null;
   }
+  const resultLabel = String(properties.label || "");
+  if (!isWithinTayabasBounds(resolvedLatitude, resolvedLongitude) || !/\btayabas\b/i.test(resultLabel)) {
+    const barangayCenter = getBarangayCenter(selectedBarangay || "Poblacion");
+    return buildCoordinateLocation(
+      barangayCenter.latitude,
+      barangayCenter.longitude,
+      selectedBarangay || "Poblacion",
+      selectedStreetAddress || `Barangay ${selectedBarangay || "Poblacion"}, Tayabas City`,
+      "barangay",
+      "The address search returned a location outside Tayabas City, so the selected barangay center was used.",
+    );
+  }
   return {
     latitude: resolvedLatitude,
     longitude: resolvedLongitude,
@@ -356,7 +368,7 @@ export async function resolveLocationCoordinates(barangay, streetAddress, prefer
   const addressResult = await geocodeAddressLocation(barangay, streetAddress);
   if (preferCurrentLocation) {
     const browserCoordinates = await getCurrentCoordinates();
-    if (browserCoordinates) {
+    if (browserCoordinates && isWithinTayabasBounds(browserCoordinates.latitude, browserCoordinates.longitude)) {
       const reverseResult = await reverseGeocodeCoordinates(browserCoordinates.latitude, browserCoordinates.longitude, barangay, streetAddress);
       if (reverseResult && addressResult) {
         const deviationKm = haversineDistanceKm(reverseResult.latitude, reverseResult.longitude, addressResult.latitude, addressResult.longitude);
@@ -385,6 +397,13 @@ export async function resolveLocationCoordinates(barangay, streetAddress, prefer
       }
       return {
         ...buildCoordinateLocation(browserCoordinates.latitude, browserCoordinates.longitude, "", streetAddress, "device", "We captured your current location and used the coordinates as the approximate address."),
+        accuracy: browserCoordinates.accuracy,
+      };
+    }
+    if (browserCoordinates && addressResult) {
+      return {
+        ...addressResult,
+        warning: "Your device location was outside Tayabas City, so the entered Tayabas address was used.",
         accuracy: browserCoordinates.accuracy,
       };
     }

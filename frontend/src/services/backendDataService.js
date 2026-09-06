@@ -173,6 +173,21 @@ export async function markBackendNotificationRead(backendId) {
   return response.ok;
 }
 
+export async function deleteBackendNotification(backendId) {
+  if (!backendId) {
+    return false;
+  }
+  const response = await apiRequest(`notifications/${backendId}/`, {
+    method: "DELETE",
+    auth: true,
+  });
+  if (!response.ok) {
+    const data = await readResponseData(response);
+    throw new Error(getApiErrorMessage(data, "Unable to delete notification."));
+  }
+  return true;
+}
+
 export async function requestPasswordReset(email) {
   const response = await apiRequest("accounts/forgot-password/", {
     method: "POST",

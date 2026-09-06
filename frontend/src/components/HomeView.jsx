@@ -56,7 +56,7 @@ export default function HomeView({
             <div className="admin-portal-card-head">
               <span>Admin Sign In</span>
               <h2>Welcome back</h2>
-              <p>Use your superadmin account to continue.</p>
+              <p>Use an administrator or superadmin account to continue.</p>
             </div>
             <form onSubmit={onLoginSubmit}>
               <div className="mb-3">
@@ -143,11 +143,24 @@ export default function HomeView({
               <p className="lead hero-subtitle mb-4">
                 GawaGo connects households and workers with smart matching, transparent rates, and a fair reputation system.
               </p>
+              <div className="home-task-strip" aria-label="Available services">
+                <span>Post jobs</span>
+                <span>Apply nearby</span>
+                <span>Verify profiles</span>
+              </div>
               <div className="d-flex gap-2 flex-wrap">
-                <button className="btn btn-primary btn-lg hero-primary-btn" type="button" aria-disabled="true">
+                <button
+                  className="btn btn-primary btn-lg hero-primary-btn"
+                  type="button"
+                  onClick={onOpenHouseholdRegister}
+                >
                   Post a Job
                 </button>
-                <button className="btn btn-outline-light btn-lg hero-secondary-btn" type="button" aria-disabled="true">
+                <button
+                  className="btn btn-outline-light btn-lg hero-secondary-btn"
+                  type="button"
+                  onClick={onOpenWorkerRegister}
+                >
                   Find Work
                 </button>
               </div>
@@ -155,29 +168,29 @@ export default function HomeView({
             {!showLogin && (
               <div className="hero-snapshot-slot">
                 <div className="hero-snapshot hero-snapshot-alt">
-                <div className="hero-snapshot-card">
-                  <span className="hero-snapshot-badge">Open jobs live</span>
-                  <p className="hero-snapshot-label mb-1">Open Jobs</p>
-                  <p className="hero-snapshot-value mb-2">{dashboardMetrics.openJobs}</p>
-                  <p className="hero-snapshot-note mb-0">Jobs waiting for workers to apply</p>
-                  <hr className="hero-snapshot-divider" />
-                  <div className="hero-snapshot-mini-grid">
-                    <div>
-                      <strong>8+</strong>
-                      <span>Job Categories</span>
-                    </div>
-                    <div>
-                      <strong>Free</strong>
-                      <span>To Sign Up</span>
-                    </div>
-                    <div>
-                      <strong>5.0</strong>
-                      <span>Ratings</span>
+                  <div className="hero-snapshot-card">
+                    <span className="hero-snapshot-badge">Open Jobs Live</span>
+                    <p className="hero-snapshot-label mb-1">Open Jobs</p>
+                    <p className="hero-snapshot-value mb-2">{dashboardMetrics.openJobs}</p>
+                    <p className="hero-snapshot-note mb-0">Jobs waiting for workers to apply</p>
+                    <hr className="hero-snapshot-divider" />
+                    <div className="hero-snapshot-mini-grid">
+                      <div>
+                        <strong>{dashboardMetrics.verifiedWorkers}</strong>
+                        <span>Verified Workers</span>
+                      </div>
+                      <div>
+                        <strong>{dashboardMetrics.completedJobs}</strong>
+                        <span>Completed Services</span>
+                      </div>
+                      <div>
+                        <strong>{dashboardMetrics.totalAccounts}</strong>
+                        <span>Registered Accounts</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
             )}
             {showLogin && (
               <aside className="home-login-card" aria-label="Authentication panel">

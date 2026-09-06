@@ -255,6 +255,122 @@ export default function SuperAdminDashboardView({
               }}
             />
             <div className="worker-content">
+              {superAdminSection === "analytics" && (
+                <div className="profile-card mt-3">
+                  <div className="profile-card-head">Enhanced Dashboard Analytics</div>
+                  <div className="p-4">
+                    {/* Metric Cards */}
+                    <div className="row g-3 mb-4">
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-success text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Hiring Success Rate</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.hiringSuccessRate || 0}%</h2>
+                            <small>Applications → Hires</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-info text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Job Match Rate</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.jobMatchRate || 0}%</h2>
+                            <small>Jobs Successfully Matched</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-warning text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Hired Workers</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.workerHiringStats?.hiredWorkers || 0}</h2>
+                            <small>{dashboardMetrics.analytics?.enhancedAnalytics?.workerHiringStats?.hirePercentage || 0}% of total workers</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-primary text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Repeat Hires</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.workerHiringStats?.repeatHires || 0}</h2>
+                            <small>Workers Hired Multiple Times</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Application Trends Chart */}
+                    <div className="row g-3">
+                      <div className="col-12">
+                        <div className="card border-0 shadow-sm">
+                          <div className="card-header bg-light fw-bold">Application Trends (Last 12 Months)</div>
+                          <div className="card-body">
+                            {(dashboardMetrics.analytics?.enhancedAnalytics?.applicationTrends || []).length > 0 ? (
+                              <ResponsiveContainer width="100%" height={300}>
+                                <LineChart data={dashboardMetrics.analytics.enhancedAnalytics.applicationTrends}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="month" />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Line type="monotone" dataKey="applications" stroke="#4CAF50" strokeWidth={2} />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <p className="text-muted">No application data available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Service Type Breakdown */}
+                    <div className="row g-3 mt-3">
+                      <div className="col-lg-6">
+                        <div className="card border-0 shadow-sm">
+                          <div className="card-header bg-light fw-bold">Service Type Distribution</div>
+                          <div className="card-body">
+                            {(dashboardMetrics.analytics?.serviceAnalytics || []).length > 0 ? (
+                              <ResponsiveContainer width="100%" height={300}>
+                                <BarChart data={dashboardMetrics.analytics.serviceAnalytics}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="serviceType" angle={-45} textAnchor="end" height={100} />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Bar dataKey="count" fill="#4CAF50" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <p className="text-muted">No service data available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Monthly Job Requests */}
+                      <div className="col-lg-6">
+                        <div className="card border-0 shadow-sm">
+                          <div className="card-header bg-light fw-bold">Monthly Job Postings</div>
+                          <div className="card-body">
+                            {(dashboardMetrics.analytics?.monthlyJobRequests || []).length > 0 ? (
+                              <ResponsiveContainer width="100%" height={300}>
+                                <BarChart data={dashboardMetrics.analytics.monthlyJobRequests}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="month" />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Bar dataKey="count" fill="#2196F3" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <p className="text-muted">No monthly data available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {superAdminSection === "verification" && (
                 <div className="profile-card mt-3">
                   <div className="profile-card-head d-flex justify-content-between align-items-center gap-3 flex-wrap">
@@ -380,7 +496,12 @@ export default function SuperAdminDashboardView({
                               </div>
                               <div>
                                 <strong>Experience</strong>
-                                <span>{verificationModalWorkerDetails?.yearsExperience || 0} yr(s)</span>
+                                        <span>
+                                          {Number(verificationModalWorkerDetails?.yearsExperience || 0)}{" "}
+                                          {Number(verificationModalWorkerDetails?.yearsExperience || 0) === 1
+                                            ? "year"
+                                            : "years"}
+                                        </span>
                               </div>
                               <div>
                                 <strong>Worker Notes</strong>

@@ -32,6 +32,26 @@ export function getBarangayCenter(barangay) {
   };
 }
 
+export function getNearestBarangay(latitude, longitude) {
+  const numericLatitude = Number(latitude);
+  const numericLongitude = Number(longitude);
+  if (!Number.isFinite(numericLatitude) || !Number.isFinite(numericLongitude)) {
+    return "";
+  }
+  let nearestBarangay = "";
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  Object.entries(BARANGAY_CENTERS).forEach(([barangay, center]) => {
+    const latitudeDifference = numericLatitude - Number(center.latitude);
+    const longitudeDifference = numericLongitude - Number(center.longitude);
+    const distance = latitudeDifference ** 2 + longitudeDifference ** 2;
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestBarangay = barangay;
+    }
+  });
+  return nearestBarangay;
+}
+
 export function parseLocationLabel(locationLabel) {
   const parts = String(locationLabel || "").split(",").map((part) => part.trim()).filter(Boolean);
   const barangayIndex = parts.findIndex((part) => BARANGAYS.some((barangay) => barangay.toLowerCase() === part.replace(/^barangay\s+/i, "").trim().toLowerCase()));

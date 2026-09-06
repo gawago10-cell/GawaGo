@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest, clearAuthToken, getAuthToken, setAuthToken, setUnauthorizedHandler } from "./api/apiClient";
 import {
   BARANGAYS,
@@ -76,6 +76,7 @@ import {
   ensureDemoVersion,
   getNotificationReadState,
   getStoredCollection,
+  getStoredObject,
   mergeDemoRecords,
 } from "./utils/storageUtils";
 import { readResponseData } from "./utils/apiUtils";
@@ -92,6 +93,8 @@ import { useDashboardMetrics } from "./hooks/useDashboardMetrics";
 import { useBackendPolling } from "./hooks/useBackendPolling";
 import { useGawaGoDomEffects } from "./hooks/useGawaGoDomEffects";
 import { useGawaGoPersistence } from "./hooks/useGawaGoPersistence";
+import FloatingChatWidget from "./components/FloatingChatWidget";
+import ComplaintModal from "./components/ComplaintModal";
 
 const AppViews = lazy(() => import("./components/AppViews"));
 const ForgotPasswordView = lazy(() => import("./components/ForgotPasswordView"));
@@ -106,6 +109,84 @@ function ViewLoading() {
       </div>
     </main>
   );
+}
+
+function getToastVariant(message) {
+  const normalized = String(message || "").toLowerCase();
+  if (
+    normalized.includes("unable") ||
+    normalized.includes("invalid") ||
+    normalized.includes("failed") ||
+    normalized.includes("not found") ||
+    normalized.includes("not allowed") ||
+    normalized.includes("cannot")
+  ) {
+    return "danger";
+  }
+  if (
+    normalized.includes("please") ||
+    normalized.includes("must") ||
+    normalized.includes("required") ||
+    normalized.includes("already") ||
+    normalized.includes("only ")
+  ) {
+    return "warning";
+  }
+  if (
+    normalized.includes("success") ||
+    normalized.includes("sent") ||
+    normalized.includes("created") ||
+    normalized.includes("updated") ||
+    normalized.includes("submitted") ||
+    normalized.includes("accepted") ||
+    normalized.includes("verified") ||
+    normalized.includes("saved")
+  ) {
+    return "success";
+  }
+  return "info";
+}
+
+function GawaGoToastHost({ toasts, onDismiss }) {
+  return (
+    <div className="gawago-toast-viewport" aria-live="polite" aria-atomic="true">
+      {toasts.map((toast) => (
+        <div
+          className={`gawago-toast gawago-toast-${toast.variant}`}
+          key={toast.id}
+          role={toast.variant === "danger" ? "alert" : "status"}
+        >
+          <div className="gawago-toast-icon" aria-hidden="true" />
+          <p>{toast.message}</p>
+          <button
+            type="button"
+            className="gawago-toast-close"
+            aria-label="Dismiss notification"
+            onClick={() => onDismiss(toast.id)}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const CHAT_ENABLED_APPLICATION_STATUSES = new Set(["Hire Request", "Hired", "Completed"]);
+
+function formatChatTimestamp(value = new Date()) {
+  const parsedValue = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsedValue.getTime())) {
+    return "Recently";
+  }
+  return parsedValue.toLocaleString("en-PH", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function createChatConversationId(jobId, workerKey) {
+  return `chat-${jobId}-${workerKey}`;
 }
 
 function App() {
@@ -130,6 +211,7 @@ function App() {
   const [forgotPasswordNotice, setForgotPasswordNotice] = useState("");
   const [forgotPasswordError, setForgotPasswordError] = useState("");
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const [appToasts, setAppToasts] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [registeredWorkers, setRegisteredWorkers] = useState(() =>
     IS_DEMO_MODE ? mergeDemoRecords(getStoredCollection(STORAGE_KEYS.workers, []), DEMO_WORKER_ACCOUNTS) : [],
@@ -151,6 +233,10 @@ function App() {
         )
       : [],
   );
+  const [chatMessagesByConversation, setChatMessagesByConversation] = useState(() =>
+    IS_DEMO_MODE ? getStoredObject(STORAGE_KEYS.chatMessages, {}) : {},
+  );
+  const [activeChatConversationId, setActiveChatConversationId] = useState(null);
   const [backendNotifications, setBackendNotifications] = useState([]);
   const [selectedVerificationRequestId, setSelectedVerificationRequestId] = useState(null);
   const [adminSection, setAdminSection] = useState("verification");
@@ -177,7 +263,7 @@ function App() {
     jobTitle: "",
     serviceType: "",
     customServiceType: "",
-    scheduleType: "One - Time",
+    scheduleType: "One-Time",
     preferredDate: "",
     preferredTime: "",
     description: "",
@@ -186,6 +272,10 @@ function App() {
     offeredRate: "0.00",
     rateType: "Per Day",
     workersNeeded: "1",
+    jobStartDate: "",
+    jobEndDate: "",
+    estimatedWorkingDays: "",
+    geographicBoundary: "1km",
   });
   const [householdJobImages, setHouseholdJobImages] = useState([]);
   const [workerProfileForm, setWorkerProfileForm] = useState({
@@ -211,6 +301,37 @@ function App() {
     availabilityWindows: [],
     profilePhotoFile: null,
     profilePhotoPreview: "",
+    certifications: [],
+    workSamples: [],
+  });
+  const [showCertificationModal, setShowCertificationModal] = useState(false);
+  const [showWorkSampleModal, setShowWorkSampleModal] = useState(false);
+  const [certificationForm, setCertificationForm] = useState({
+    name: "",
+    certificateImage: null,
+    certificatePreview: "",
+  });
+  const [workSampleForm, setWorkSampleForm] = useState({
+    title: "",
+    beforeImage: null,
+    beforePreview: "",
+    afterImage: null,
+    afterPreview: "",
+  });
+  const [editingCertificationIndex, setEditingCertificationIndex] = useState(null);
+  const [editingWorkSampleIndex, setEditingWorkSampleIndex] = useState(null);
+  const [viewingWorkSampleIndex, setViewingWorkSampleIndex] = useState(null);
+  const [portfolioGalleryOpen, setPortfolioGalleryOpen] = useState(false);
+  const [employmentHistory, setEmploymentHistory] = useState([]);
+  const [ratingModalOpen, setRatingModalOpen] = useState(false);
+  const [ratingJobId, setRatingJobId] = useState(null);
+  const [ratingWorker, setRatingWorker] = useState(null);
+  const [skillRatings, setSkillRatings] = useState({});
+  const [showComplaintModal, setShowComplaintModal] = useState(false);
+  const [complaintForm, setComplaintForm] = useState({
+    complaint_type: "",
+    description: "",
+    job: null,
   });
   const [verificationForm, setVerificationForm] = useState({
     primaryIdName: "",
@@ -238,6 +359,9 @@ function App() {
     touched: false,
   });
   const householdJobBarangaySyncRef = useRef(0);
+  const dismissToast = (toastId) => {
+    setAppToasts((prev) => prev.filter((toast) => toast.id !== toastId));
+  };
   const { handleForgotPasswordChange, handleForgotPasswordEmailSubmit, handleResetPassword, handleVerifyResetToken } =
     usePasswordReset({
       forgotPasswordForm,
@@ -247,6 +371,33 @@ function App() {
       setForgotPasswordNotice,
       setForgotPasswordStep,
     });
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const originalAlert = window.alert;
+    window.alert = (message = "") => {
+      const text = String(message || "").trim();
+      if (!text) {
+        return;
+      }
+      const toastId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setAppToasts((prev) => [
+        ...prev.slice(-3),
+        {
+          id: toastId,
+          message: text,
+          variant: getToastVariant(text),
+        },
+      ]);
+      window.setTimeout(() => {
+        setAppToasts((prev) => prev.filter((toast) => toast.id !== toastId));
+      }, 5200);
+    };
+    return () => {
+      window.alert = originalAlert;
+    };
+  }, []);
   useEffect(() => {
     if (!IS_DEMO_MODE) {
       return;
@@ -304,7 +455,25 @@ function App() {
         verificationSubmission: currentWorkerVerificationRequest,
       }
     : null;
-  const currentHousehold = registeredHouseholds.find((item) => item.username === currentUser?.username);
+  const localCurrentHousehold = registeredHouseholds.find((item) => item.username === currentUser?.username) || null;
+  const currentHouseholdVerificationRequest =
+    verificationRequests.find((item) => item.workerUsername === currentUser?.username) ||
+    normalizeVerificationRequest(currentUser?.profile?.verification_request) ||
+    localCurrentHousehold?.verificationSubmission ||
+    null;
+  const currentHousehold = localCurrentHousehold
+    ? {
+        ...localCurrentHousehold,
+        verification: currentHouseholdVerificationRequest
+          ? getWorkerVerificationLabel(currentHouseholdVerificationRequest.status)
+          : currentUser?.profile?.verification_status === "verified"
+            ? "Verified"
+            : currentUser?.profile?.verification_status === "rejected"
+              ? "Rejected"
+              : "Not Yet Verified",
+        verificationSubmission: currentHouseholdVerificationRequest,
+      }
+    : null;
   const householdJobs = postedJobs.filter((item) => item.householdUsername === currentUser?.username);
   const selectedJob =
     householdJobs.find((item) => String(item.id) === String(selectedJobId)) ||
@@ -458,12 +627,21 @@ function App() {
           String(worker.workerId) === String(selectedWorkerApplication.workerId)),
     ) ||
     null;
-  const selectedWorker = matchedSelectedWorker
+  const selectedWorkerRecord = matchedSelectedWorker
     ? {
         ...registeredSelectedWorker,
         ...matchedSelectedWorker,
       }
     : registeredSelectedWorker || buildWorkerFallbackFromJob(selectedJob, selectedWorkerIdentity || selectedWorkerId);
+  const selectedWorker = selectedWorkerRecord
+    ? {
+        ...selectedWorkerRecord,
+        latitude: selectedWorkerApplication?.workerLatitude ?? selectedWorkerRecord.latitude ?? null,
+        longitude: selectedWorkerApplication?.workerLongitude ?? selectedWorkerRecord.longitude ?? null,
+        distanceKm: selectedWorkerApplication?.routeDistanceKm ?? selectedWorkerRecord.distanceKm ?? null,
+        routePoints: selectedWorkerApplication?.routePoints || selectedWorkerRecord.routePoints || [],
+      }
+    : null;
   const selectedWorkerPhoto = getWorkerPhoto(selectedWorker);
   const selectedVerificationRequest =
     verificationRequests.find((item) => item.id === selectedVerificationRequestId) || verificationRequests[0] || null;
@@ -471,14 +649,15 @@ function App() {
   const workerMatchedJobs = workerVisibleJobs.filter((job) => job.matchesSkill);
   const workerMiniPhoto = getWorkerPhoto(currentWorker);
   const householdNotifications = dedupeNotifications([
-    ...getHouseholdNotifications(householdJobs, registeredWorkers),
-    ...getHouseholdReviewReminderNotifications(householdJobs, registeredWorkers, currentHousehold),
     ...backendNotifications.filter(
       (item) =>
         item.notificationType === "application" ||
         item.notificationType === "completion" ||
+        item.notificationType === "verification" ||
         item.title === "New feedback received",
     ),
+    ...getHouseholdNotifications(householdJobs, registeredWorkers),
+    ...getHouseholdReviewReminderNotifications(householdJobs, registeredWorkers, currentHousehold),
   ]);
   const verificationNotifications = getVerificationNotifications(verificationRequests, registeredWorkers);
   const workerNotifications = dedupeNotifications([
@@ -531,6 +710,150 @@ function App() {
   const currentWorkerJobHousehold = currentWorkerJobDetail
     ? registeredHouseholds.find((item) => item.username === currentWorkerJobDetail.householdUsername)
     : null;
+  const availableChatConversations = useMemo(() => {
+    if (!currentUser?.role) {
+      return [];
+    }
+
+    const conversations = postedJobs.flatMap((job) =>
+      (job.applications || [])
+        .filter((application) => CHAT_ENABLED_APPLICATION_STATUSES.has(application.status))
+        .map((application) => {
+          const registeredWorker =
+            registeredWorkers.find(
+              (worker) =>
+                String(worker.id) === String(application.workerId) ||
+                (worker.username && worker.username === application.workerUsername),
+            ) || null;
+          const registeredHousehold =
+            registeredHouseholds.find((household) => household.username === job.householdUsername) || null;
+          const workerName = getDisplayName(
+            registeredWorker?.firstName,
+            registeredWorker?.lastName,
+            application.workerName || application.workerUsername || "Worker",
+          );
+          const householdName = getDisplayName(
+            registeredHousehold?.firstName,
+            registeredHousehold?.lastName,
+            job.householdName || job.householdUsername || "Household",
+          );
+          const workerKey = application.workerId || application.workerUsername || workerName;
+          const conversationId = createChatConversationId(job.id, workerKey);
+          const isHouseholdParticipant = currentUser.role === "household" && job.householdUsername === currentUser.username;
+          const isWorkerParticipant =
+            currentUser.role === "worker" &&
+            (String(application.workerId) === String(currentWorker?.id) ||
+              (application.workerUsername && application.workerUsername === currentWorker?.username));
+
+          if (!isHouseholdParticipant && !isWorkerParticipant) {
+            return null;
+          }
+
+          return {
+            id: conversationId,
+            jobId: job.id,
+            applicationId: application.id,
+            jobTitle: job.jobTitle || job.serviceType || "Service Request",
+            statusLabel: application.status,
+            rateLabel: formatRate(job.offeredRate, job.rateType),
+            otherPartyName: isHouseholdParticipant ? workerName : householdName,
+            otherPartyPhoto: isHouseholdParticipant ? getWorkerPhoto(registeredWorker) : getHouseholdPhoto(registeredHousehold),
+            currentUserRole: currentUser.role,
+            householdUsername: job.householdUsername,
+            householdName,
+            workerUsername: application.workerUsername || registeredWorker?.username || "",
+            workerName,
+            otherPartyRole: isHouseholdParticipant ? "worker" : "household",
+            otherPartyProfile: isHouseholdParticipant
+              ? {
+                  bio: registeredWorker?.bio || "No background provided yet.",
+                  location: formatLocation(registeredWorker?.barangay, registeredWorker?.streetAddress),
+                  verification: registeredWorker?.verification || "Not Yet Verified",
+                  skills: registeredWorker?.skills || [],
+                  rate: formatRate(registeredWorker?.dailyRate || job.offeredRate, "Per Day"),
+                  phone: registeredWorker?.phone ? `+63${registeredWorker.phone}` : "",
+                  email: registeredWorker?.email || "",
+                }
+              : {
+                  bio: "Household account connected to this hiring request.",
+                  location: formatLocation(registeredHousehold?.barangay, registeredHousehold?.streetAddress),
+                  verification: registeredHousehold?.verification || "Verified Household",
+                  skills: [],
+                  rate: formatRate(job.offeredRate, job.rateType),
+                  phone: registeredHousehold?.phone ? `+63${registeredHousehold.phone}` : "",
+                  email: registeredHousehold?.email || "",
+                },
+          };
+        })
+        .filter(Boolean),
+    );
+
+    return conversations.sort((left, right) => {
+      const leftMessages = chatMessagesByConversation[left.id] || [];
+      const rightMessages = chatMessagesByConversation[right.id] || [];
+      const leftLast = leftMessages[leftMessages.length - 1]?.createdAt || "";
+      const rightLast = rightMessages[rightMessages.length - 1]?.createdAt || "";
+      return String(rightLast).localeCompare(String(leftLast));
+    });
+  }, [chatMessagesByConversation, currentUser?.role, currentUser?.username, currentWorker?.id, currentWorker?.username, postedJobs, registeredHouseholds, registeredWorkers, formatRate]);
+  const activeChatConversation =
+    availableChatConversations.find((conversation) => String(conversation.id) === String(activeChatConversationId)) ||
+    availableChatConversations[0] ||
+    null;
+  const chatMessagesForWidget = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(chatMessagesByConversation).map(([conversationId, messages]) => [
+          conversationId,
+          (messages || []).map((message) => ({
+            ...message,
+            isCurrentUser:
+              message.senderRole !== "system" &&
+              ((currentUser?.role === "household" && message.senderUsername === currentHousehold?.username) ||
+                (currentUser?.role === "worker" && message.senderUsername === currentWorker?.username)),
+          })),
+        ]),
+      ),
+    [chatMessagesByConversation, currentHousehold?.username, currentUser?.role, currentWorker?.username],
+  );
+  useEffect(() => {
+    if (!availableChatConversations.length) {
+      setActiveChatConversationId(null);
+      return;
+    }
+    if (!activeChatConversationId || !availableChatConversations.some((conversation) => conversation.id === activeChatConversationId)) {
+      setActiveChatConversationId(availableChatConversations[0].id);
+    }
+  }, [activeChatConversationId, availableChatConversations]);
+  useEffect(() => {
+    if (!availableChatConversations.length) {
+      return;
+    }
+    setChatMessagesByConversation((prev) => {
+      let changed = false;
+      const nextState = { ...prev };
+      availableChatConversations.forEach((conversation) => {
+        if (nextState[conversation.id]?.length) {
+          return;
+        }
+        changed = true;
+        nextState[conversation.id] = [
+          {
+            id: `${conversation.id}-system`,
+            senderRole: "system",
+            senderLabel: "System",
+            text: `Chat opened for ${conversation.jobTitle}. Messaging is available because a hire request now exists between the household and worker.`,
+            imageUrl: "",
+            imageName: "",
+            isCurrentUser: false,
+            createdAt: new Date().toISOString(),
+            createdAtLabel: formatChatTimestamp(),
+          },
+        ];
+      });
+      return changed ? nextState : prev;
+    });
+  }, [availableChatConversations]);
   useEffect(() => {
     if (view !== "worker-job-detail" || currentUser?.role !== "worker" || !selectedJobId || !getAuthToken()) {
       return;
@@ -564,6 +887,66 @@ function App() {
       cancelled = true;
     };
   }, [currentUser?.role, selectedJobId, view]);
+  const lastPopulatedWorkerRef = useRef(null);
+  useEffect(() => {
+    if (!currentWorker || currentWorker.username === lastPopulatedWorkerRef.current) {
+      return;
+    }
+    lastPopulatedWorkerRef.current = currentWorker.username;
+    setWorkerProfileForm({
+      firstName: currentWorker.firstName || "",
+      lastName: currentWorker.lastName || "",
+      username: currentWorker.username || "",
+      email: currentWorker.email || "",
+      phone: currentWorker.phone || "",
+      barangay: currentWorker.barangay || "",
+      streetAddress: currentWorker.streetAddress || "",
+      latitude: currentWorker.latitude ?? null,
+      longitude: currentWorker.longitude ?? null,
+      locationLabel: currentWorker.locationLabel || "",
+      locationSource: "",
+      locationWarning: "",
+      locationAccuracy: "",
+      bio: currentWorker.bio || "",
+      hourlyRate: currentWorker.hourlyRate || "0.00",
+      dailyRate: currentWorker.dailyRate || "0.00",
+      yearsExperience: currentWorker.yearsExperience || "0",
+      skills: currentWorker.skills || [],
+      availability: true,
+      availabilityWindows: currentWorker.availabilityWindows || [],
+      profilePhotoFile: null,
+      profilePhotoPreview: currentWorker.profilePhotoPreview || "",
+    });
+  }, [currentWorker?.username]);
+
+  useEffect(() => {
+    if (!currentWorker || currentUser?.role !== "worker" || !getAuthToken()) {
+      setEmploymentHistory([]);
+      return;
+    }
+    const fetchEmploymentHistory = async () => {
+      try {
+        const response = await apiRequest(`jobs/?worker=${currentWorker.id}&status=completed`, {
+          auth: true,
+        });
+        if (response.ok) {
+          const jobs = await response.json();
+          const historyData = jobs.map((job) => ({
+            id: job.id,
+            title: job.job_title || job.title,
+            household_name: job.household_name,
+            location: job.location,
+            completed_at: job.completed_at,
+            skill_ratings: job.skill_ratings || [],
+          }));
+          setEmploymentHistory(historyData);
+        }
+      } catch (error) {
+        console.log("Error fetching employment history:", error);
+      }
+    };
+    fetchEmploymentHistory();
+  }, [currentWorker?.id, currentUser?.role]);
   const adminVisibleWorkers = registeredWorkers.filter((worker) => Boolean(worker.verificationSubmission));
   const pendingVerificationRequests = verificationRequests.filter(
     (item) => item.status === "Pending" || item.status === "Under Review",
@@ -624,6 +1007,7 @@ function App() {
     setCurrentUser,
   });
   useGawaGoPersistence({
+    chatMessages: chatMessagesByConversation,
     isDemoMode: IS_DEMO_MODE,
     notificationReads,
     postedJobs,
@@ -645,6 +1029,7 @@ function App() {
     openForgotPassword,
     openHouseholdDashboard,
     openHouseholdFeedbackAll,
+    openHouseholdGetVerified,
     openHouseholdJobDetail,
     openHouseholdMyJobs,
     openHouseholdNotificationWorker,
@@ -847,8 +1232,267 @@ function App() {
     verificationRequests,
     view,
   });
+  const addToast = (message, variant = "info") => {
+    const toastId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setAppToasts((prev) => [
+      ...prev.slice(-3),
+      {
+        id: toastId,
+        message,
+        variant: getToastVariant(message) || variant,
+      },
+    ]);
+    window.setTimeout(() => {
+      setAppToasts((prev) => prev.filter((toast) => toast.id !== toastId));
+    }, 5200);
+  };
+
+  const openRatingModal = (job, worker) => {
+    setRatingJobId(job.id);
+    setRatingWorker(worker);
+    setSkillRatings({});
+    setRatingModalOpen(true);
+  };
+
+  const handleSubmitRatings = async () => {
+    if (!ratingJobId || !ratingWorker) return;
+
+    const ratedSkills = Object.keys(skillRatings).filter(skill => skillRatings[skill]);
+    if (ratedSkills.length === 0) {
+      addToast("Please rate at least one skill", "warning");
+      return;
+    }
+
+    try {
+      if (!getAuthToken()) return;
+
+      for (const skillId of ratedSkills) {
+        const response = await apiRequest("jobs/skill-ratings/", {
+          method: "POST",
+          auth: true,
+          body: {
+            job: ratingJobId,
+            worker: ratingWorker.id,
+            skill: skillId,
+            rating: skillRatings[skillId],
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to submit rating");
+        }
+      }
+
+      addToast("Ratings submitted successfully", "success");
+      setRatingModalOpen(false);
+      setRatingJobId(null);
+      setRatingWorker(null);
+      setSkillRatings({});
+    } catch (error) {
+      addToast(`Error submitting ratings: ${error.message}`, "danger");
+    }
+  };
+
+  const handleSubmitComplaint = async () => {
+    if (!complaintForm.complaint_type.trim()) {
+      addToast("Please select a complaint type", "warning");
+      return;
+    }
+    if (!complaintForm.description.trim()) {
+      addToast("Please describe the issue", "warning");
+      return;
+    }
+
+    try {
+      if (!getAuthToken()) return;
+
+      const payload = {
+        complaint_type: complaintForm.complaint_type,
+        description: complaintForm.description,
+      };
+      if (complaintForm.job) {
+        payload.job = complaintForm.job;
+      }
+
+      const response = await apiRequest("complaints/create/", {
+        method: "POST",
+        auth: true,
+        body: payload,
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to submit complaint");
+      }
+
+      addToast("Complaint submitted successfully. We will review it shortly.", "success");
+      setShowComplaintModal(false);
+      setComplaintForm({ complaint_type: "", description: "", job: null });
+    } catch (error) {
+      addToast(`Error submitting complaint: ${error.message}`, "danger");
+    }
+  };
+
+  const handleAddCertification = async () => {
+    if (!certificationForm.name.trim()) {
+      addToast("Please enter certification name", "warning");
+      return;
+    }
+    if (!certificationForm.certificateImage && !certificationForm.certificatePreview) {
+      addToast("Please upload a certificate image", "warning");
+      return;
+    }
+    try {
+      if (!getAuthToken()) return;
+
+      const formData = new FormData();
+      formData.append("certificate_name", certificationForm.name);
+      if (certificationForm.certificateImage) {
+        formData.append("certificate_file", certificationForm.certificateImage);
+      }
+
+      const response = await apiRequest("accounts/me/portfolio/certifications/", {
+        method: "POST",
+        auth: true,
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to save certification");
+      }
+
+      const updatedCertifications = [...(workerProfileForm.certifications || [])];
+      updatedCertifications.push({ name: certificationForm.name, certificatePreview: certificationForm.certificatePreview });
+      setWorkerProfileForm((prev) => ({ ...prev, certifications: updatedCertifications }));
+      setCertificationForm({ name: "", certificateImage: null, certificatePreview: "" });
+      setEditingCertificationIndex(null);
+      setShowCertificationModal(false);
+      addToast("Certification saved", "success");
+    } catch (error) {
+      addToast(`Error: ${error.message}`, "danger");
+    }
+  };
+  const handleAddWorkSample = async () => {
+    if (!workSampleForm.title.trim()) {
+      addToast("Please enter work sample title", "warning");
+      return;
+    }
+    if (!workSampleForm.beforePreview || !workSampleForm.afterPreview) {
+      addToast("Please upload both before and after images", "warning");
+      return;
+    }
+    try {
+      if (!getAuthToken()) return;
+
+      const formData = new FormData();
+      formData.append("title", workSampleForm.title);
+      formData.append("description", "");
+      if (workSampleForm.beforeImage) {
+        formData.append("before_image", workSampleForm.beforeImage);
+        formData.append("image", workSampleForm.beforeImage);
+      }
+      if (workSampleForm.afterImage) {
+        formData.append("after_image", workSampleForm.afterImage);
+      }
+
+      const response = await apiRequest("accounts/me/portfolio/items/", {
+        method: "POST",
+        auth: true,
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to save work sample");
+      }
+
+      const updatedSamples = [...(workerProfileForm.workSamples || [])];
+      updatedSamples.push({
+        title: workSampleForm.title,
+        beforePreview: workSampleForm.beforePreview,
+        afterPreview: workSampleForm.afterPreview
+      });
+      setWorkerProfileForm((prev) => ({ ...prev, workSamples: updatedSamples }));
+      setWorkSampleForm({ title: "", beforeImage: null, beforePreview: "", afterImage: null, afterPreview: "" });
+      setEditingWorkSampleIndex(null);
+      setShowWorkSampleModal(false);
+      addToast("Work sample saved", "success");
+    } catch (error) {
+      addToast(`Error: ${error.message}`, "danger");
+    }
+  };
+  const handleDeleteCertification = (index) => {
+    const updatedCertifications = workerProfileForm.certifications.filter((_, i) => i !== index);
+    setWorkerProfileForm((prev) => ({ ...prev, certifications: updatedCertifications }));
+    showToast("Certification deleted", "success");
+  };
+  const handleDeleteWorkSample = (index) => {
+    const updatedSamples = workerProfileForm.workSamples.filter((_, i) => i !== index);
+    setWorkerProfileForm((prev) => ({ ...prev, workSamples: updatedSamples }));
+    showToast("Work sample deleted", "success");
+  };
+  const handleEditCertification = (index) => {
+    setEditingCertificationIndex(index);
+    setCertificationForm(workerProfileForm.certifications[index]);
+    setShowCertificationModal(true);
+  };
+  const handleEditWorkSample = (index) => {
+    setEditingWorkSampleIndex(index);
+    setWorkSampleForm(workerProfileForm.workSamples[index]);
+    setShowWorkSampleModal(true);
+  };
+  const handleOpenCertificationModal = () => {
+    setEditingCertificationIndex(null);
+    setCertificationForm({ name: "", certificateImage: null, certificatePreview: "" });
+    setShowCertificationModal(true);
+  };
+  const handleOpenWorkSampleModal = () => {
+    setEditingWorkSampleIndex(null);
+    setWorkSampleForm({ title: "", beforeImage: null, beforePreview: "", afterImage: null, afterPreview: "" });
+    setShowWorkSampleModal(true);
+  };
+  const handleSendChatMessage = (conversationId, payload) => {
+    const text = String(payload?.text || "").trim();
+    const imageUrl = String(payload?.imageUrl || "");
+    const imageName = String(payload?.imageName || "");
+    if (!conversationId || (!text && !imageUrl) || !currentUser?.role) {
+      return;
+    }
+    const senderDisplayName =
+      currentUser.role === "household"
+        ? getDisplayName(currentHousehold?.firstName, currentHousehold?.lastName, currentHousehold?.username)
+        : getDisplayName(currentWorker?.firstName, currentWorker?.lastName, currentWorker?.username);
+    const message = {
+      id: `${conversationId}-${Date.now()}`,
+      senderRole: currentUser.role,
+      senderUsername: currentUser.username,
+      senderLabel: senderDisplayName,
+      text,
+      imageUrl,
+      imageName,
+      createdAt: new Date().toISOString(),
+      createdAtLabel: formatChatTimestamp(),
+    };
+    setChatMessagesByConversation((prev) => ({
+      ...prev,
+      [conversationId]: [...(prev[conversationId] || []), message],
+    }));
+  };
+  const renderWithToasts = (content) => (
+    <>
+      <GawaGoToastHost toasts={appToasts} onDismiss={dismissToast} />
+      {content}
+      <FloatingChatWidget
+        conversations={availableChatConversations}
+        currentConversationId={activeChatConversation?.id || null}
+        messagesByConversation={chatMessagesForWidget}
+        onSelectConversation={setActiveChatConversationId}
+        onSendMessage={handleSendChatMessage}
+      />
+    </>
+  );
   if (view === "worker-job-detail") {
-    return (
+    return renderWithToasts(
       <Suspense fallback={<ViewLoading />}>
         <WorkerJobDetailView
           currentUser={currentUser}
@@ -872,7 +1516,7 @@ function App() {
     );
   }
   if (view === "superadmin-dashboard") {
-    return (
+    return renderWithToasts(
       <Suspense fallback={<ViewLoading />}>
         <SuperAdminDashboardView
           currentUser={currentUser}
@@ -898,7 +1542,7 @@ function App() {
     );
   }
   if (view === "forgot-password") {
-    return (
+    return renderWithToasts(
       <Suspense fallback={<ViewLoading />}>
         <ForgotPasswordView
           form={forgotPasswordForm}
@@ -916,7 +1560,7 @@ function App() {
       </Suspense>
     );
   }
-  return (
+  return renderWithToasts(
     <Suspense fallback={<ViewLoading />}>
       <AppViews
       SKILLS={SKILLS}
@@ -985,6 +1629,7 @@ function App() {
       openForgotPassword={openForgotPassword}
       openHouseholdDashboard={openHouseholdDashboard}
       openHouseholdFeedbackAll={openHouseholdFeedbackAll}
+      openHouseholdGetVerified={openHouseholdGetVerified}
       openHouseholdJobDetail={openHouseholdJobDetail}
       openHouseholdMyJobs={openHouseholdMyJobs}
       openHouseholdNotificationWorker={openHouseholdNotificationWorker}
@@ -1026,6 +1671,42 @@ function App() {
       setWorkerProfileForm={setWorkerProfileForm}
       toggleSkill={toggleSkill}
       toggleWorkerProfileSkill={toggleWorkerProfileSkill}
+      showCertificationModal={showCertificationModal}
+      setShowCertificationModal={setShowCertificationModal}
+      showWorkSampleModal={showWorkSampleModal}
+      setShowWorkSampleModal={setShowWorkSampleModal}
+      certificationForm={certificationForm}
+      setCertificationForm={setCertificationForm}
+      workSampleForm={workSampleForm}
+      setWorkSampleForm={setWorkSampleForm}
+      handleAddCertification={handleAddCertification}
+      handleAddWorkSample={handleAddWorkSample}
+      handleDeleteCertification={handleDeleteCertification}
+      handleDeleteWorkSample={handleDeleteWorkSample}
+      handleEditCertification={handleEditCertification}
+      handleEditWorkSample={handleEditWorkSample}
+      handleOpenCertificationModal={handleOpenCertificationModal}
+      handleOpenWorkSampleModal={handleOpenWorkSampleModal}
+      editingCertificationIndex={editingCertificationIndex}
+      editingWorkSampleIndex={editingWorkSampleIndex}
+      viewingWorkSampleIndex={viewingWorkSampleIndex}
+      setViewingWorkSampleIndex={setViewingWorkSampleIndex}
+      portfolioGalleryOpen={portfolioGalleryOpen}
+      setPortfolioGalleryOpen={setPortfolioGalleryOpen}
+      employmentHistory={employmentHistory}
+      ratingModalOpen={ratingModalOpen}
+      setRatingModalOpen={setRatingModalOpen}
+      ratingJobId={ratingJobId}
+      ratingWorker={ratingWorker}
+      skillRatings={skillRatings}
+      setSkillRatings={setSkillRatings}
+      openRatingModal={openRatingModal}
+      handleSubmitRatings={handleSubmitRatings}
+      showComplaintModal={showComplaintModal}
+      setShowComplaintModal={setShowComplaintModal}
+      complaintForm={complaintForm}
+      setComplaintForm={setComplaintForm}
+      handleSubmitComplaint={handleSubmitComplaint}
       verificationForm={verificationForm}
       verificationRequests={verificationRequests}
       view={view}

@@ -1,12 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SidebarIcon } from "./DashboardLayout";
 import HomeView from "./HomeView";
+import ComplaintModal from "./ComplaintModal";
 import HouseholdJobMapPanel from "./HouseholdJobMapPanel";
 import JobImageUpload from "./JobImageUpload";
 import LocationDistanceMap from "./LocationDistanceMap";
 import WorkerLocationPicker from "./WorkerLocationPicker";
-import { getBarangayCenter } from "../utils/locationUtils";
-import { getHiringProgressLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
+import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
+import { getBarangayFromBoundary } from "../utils/geofenceUtils";
+import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
+import { getApplicationStatusLabel, getHiringProgressLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
+import { deleteBackendNotification } from "../services/backendDataService";
+import { TAYABAS_MAP_BOUNDS } from "../constants/appConstants";
+import { formatExperience } from "../utils/formatters";
+
+const HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY = "gawago-household-dismissed-notifications";
+const WORKER_DISMISSED_NOTIFICATIONS_KEY = "gawago-worker-dismissed-notifications";
+
 export default function AppViews({
   SKILLS,
   adminSection,
@@ -74,6 +84,7 @@ export default function AppViews({
   openForgotPassword,
   openHouseholdDashboard,
   openHouseholdFeedbackAll,
+  openHouseholdGetVerified,
   openHouseholdJobDetail,
   openHouseholdMyJobs,
   openHouseholdNotificationWorker,
@@ -115,6 +126,42 @@ export default function AppViews({
   setWorkerProfileForm,
   toggleSkill,
   toggleWorkerProfileSkill,
+  showCertificationModal,
+  setShowCertificationModal,
+  showWorkSampleModal,
+  setShowWorkSampleModal,
+  certificationForm,
+  setCertificationForm,
+  workSampleForm,
+  setWorkSampleForm,
+  handleAddCertification,
+  handleAddWorkSample,
+  handleDeleteCertification,
+  handleDeleteWorkSample,
+  handleEditCertification,
+  handleEditWorkSample,
+  handleOpenCertificationModal,
+  handleOpenWorkSampleModal,
+  editingCertificationIndex,
+  editingWorkSampleIndex,
+  viewingWorkSampleIndex,
+  setViewingWorkSampleIndex,
+  portfolioGalleryOpen,
+  setPortfolioGalleryOpen,
+  employmentHistory,
+  ratingModalOpen,
+  setRatingModalOpen,
+  ratingJobId,
+  ratingWorker,
+  skillRatings,
+  setSkillRatings,
+  openRatingModal,
+  handleSubmitRatings,
+  showComplaintModal,
+  setShowComplaintModal,
+  complaintForm,
+  setComplaintForm,
+  handleSubmitComplaint,
   verificationForm,
   verificationRequests,
   view,
@@ -141,8 +188,35 @@ export default function AppViews({
   const [workerBarangayFilter, setWorkerBarangayFilter] = useState("");
   const [workerMarketSearch, setWorkerMarketSearch] = useState("");
   const [householdNotificationPreview, setHouseholdNotificationPreview] = useState(null);
+  const [householdNotificationMenuId, setHouseholdNotificationMenuId] = useState(null);
+  const [householdNotificationDeletingId, setHouseholdNotificationDeletingId] = useState(null);
+  const [workerNotificationPreview, setWorkerNotificationPreview] = useState(null);
+  const [workerNotificationMenuId, setWorkerNotificationMenuId] = useState(null);
+  const [workerNotificationDeletingId, setWorkerNotificationDeletingId] = useState(null);
+  const [householdDismissedNotificationIds, setHouseholdDismissedNotificationIds] = useState(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY) || "{}");
+      return stored?.[currentUser?.username] || [];
+    } catch {
+      return [];
+    }
+  });
+  const [workerDismissedNotificationIds, setWorkerDismissedNotificationIds] = useState(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(WORKER_DISMISSED_NOTIFICATIONS_KEY) || "{}");
+      return stored?.[currentUser?.username] || [];
+    } catch {
+      return [];
+    }
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const addWorkerAvailabilityWindow = () => {
+  const addWorkerDateAvailability = () => {
     setWorkerProfileForm((prev) => ({
       ...prev,
       availabilityWindows: [
@@ -150,25 +224,25 @@ export default function AppViews({
         {
           id: `availability-${Date.now()}`,
           date: "",
-          startTime: "08:00",
+          startTime: "09:00",
           endTime: "17:00",
           isAvailable: true,
         },
       ],
     }));
   };
-  const updateWorkerAvailabilityWindow = (windowId, field, value) => {
+  const updateWorkerDateAvailability = (id, field, value) => {
     setWorkerProfileForm((prev) => ({
       ...prev,
       availabilityWindows: (prev.availabilityWindows || []).map((window) =>
-        window.id === windowId ? { ...window, [field]: value } : window,
+        window.id === id ? { ...window, [field]: value } : window,
       ),
     }));
   };
-  const removeWorkerAvailabilityWindow = (windowId) => {
+  const removeWorkerDateAvailability = (id) => {
     setWorkerProfileForm((prev) => ({
       ...prev,
-      availabilityWindows: (prev.availabilityWindows || []).filter((window) => window.id !== windowId),
+      availabilityWindows: (prev.availabilityWindows || []).filter((window) => window.id !== id),
     }));
   };
   const [workerProfileEditing, setWorkerProfileEditing] = useState(false);
@@ -178,8 +252,21 @@ export default function AppViews({
   const [householdProfileEditing, setHouseholdProfileEditing] = useState(false);
   const [selectedWorkerRouteDistanceKm, setSelectedWorkerRouteDistanceKm] = useState(null);
   const [workerHireRequestPreview, setWorkerHireRequestPreview] = useState(null);
+  const verificationAccount = currentUser?.role === "household" ? currentHousehold : currentWorker;
+  const isHouseholdVerification = currentUser?.role === "household";
+  const verificationNavLabel =
+    verificationAccount?.verification === "Verified"
+      ? "Verified"
+      : verificationAccount?.verification === "Under Review"
+        ? "Under Review"
+        : verificationAccount?.verification === "Rejected"
+          ? "Verify Again"
+          : "Get Verified";
+  const pendingVerificationSubmission =
+    verificationAccount?.verificationSubmission &&
+    ["Pending", "Under Review"].includes(verificationAccount.verificationSubmission.status);
   const navIcon = (name) => <SidebarIcon name={name} />;
-  const getDistancePoint = (record) => {
+  const getDistancePoint = (record, requireTayabasLocation = false) => {
     const latitude = record?.latitude ?? null;
     const longitude = record?.longitude ?? null;
     if (
@@ -188,10 +275,26 @@ export default function AppViews({
       Number.isFinite(Number(latitude)) &&
       Number.isFinite(Number(longitude))
     ) {
+      const numericLatitude = Number(latitude);
+      const numericLongitude = Number(longitude);
+      const isInsideTayabasBounds =
+        numericLatitude >= TAYABAS_MAP_BOUNDS.south &&
+        numericLatitude <= TAYABAS_MAP_BOUNDS.north &&
+        numericLongitude >= TAYABAS_MAP_BOUNDS.west &&
+        numericLongitude <= TAYABAS_MAP_BOUNDS.east;
+      if (requireTayabasLocation && !isInsideTayabasBounds) {
+        return null;
+      }
       return {
-        latitude,
-        longitude,
+        latitude: numericLatitude,
+        longitude: numericLongitude,
+        boundaryBarangay:
+          getBarangayFromBoundary(numericLatitude, numericLongitude) ||
+          getNearestBarangay(numericLatitude, numericLongitude),
       };
+    }
+    if (requireTayabasLocation) {
+      return null;
     }
     return getBarangayCenter(record?.barangay || "");
   };
@@ -205,7 +308,10 @@ export default function AppViews({
       : "Road distance unavailable";
   };
   const workerPendingHireRequests = workerApplications.filter((job) => job.canAcceptHireRequest);
-  const workerPendingHireRequestNotifications = workerNotificationsWithReadState.filter(
+  const visibleWorkerNotifications = workerNotificationsWithReadState.filter(
+    (notification) => !workerDismissedNotificationIds.includes(notification.id),
+  );
+  const workerPendingHireRequestNotifications = visibleWorkerNotifications.filter(
     (item) => item.actionType === "hire_request" && item.requiresAction && item.applicationId,
   );
   const workerHireRequestCards =
@@ -233,7 +339,12 @@ export default function AppViews({
             unread: notification.unread,
           };
         })
-      : workerPendingHireRequests;
+      : workerPendingHireRequests
+          .map((job) => ({
+            ...job,
+            notificationId: `hire-request-${job.applicationId || job.id}`,
+          }))
+          .filter((job) => !workerDismissedNotificationIds.includes(job.notificationId));
   const workerHireRequestPreviewJob = workerHireRequestPreview
     ? workerHireRequestCards.find(
         (job) => String(job.applicationId) === String(workerHireRequestPreview.applicationId),
@@ -253,7 +364,7 @@ export default function AppViews({
       return (title && message.includes(title)) || (serviceType && message.includes(serviceType));
     });
   };
-  const workerGeneralNotifications = workerNotificationsWithReadState.filter(
+  const workerGeneralNotifications = visibleWorkerNotifications.filter(
     (item) => item.notificationType !== "hiring" || !hiringNotificationHasRequestCard(item),
   );
   const selectedWorkerApplication =
@@ -304,7 +415,7 @@ export default function AppViews({
     selectedWorkerApplication && !["Hire Request", "Hired", "Rejected"].includes(selectedWorkerApplication.status);
   const selectedWorkerHireButtonLabel =
     selectedWorkerApplication?.status === "Pending"
-      ? "Hire Worker"
+      ? "Accept Applicant"
       : selectedWorkerApplication?.status === "Hired"
         ? "Already Hired"
         : selectedWorkerApplication?.status === "Hire Request"
@@ -376,6 +487,52 @@ export default function AppViews({
       setHouseholdNotificationPreview(null);
     }
   }, [householdNotificationPreview, view]);
+  useEffect(() => {
+    if (view !== "worker-notifications") {
+      setWorkerNotificationPreview(null);
+      setWorkerHireRequestPreview(null);
+      setWorkerNotificationMenuId(null);
+    }
+  }, [view]);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY) || "{}");
+      setHouseholdDismissedNotificationIds(stored?.[currentUser?.username] || []);
+    } catch {
+      setHouseholdDismissedNotificationIds([]);
+    }
+  }, [currentUser?.username]);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(WORKER_DISMISSED_NOTIFICATIONS_KEY) || "{}");
+      setWorkerDismissedNotificationIds(stored?.[currentUser?.username] || []);
+    } catch {
+      setWorkerDismissedNotificationIds([]);
+    }
+  }, [currentUser?.username]);
+  useEffect(() => {
+    const closeNotificationMenu = () => {
+      setHouseholdNotificationMenuId(null);
+      setWorkerNotificationMenuId(null);
+    };
+    const closeNotificationMenuOnEscape = (event) => {
+      if (event.key === "Escape") {
+        closeNotificationMenu();
+      }
+    };
+    document.addEventListener("click", closeNotificationMenu);
+    document.addEventListener("keydown", closeNotificationMenuOnEscape);
+    return () => {
+      document.removeEventListener("click", closeNotificationMenu);
+      document.removeEventListener("keydown", closeNotificationMenuOnEscape);
+    };
+  }, []);
   useEffect(() => {
     const handleMobileSidebarClick = (event) => {
       const sidebarHead = event.target.closest(".worker-sidebar-head");
@@ -472,17 +629,24 @@ export default function AppViews({
     return `₱${safeAmount.toFixed(2)}${job?.rateType ? ` / ${job.rateType}` : ""}`;
   };
   const filteredHouseholdNotifications = useMemo(() => {
+    const visibleNotifications = householdNotificationsWithReadState.filter(
+      (notification) => !householdDismissedNotificationIds.includes(notification.id),
+    );
     if (!householdNotificationDateFilter) {
-      return householdNotificationsWithReadState;
+      return visibleNotifications;
     }
-    return householdNotificationsWithReadState.filter((notification) => {
+    return visibleNotifications.filter((notification) => {
       const notificationDate = new Date(notification.date || notification.createdAt || "");
       if (Number.isNaN(notificationDate.getTime())) {
         return false;
       }
       return notificationDate.toISOString().slice(0, 10) === householdNotificationDateFilter;
     });
-  }, [householdNotificationDateFilter, householdNotificationsWithReadState]);
+  }, [
+    householdDismissedNotificationIds,
+    householdNotificationDateFilter,
+    householdNotificationsWithReadState,
+  ]);
   const getHouseholdNotificationWorker = (notification) => {
     if (!notification?.workerId) {
       return null;
@@ -496,8 +660,109 @@ export default function AppViews({
     return householdJobs.find((job) => String(job.id) === String(notification.jobId)) || null;
   };
   const openHouseholdNotificationPreview = (notification) => {
+    setHouseholdNotificationMenuId(null);
     markNotificationRead(notification.id);
     setHouseholdNotificationPreview(notification);
+  };
+  const rememberDismissedHouseholdNotification = (notificationId) => {
+    setHouseholdDismissedNotificationIds((previousIds) => {
+      if (previousIds.includes(notificationId)) {
+        return previousIds;
+      }
+      const nextIds = [...previousIds, notificationId];
+      if (typeof window !== "undefined" && currentUser?.username) {
+        try {
+          const stored = JSON.parse(window.localStorage.getItem(HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY) || "{}");
+          window.localStorage.setItem(
+            HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY,
+            JSON.stringify({
+              ...stored,
+              [currentUser.username]: nextIds,
+            }),
+          );
+        } catch {
+          // The notification still disappears for the current session.
+        }
+      }
+      return nextIds;
+    });
+  };
+  const deleteHouseholdNotification = async (notification) => {
+    setHouseholdNotificationMenuId(null);
+    if (!window.confirm("Delete this notification?")) {
+      return;
+    }
+    setHouseholdNotificationDeletingId(notification.id);
+    try {
+      if (notification.backendId) {
+        await deleteBackendNotification(notification.backendId);
+      }
+      rememberDismissedHouseholdNotification(notification.id);
+      if (householdNotificationPreview?.id === notification.id) {
+        setHouseholdNotificationPreview(null);
+      }
+    } catch (error) {
+      window.alert(error.message || "Unable to delete notification.");
+    } finally {
+      setHouseholdNotificationDeletingId(null);
+    }
+  };
+  const rememberDismissedWorkerNotification = (notificationId) => {
+    setWorkerDismissedNotificationIds((previousIds) => {
+      if (previousIds.includes(notificationId)) {
+        return previousIds;
+      }
+      const nextIds = [...previousIds, notificationId];
+      if (typeof window !== "undefined" && currentUser?.username) {
+        try {
+          const stored = JSON.parse(window.localStorage.getItem(WORKER_DISMISSED_NOTIFICATIONS_KEY) || "{}");
+          window.localStorage.setItem(
+            WORKER_DISMISSED_NOTIFICATIONS_KEY,
+            JSON.stringify({
+              ...stored,
+              [currentUser.username]: nextIds,
+            }),
+          );
+        } catch {
+          // The notification still disappears for the current session.
+        }
+      }
+      return nextIds;
+    });
+  };
+  const openWorkerNotificationPreview = (notification) => {
+    setWorkerNotificationMenuId(null);
+    if (notification.id) {
+      markNotificationRead(notification.id);
+    }
+    setWorkerNotificationPreview(notification);
+  };
+  const deleteWorkerNotification = async (notification) => {
+    setWorkerNotificationMenuId(null);
+    if (!window.confirm("Delete this notification?")) {
+      return;
+    }
+    const notificationId =
+      notification.notificationId || notification.id || `hire-request-${notification.applicationId}`;
+    const backendId = notification.notificationBackendId || notification.backendId;
+    setWorkerNotificationDeletingId(notificationId);
+    try {
+      if (backendId) {
+        await deleteBackendNotification(backendId);
+      }
+      rememberDismissedWorkerNotification(notificationId);
+      if (
+        workerHireRequestPreview?.notificationId === notificationId ||
+        workerNotificationPreview?.id === notificationId
+      ) {
+        setWorkerHireRequestPreview(null);
+        setWorkerNotificationPreview(null);
+      }
+    } catch (error) {
+      window.alert(error.message || "Unable to delete notification.");
+    } finally {
+      setWorkerNotificationDeletingId(null);
+    }
   };
   const openStructuredNotificationAction = (notification) => {
     if (!notification?.requiresAction && !notification?.actionType) {
@@ -607,44 +872,6 @@ export default function AppViews({
       [draftKey]: { feedback: "", rating: "5" },
     }));
   };
-  const renderWorkerApplicationAction = (job) => {
-    const isCompleted = job.status === "Completed" || job.applicationStatus === "Completed";
-    const isWaitingForHousehold = job.status === "Waiting for Household Confirmation";
-
-    if (job.canAcceptHireRequest) {
-      return (
-        <button className="btn btn-primary btn-sm" type="button" onClick={() => openWorkerJobDetail(job.id)}>
-          View Request
-        </button>
-      );
-    }
-
-    if (isCompleted) {
-      return (
-        <button className="btn btn-outline-success btn-sm" type="button" onClick={() => openWorkerJobDetail(job.id)}>
-          Completed Work
-        </button>
-      );
-    }
-
-    if (isWaitingForHousehold) {
-      return <span className="worker-application-status-note">Waiting for household</span>;
-    }
-
-    if (job.canRequestCompletion) {
-      return (
-        <button
-          className="btn btn-success btn-sm"
-          type="button"
-          onClick={() => handleWorkerRequestCompletion(job.id, "I have completed the service today.")}
-        >
-          Complete
-        </button>
-      );
-    }
-
-    return <span className="worker-application-status-note">None</span>;
-  };
   const getWorkerApplicationDisplayStatus = (job) => {
     if (job.status === "Completed" || job.applicationStatus === "Completed") {
       return "Completed";
@@ -661,22 +888,36 @@ export default function AppViews({
     barangay: selectedJob?.barangay || currentHousehold?.barangay,
     latitude: selectedJob?.latitude ?? currentHousehold?.latitude ?? null,
     longitude: selectedJob?.longitude ?? currentHousehold?.longitude ?? null,
-  });
+  }, true);
   const selectedWorkerPoint = selectedWorker
     ? getDistancePoint({
         barangay: selectedWorker.barangay,
         latitude: selectedWorker.latitude ?? null,
         longitude: selectedWorker.longitude ?? null,
-      })
+      }, true)
     : null;
   const selectedWorkerJobLatitude = selectedWorkerJobPoint?.latitude ?? null;
   const selectedWorkerJobLongitude = selectedWorkerJobPoint?.longitude ?? null;
-  const selectedWorkerDistanceKm = selectedWorker?.distanceKm ?? null;
+  const selectedWorkerJobLocationLabel = selectedWorkerJobPoint?.boundaryBarangay
+    ? `Near ${selectedWorkerJobPoint.boundaryBarangay}, Tayabas City`
+    : formatLocation(selectedJob?.barangay, selectedJob?.streetAddress);
+  const selectedWorkerLocationLabel = selectedWorkerPoint?.boundaryBarangay
+    ? `Near ${selectedWorkerPoint.boundaryBarangay}, Tayabas City`
+    : formatLocation(selectedWorker?.barangay, selectedWorker?.streetAddress);
+  const selectedWorkerDistanceKm =
+    selectedWorker?.distanceKm !== null &&
+    selectedWorker?.distanceKm !== undefined &&
+    selectedWorker?.distanceKm !== "" &&
+    Number.isFinite(Number(selectedWorker.distanceKm))
+      ? Number(selectedWorker.distanceKm)
+      : null;
   const selectedWorkerRouteLabel =
     selectedWorkerRouteDistanceKm !== null && selectedWorkerRouteDistanceKm !== undefined
       ? formatDistance(selectedWorkerRouteDistanceKm)
       : "";
-  const selectedWorkerDistanceLabel = selectedWorkerRouteLabel || formatDistance(selectedWorkerDistanceKm);
+  const selectedWorkerDistanceLabel =
+    selectedWorkerRouteLabel ||
+    (selectedWorkerDistanceKm !== null ? formatDistance(selectedWorkerDistanceKm) : "Road distance unavailable");
   const selectedWorkerReviews = selectedWorker?.receivedReviews || [];
   const selectedWorkerRatings = selectedWorkerReviews.filter((review) => review.rating != null);
   const selectedWorkerRatingCounts = [5, 4, 3, 2, 1].map((rating) => ({
@@ -879,7 +1120,7 @@ export default function AppViews({
           />
         )}
         {view === "register-worker" && (
-          <section className="login-section py-5">
+          <section className="login-section register-page py-5">
             <div className="container login-page-wrap">
               <div className="login-shell shadow-sm">
                 <div className="login-topbar d-flex align-items-center px-3">
@@ -1123,7 +1364,7 @@ export default function AppViews({
           </section>
         )}
         {view === "register-household" && (
-          <section className="login-section py-5">
+          <section className="login-section register-page py-5">
             <div className="container login-page-wrap">
               <div className="login-shell shadow-sm">
                 <div className="login-topbar d-flex align-items-center px-3">
@@ -1307,7 +1548,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
@@ -1373,8 +1614,8 @@ export default function AppViews({
                           <p>{category.openJobs} open jobs</p>
                         </div>
                         <div className="worker-market-card-actions">
-                          <span className={`badge ${category.matchesWorkerSkills ? "text-bg-primary" : "text-bg-light"}`}>
-                            {category.matchesWorkerSkills ? "Matches your skills" : "Available market"}
+                          <span className={`badge ${category.matchesWorkerSkills ? "worker-skill-match" : "worker-skill-neutral"}`}>
+                            {category.matchesWorkerSkills ? "Matches your skills" : "Does not match skills"}
                           </span>
                           <button
                             className="btn btn-outline-secondary btn-sm"
@@ -1426,7 +1667,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
@@ -1479,7 +1720,7 @@ export default function AppViews({
                     </div>
                   </div>
                 </div>
-                <p className="small text-primary fw-semibold mt-3 mb-2">Jobs matching your skills appear first</p>
+                <p className="small worker-skill-hint fw-semibold mt-3 mb-2">Green labels match your skills. Neutral labels are other available jobs.</p>
                 <div className="row g-3">
                   {filteredWorkerVisibleJobs.length > 0 ? (
                     filteredWorkerVisibleJobs.map((job) => (
@@ -1490,8 +1731,8 @@ export default function AppViews({
                               <h2 className="h5 mb-1">{job.jobTitle || job.serviceType}</h2>
                               <p className="text-muted mb-1">{job.description || "No description provided."}</p>
                             </div>
-                            <span className={`badge ${job.matchesSkill ? "text-bg-primary" : "text-bg-secondary"}`}>
-                              {job.matchesSkill ? "Matches Your Skills" : "Suggested"}
+                            <span className={`badge ${job.matchesSkill ? "worker-skill-match" : "worker-skill-neutral"}`}>
+                              {job.matchesSkill ? "Matches Your Skills" : "Does not match skills"}
                             </span>
                           </div>
                           <dl className="worker-job-card-details">
@@ -1556,7 +1797,7 @@ export default function AppViews({
                         <div className="p-4 text-center text-muted">
                           {" "}
                           {workerJobTypeFilter === "All Types"
-                            ? "Wala pang household job posts na available ngayon."
+                            ? "There are no household job posts available right now."
                             : `Wala pang household job posts para sa ${workerJobTypeFilter}.`}{" "}
                         </div>
                       </div>
@@ -1596,7 +1837,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
@@ -1662,10 +1903,23 @@ export default function AppViews({
                               <div className="household-feedback-copy">
                                 <div className="household-review-title-row">
                                   <h2>{authorName}</h2>
-                                  {review.rating != null && <strong>{review.rating}/5</strong>}
+                                  {review.overall_rating != null && <strong>{Number(review.overall_rating).toFixed(1)}/5</strong>}
+                                  {review.rating != null && !review.overall_rating && <strong>{review.rating}/5</strong>}
                                 </div>
+                                {(review.quality_of_work || review.punctuality || review.communication || review.professionalism) && (
+                                  <div style={{ fontSize: "0.9em", marginBottom: "0.5rem" }}>
+                                    <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "0.25rem" }}>
+                                      {review.quality_of_work && <span>Quality: <strong>{review.quality_of_work}⭐</strong></span>}
+                                      {review.punctuality && <span>Punctuality: <strong>{review.punctuality}⭐</strong></span>}
+                                    </div>
+                                    <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                                      {review.communication && <span>Communication: <strong>{review.communication}⭐</strong></span>}
+                                      {review.professionalism && <span>Professionalism: <strong>{review.professionalism}⭐</strong></span>}
+                                    </div>
+                                  </div>
+                                )}
                                 <p>{review.feedback || review.comment || "No comment provided."}</p>
-                                <small>{review.createdAt || review.date || "Recently"}</small>
+                                <small>{formatDateTime(review.createdAt || review.date)}</small>
                                 {replySent ? (
                                   <p className="small text-muted mb-0 mt-2">Anonymous feedback already sent to household.</p>
                                 ) : (
@@ -1777,7 +2031,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
@@ -1844,7 +2098,7 @@ export default function AppViews({
                                   <strong>{review.rating != null ? `${review.rating}/5` : "No rating"}</strong>
                                 </div>
                                 <p>{review.feedback || review.comment || "No comment provided."}</p>
-                                <small>{review.createdAt || review.date || "Recently"}</small>
+                                <small>{formatDateTime(review.createdAt || review.date)}</small>
                                 <details className="household-feedback-more">
                                   <summary>View more</summary>
                                   <p>This rating came from a household after a completed service.</p>
@@ -1896,7 +2150,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
@@ -1990,7 +2244,9 @@ export default function AppViews({
                   </div>
                   <div className="col-lg-8">
                     <div className="profile-card">
-                      <div className="profile-card-head">Edit Profile Information</div>
+                      <div className="profile-card-head">
+                        <span>Edit Profile Information</span>
+                      </div>
                       <form className="p-3" onSubmit={submitWorkerProfileForm}>
                         <fieldset disabled={!workerProfileEditing} className="worker-profile-edit-fieldset">
                           <h3 className="h6 fw-bold mb-2">Profile Photo</h3>
@@ -2073,114 +2329,6 @@ export default function AppViews({
                               />
                             </div>
                           </div>
-                          <h3 className="h6 fw-bold mb-2">Worker Information</h3>
-                          <div className="mb-2">
-                            <label className="form-label small fw-semibold mb-1">Bio / About Me</label>
-                            <textarea
-                              name="bio"
-                              className="form-control"
-                              rows="3"
-                              value={workerProfileForm.bio}
-                              onChange={handleWorkerProfileChange}
-                            />
-                          </div>
-                          <div className="row g-2 mb-3">
-                            <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Hourly Rate (PHP)</label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                name="hourlyRate"
-                                className="form-control"
-                                value={workerProfileForm.hourlyRate}
-                                onChange={handleWorkerProfileChange}
-                              />
-                            </div>
-                            <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Daily Rate (PHP)</label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                name="dailyRate"
-                                className="form-control"
-                                value={workerProfileForm.dailyRate}
-                                onChange={handleWorkerProfileChange}
-                              />
-                            </div>
-                          </div>
-                          <div className="mb-3">
-                            <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-2">
-                              <label className="form-label fw-semibold mb-0">Availability Windows</label>
-                              <button
-                                className="btn btn-outline-primary btn-sm"
-                                type="button"
-                                disabled={!workerProfileEditing}
-                                onClick={addWorkerAvailabilityWindow}
-                              >
-                                Add Window
-                              </button>
-                            </div>
-                            {(workerProfileForm.availabilityWindows || []).length > 0 ? (
-                              <div className="worker-availability-list">
-                                {(workerProfileForm.availabilityWindows || []).map((window) => (
-                                  <div className="worker-availability-row" key={window.id}>
-                                    <input
-                                      type="date"
-                                      className="form-control"
-                                      value={window.date}
-                                      disabled={!workerProfileEditing}
-                                      onChange={(event) => updateWorkerAvailabilityWindow(window.id, "date", event.target.value)}
-                                    />
-                                    <input
-                                      type="time"
-                                      className="form-control"
-                                      value={String(window.startTime || "").slice(0, 5)}
-                                      disabled={!workerProfileEditing}
-                                      onChange={(event) => updateWorkerAvailabilityWindow(window.id, "startTime", event.target.value)}
-                                    />
-                                    <input
-                                      type="time"
-                                      className="form-control"
-                                      value={String(window.endTime || "").slice(0, 5)}
-                                      disabled={!workerProfileEditing}
-                                      onChange={(event) => updateWorkerAvailabilityWindow(window.id, "endTime", event.target.value)}
-                                    />
-                                    <button
-                                      className="btn btn-outline-danger btn-sm"
-                                      type="button"
-                                      disabled={!workerProfileEditing}
-                                      onClick={() => removeWorkerAvailabilityWindow(window.id)}
-                                    >
-                                      Remove
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="small text-muted mb-0">Add available dates and times so households can match with you.</p>
-                            )}
-                          </div>
-                          <div className="mb-3">
-                            <label className="form-label fw-semibold">
-                              {" "}
-                              Skills <span className="fw-normal text-muted">(Select all that apply)</span>
-                            </label>
-                            <div className="skills-grid">
-                              {SKILLS.map((skill) => (
-                                <label key={skill} className="form-check">
-                                  <input
-                                    type="checkbox"
-                                    className="form-check-input"
-                                    checked={workerProfileForm.skills.includes(skill)}
-                                    onChange={() => toggleWorkerProfileSkill(skill)}
-                                  />
-                                  <span className="form-check-label">{skill}</span>
-                                </label>
-                              ))}
-                            </div>
-                          </div>
                         </fieldset>
                         <div className="d-flex justify-content-end">
                           <button
@@ -2198,6 +2346,171 @@ export default function AppViews({
                           </button>
                         </div>
                       </form>
+                    </div>
+                  </div>
+                </div>
+                <div className="row g-3 mt-2">
+                  <div className="col-12">
+                    <div className="card border-0 shadow-sm">
+                      <div className="card-header bg-success text-white fw-bold">Skills & Expertise</div>
+                      <div className="card-body">
+                        <div className="skills-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+                          {(workerProfileForm.skills || []).length > 0 ? (
+                            workerProfileForm.skills.map((skill) => (
+                              <div key={skill} className="p-3 rounded" style={{ backgroundColor: '#f8f9fa', borderLeft: '4px solid #4CAF50' }}>
+                                <div className="fw-600">{skill}</div>
+                                <span className="badge bg-success mt-2">Proficient</span>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-muted">No skills added yet. Click Edit to add your skills.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-12">
+                    <div className="card border-0 shadow-sm">
+                      <div className="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                        <span>Certifications</span>
+                        {workerProfileEditing && (
+                          <button type="button" className="btn btn-sm btn-light" style={{ color: '#4CAF50' }} onClick={handleOpenCertificationModal}>+ Add Certificate</button>
+                        )}
+                      </div>
+                      <div className="card-body">
+                        {(workerProfileForm.certifications || []).length > 0 ? (
+                          <div className="row g-3">
+                            {workerProfileForm.certifications.map((cert, index) => (
+                              <div key={index} className="col-md-4">
+                                <div className="position-relative">
+                                  <img src={cert.certificatePreview} alt={cert.name} className="img-fluid rounded" style={{ width: '100%', height: '200px', objectFit: 'cover' }} />
+                                  <div className="position-absolute top-0 start-0 end-0 bottom-0 d-flex align-items-end justify-content-between p-2 rounded" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }}>
+                                    <div>
+                                      <p className="text-white mb-0 small fw-bold">{cert.name}</p>
+                                      {cert.is_verified && <span className="badge bg-success mt-1">✓ Verified</span>}
+                                    </div>
+                                    {workerProfileEditing && (
+                                      <div className="d-flex gap-1">
+                                        <button type="button" className="btn btn-sm btn-light" onClick={() => handleEditCertification(index)}>Edit</button>
+                                        <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteCertification(index)}>×</button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted">No certifications added yet. {workerProfileEditing && "Click the Add Certificate button to add one."}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-12">
+                    <div className="card border-0 shadow-sm">
+                      <div className="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                        <span>Work Samples</span>
+                        <div className="d-flex gap-2">
+                          {(workerProfileForm.workSamples || []).length > 0 && (
+                            <button type="button" className="btn btn-sm btn-light" style={{ color: '#4CAF50' }} onClick={() => setPortfolioGalleryOpen(true)}>View More</button>
+                          )}
+                          {workerProfileEditing && (
+                            <button type="button" className="btn btn-sm btn-light" style={{ color: '#4CAF50' }} onClick={handleOpenWorkSampleModal}>+ Add Sample</button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="card-body">
+                        {(workerProfileForm.workSamples || []).length > 0 ? (
+                          <div className="row g-3">
+                            {workerProfileForm.workSamples.map((sample, index) => (
+                              <div key={index} className="col-md-6">
+                                <div className="card border-success h-100">
+                                  <div className="card-body p-2">
+                                    <h6 className="mb-2">{sample.title}</h6>
+                                    <div className="d-flex gap-2" style={{ height: '120px' }}>
+                                      <div className="flex-grow-1 position-relative" style={{ cursor: 'pointer' }} onClick={() => setViewingWorkSampleIndex(index)}>
+                                        <img src={sample.beforePreview} alt="Before" className="img-fluid rounded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        <small className="position-absolute bottom-1 start-1 bg-dark text-white px-2 py-1 rounded">Before</small>
+                                      </div>
+                                      <div className="flex-grow-1 position-relative" style={{ cursor: 'pointer' }} onClick={() => setViewingWorkSampleIndex(index)}>
+                                        <img src={sample.afterPreview} alt="After" className="img-fluid rounded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        <small className="position-absolute bottom-1 start-1 bg-success text-white px-2 py-1 rounded">After</small>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {workerProfileEditing && (
+                                    <div className="card-footer bg-transparent border-top d-flex gap-2">
+                                      <button type="button" className="btn btn-sm btn-outline-secondary flex-grow-1" onClick={() => handleEditWorkSample(index)}>Edit</button>
+                                      <button type="button" className="btn btn-sm btn-outline-danger flex-grow-1" onClick={() => handleDeleteWorkSample(index)}>Delete</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted">No work samples uploaded yet. {workerProfileEditing && "Click the Add Sample button to add one."}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="row g-3 mt-2">
+                  <div className="col-12">
+                    <div className="card border-0 shadow-sm">
+                      <div className="card-header bg-success text-white fw-bold">Employment History</div>
+                      <div className="card-body">
+                        {(employmentHistory || []).length > 0 ? (
+                          <div className="list-group list-group-flush">
+                            {employmentHistory.map((job, index) => {
+                              const skillRatings = job.skill_ratings || [];
+                              const overallRating = skillRatings.length > 0
+                                ? (skillRatings.reduce((sum, sr) => sum + parseFloat(sr.rating || 0), 0) / skillRatings.length).toFixed(1)
+                                : 0;
+                              return (
+                                <div key={index} className="list-group-item px-0 py-3 border-bottom">
+                                  <div className="row align-items-start">
+                                    <div className="col-md-6">
+                                      <h6 className="mb-1 fw-bold">{job.title}</h6>
+                                      <p className="text-muted small mb-1">{job.household_name || "Household"}</p>
+                                      <p className="text-muted small mb-0">{job.location || ""}</p>
+                                    </div>
+                                    <div className="col-md-6">
+                                      <div className="d-flex justify-content-between align-items-start">
+                                        <div className="flex-grow-1">
+                                          {skillRatings.length > 0 ? (
+                                            <>
+                                              <p className="mb-1"><small className="fw-bold">Skill Ratings:</small></p>
+                                              {skillRatings.map((sr, idx) => (
+                                                <div key={idx} className="d-flex justify-content-between mb-1">
+                                                  <small className="text-muted">{sr.skill_name || sr.skill}:</small>
+                                                  <small className="fw-bold">
+                                                    <span className="badge bg-success">{sr.rating} ⭐</span>
+                                                  </small>
+                                                </div>
+                                              ))}
+                                              <div className="d-flex justify-content-between mt-2 pt-2 border-top">
+                                                <small className="text-muted"><strong>Overall:</strong></small>
+                                                <small className="fw-bold">
+                                                  <span className="badge bg-info">{overallRating} ⭐</span>
+                                                </small>
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <small className="text-muted">No ratings yet</small>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-muted">No completed jobs yet.</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2225,94 +2538,257 @@ export default function AppViews({
                     />
                   </div>
                 )}
-                <section className="profile-footer worker-rating-summary" aria-labelledby="worker-profile-feedback-title">
-                  <header className="worker-rating-header">
-                    <h2 id="worker-profile-feedback-title">Feedback & Rating</h2>
-                    <span>From households</span>
-                  </header>
-                  <div className="worker-rating-body">
-                    <div className="worker-rating-overview">
-                      <div className="worker-rating-score">
-                        <strong>{workerAverageRating != null ? workerAverageRating.toFixed(1) : "No ratings yet"}</strong>
-                        {workerAverageRating != null && <span className="worker-rating-stars">5-star average</span>}
-                        <small>
-                          {workerTotalReviews} {workerTotalReviews === 1 ? "review" : "reviews"}
-                        </small>
-                      </div>
-                      <div className="worker-rating-bars" aria-label="Rating distribution">
-                        {workerRatingCounts.map(({ rating, count }) => {
-                          const percentage = workerTotalReviews > 0 ? (count / workerTotalReviews) * 100 : 0;
-                          return (
-                            <div className="worker-rating-bar-row" key={rating}>
-                              <span>{rating} star</span>
-                              <div className="worker-rating-track">
-                                <div className="worker-rating-fill" style={{ width: `${percentage}%` }} />
-                              </div>
-                              <strong>{count}</strong>
+                {showCertificationModal && (
+                  <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={() => setShowCertificationModal(false)}>
+                    <div className="modal-dialog modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
+                      <div className="modal-content">
+                        <div className="modal-header bg-success text-white">
+                          <h5 className="modal-title">{editingCertificationIndex !== null ? "Edit Certificate" : "Add Certificate"}</h5>
+                          <button type="button" className="btn-close btn-close-white" onClick={() => setShowCertificationModal(false)}></button>
+                        </div>
+                        <div className="modal-body">
+                          <div className="mb-3">
+                            <label className="form-label">Certificate Type *</label>
+                            <select
+                              className="form-select"
+                              value={certificationForm.type || ""}
+                              onChange={(e) => setCertificationForm({ ...certificationForm, type: e.target.value })}
+                            >
+                              <option value="">Select type...</option>
+                              <option value="tesda">TESDA Certificate</option>
+                              <option value="license">Professional License</option>
+                              <option value="credential">Professional Credential</option>
+                              <option value="certification">Professional Certification</option>
+                              <option value="other">Other</option>
+                            </select>
+                          </div>
+                          <div className="mb-3">
+                            <label className="form-label">Certificate Name *</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              value={certificationForm.name}
+                              onChange={(e) => setCertificationForm({ ...certificationForm, name: e.target.value })}
+                              placeholder="e.g., AWS Solutions Architect"
+                            />
+                          </div>
+                          <div className="mb-3">
+                            <label className="form-label">Certificate Image *</label>
+                            <input
+                              type="file"
+                              className="form-control"
+                              accept="image/*"
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files[0]) {
+                                  const file = e.target.files[0];
+                                  const reader = new FileReader();
+                                  reader.onload = (event) => {
+                                    setCertificationForm({
+                                      ...certificationForm,
+                                      certificateImage: file,
+                                      certificatePreview: event.target.result,
+                                    });
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </div>
+                          {certificationForm.certificatePreview && (
+                            <div className="mb-3">
+                              <img src={certificationForm.certificatePreview} alt={certificationForm.name} className="img-fluid rounded" style={{ maxHeight: '200px', objectFit: 'contain' }} />
                             </div>
-                          );
-                        })}
+                          )}
+                        </div>
+                        <div className="modal-footer">
+                          <button type="button" className="btn btn-secondary" onClick={() => setShowCertificationModal(false)}>Cancel</button>
+                          <button type="button" className="btn btn-success" onClick={handleAddCertification}>Save Certificate</button>
+                        </div>
                       </div>
-                    </div>
-
-                    <div className="worker-rating-stats">
-                      <div>
-                        <strong>{workerTotalReviews}</strong>
-                        <span>Total reviews</span>
-                      </div>
-                      <div>
-                        <strong>{workerAverageRating != null ? workerAverageRating.toFixed(1) : "--"}</strong>
-                        <span>Average rating</span>
-                      </div>
-                      <div>
-                        <strong>{workerTotalReviews > 0 ? `${workerFiveStarRate}%` : "--"}</strong>
-                        <span>5-star rate</span>
-                      </div>
-                    </div>
-
-                    <div className="worker-recent-reviews-head">
-                      <h3>Recent reviews</h3>
-                      <button type="button" onClick={() => setWorkerProfilePanel("feedback")}>
-                        View all -&gt;
-                      </button>
-                    </div>
-
-                    <div className="worker-recent-reviews">
-                      {workerHouseholdReviews.slice(0, 2).length > 0 ? (
-                        workerHouseholdReviews.slice(0, 2).map((review) => {
-                          const author = review.authorName || review.author || "Household";
-                          const initials = author
-                            .split(" ")
-                            .map((part) => part.slice(0, 1))
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase();
-                          return (
-                            <article className="worker-recent-review" key={review.id || `${author}-${review.createdAt}`}>
-                              <div className="worker-review-avatar">{initials || "HH"}</div>
-                              <div className="worker-review-copy">
-                                <div className="worker-review-title-row">
-                                  <div>
-                                    <strong>{author}</strong>
-                                    <small>{formatDateTime(review.createdAt || review.date || "") || "Recently"}</small>
-                                  </div>
-                                  {review.rating != null && (
-                                    <span className="worker-review-rating">{Number(review.rating).toFixed(1)} / 5</span>
-                                  )}
-                                </div>
-                                <p>{review.feedback || review.comment || "No comment provided."}</p>
-                              </div>
-                            </article>
-                          );
-                        })
-                      ) : (
-                        <article className="worker-recent-review worker-recent-review-empty">
-                          <p>No household feedback or ratings yet.</p>
-                        </article>
-                      )}
                     </div>
                   </div>
-                </section>
+                )}
+                {showWorkSampleModal && (
+                  <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={() => setShowWorkSampleModal(false)}>
+                    <div className="modal-dialog modal-lg modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
+                      <div className="modal-content">
+                        <div className="modal-header bg-success text-white">
+                          <h5 className="modal-title">{editingWorkSampleIndex !== null ? "Edit Work Sample" : "Add Work Sample"}</h5>
+                          <button type="button" className="btn-close btn-close-white" onClick={() => setShowWorkSampleModal(false)}></button>
+                        </div>
+                        <div className="modal-body">
+                          <div className="mb-3">
+                            <label className="form-label">Project Title *</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              value={workSampleForm.title}
+                              onChange={(e) => setWorkSampleForm({ ...workSampleForm, title: e.target.value })}
+                              placeholder="e.g., House Deep Cleaning"
+                            />
+                          </div>
+                          <div className="row">
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">Before Image *</label>
+                              <input
+                                type="file"
+                                className="form-control"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    const file = e.target.files[0];
+                                    const reader = new FileReader();
+                                    reader.onload = (event) => {
+                                      setWorkSampleForm({
+                                        ...workSampleForm,
+                                        beforeImage: file,
+                                        beforePreview: event.target.result,
+                                      });
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                              {workSampleForm.beforePreview && (
+                                <img src={workSampleForm.beforePreview} alt="Before" className="img-fluid rounded mt-2" style={{ maxHeight: '150px', objectFit: 'cover', width: '100%' }} />
+                              )}
+                            </div>
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">After Image *</label>
+                              <input
+                                type="file"
+                                className="form-control"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    const file = e.target.files[0];
+                                    const reader = new FileReader();
+                                    reader.onload = (event) => {
+                                      setWorkSampleForm({
+                                        ...workSampleForm,
+                                        afterImage: file,
+                                        afterPreview: event.target.result,
+                                      });
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                              {workSampleForm.afterPreview && (
+                                <img src={workSampleForm.afterPreview} alt="After" className="img-fluid rounded mt-2" style={{ maxHeight: '150px', objectFit: 'cover', width: '100%' }} />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="modal-footer">
+                          <button type="button" className="btn btn-secondary" onClick={() => setShowWorkSampleModal(false)}>Cancel</button>
+                          <button type="button" className="btn btn-success" onClick={handleAddWorkSample}>Save Sample</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {viewingWorkSampleIndex !== null && (workerProfileForm.workSamples || [])[viewingWorkSampleIndex] && (
+                  <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={() => setViewingWorkSampleIndex(null)}>
+                    <div className="modal-dialog modal-xl modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
+                      <div className="modal-content">
+                        <div className="modal-header bg-success text-white">
+                          <h5 className="modal-title">{(workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.title}</h5>
+                          <button type="button" className="btn-close btn-close-white" onClick={() => setViewingWorkSampleIndex(null)}></button>
+                        </div>
+                        <div className="modal-body p-4">
+                          <div className="row g-4">
+                            <div className="col-md-6">
+                              <div className="position-relative">
+                                <img src={(workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.beforePreview} alt="Before" className="img-fluid rounded" style={{ width: '100%', maxHeight: '400px', objectFit: 'cover' }} />
+                                <div className="position-absolute top-50 start-50 translate-middle">
+                                  <span className="bg-dark text-white px-4 py-3 rounded fw-bold" style={{ fontSize: '18px' }}>Before</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="col-md-6">
+                              <div className="position-relative">
+                                <img src={(workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.afterPreview} alt="After" className="img-fluid rounded" style={{ width: '100%', maxHeight: '400px', objectFit: 'cover' }} />
+                                <div className="position-absolute top-50 start-50 translate-middle">
+                                  <span className="bg-success text-white px-4 py-3 rounded fw-bold" style={{ fontSize: '18px' }}>After</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="modal-footer">
+                          <button type="button" className="btn btn-secondary" onClick={() => setViewingWorkSampleIndex(null)}>Close</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {portfolioGalleryOpen && (
+                  <section className="worker-dashboard" style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1000, backgroundColor: '#f8f9fa', overflowY: 'auto' }}>
+                    <div className="container-fluid p-4">
+                      <div className="d-flex justify-content-between align-items-center mb-4">
+                        <h2>Portfolio Gallery</h2>
+                        <button type="button" className="btn btn-secondary" onClick={() => setPortfolioGalleryOpen(false)}>Close</button>
+                      </div>
+
+                      <div className="mb-5">
+                        <h4 className="mb-3 fw-bold text-dark">Certifications</h4>
+                        {(workerProfileForm.certifications || []).length > 0 ? (
+                          <div className="row g-3">
+                            {workerProfileForm.certifications.map((cert, index) => (
+                              <div key={index} className="col-md-4">
+                                <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
+                                  <img src={cert.certificatePreview} alt={cert.name} className="img-fluid rounded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  <div className="position-absolute bottom-0 start-0 end-0 p-2" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }}>
+                                    <div className="d-flex justify-content-between align-items-end">
+                                      <p className="text-white mb-0 fw-bold small">{cert.name}</p>
+                                      {cert.is_verified && <span className="badge bg-success">✓</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted">No certifications added yet.</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <h4 className="mb-4 fw-bold text-dark">Work Samples</h4>
+                        {(workerProfileForm.workSamples || []).length > 0 ? (
+                          <div className="row g-4">
+                            {workerProfileForm.workSamples.map((sample, index) => (
+                              <div key={index} className="col-12">
+                                <div className="card border-0 shadow-sm">
+                                  <div className="card-body p-3">
+                                    <h5 className="mb-4 fw-bold text-dark">{sample.title}</h5>
+                                    <div className="row g-3">
+                                      <div className="col-md-6">
+                                        <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
+                                          <img src={sample.beforePreview} alt="Before" className="img-fluid" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                          <small className="position-absolute bottom-2 start-2 bg-dark text-white px-2 py-1 rounded">Before</small>
+                                        </div>
+                                      </div>
+                                      <div className="col-md-6">
+                                        <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
+                                          <img src={sample.afterPreview} alt="After" className="img-fluid" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                          <small className="position-absolute bottom-2 start-2 bg-success text-white px-2 py-1 rounded">After</small>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted">No work samples added yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                )}
               </div>
             </div>
           </section>
@@ -2348,7 +2824,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
@@ -2388,24 +2864,32 @@ export default function AppViews({
                         <tr>
                           <th>Job</th>
                           <th>Household</th>
-                          <th>Distance</th>
+                          <th>Schedule</th>
+                          <th>Location</th>
                           <th>Rate</th>
                           <th>Status</th>
                           <th>Applied</th>
-                          <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {workerApplications.length > 0 ? (
                           workerApplications.map((job) => (
                             <tr key={`${job.id}-${job.appliedAt}`}>
-                              <td>{job.jobTitle || job.serviceType}</td>
+                              <td>
+                                <div className="fw-semibold">{job.jobTitle || job.serviceType}</div>
+                                <div className="small text-muted">{job.serviceType || "Service not specified"}</div>
+                                {job.description && (
+                                  <div className="small text-muted">
+                                    {job.description.length > 90 ? `${job.description.slice(0, 90)}...` : job.description}
+                                  </div>
+                                )}
+                              </td>
                               <td>{job.householdName || "Household"}</td>
+                              <td>{formatScheduleLabel(job.scheduleType) || "Not set"}</td>
                               <td>{formatLocation(job.barangay, job.streetAddress)}</td>
                               <td>{formatRate(job.offeredRate, job.rateType)}</td>
                               <td>{getWorkerApplicationDisplayStatus(job)}</td>
-                              <td>{job.appliedAt}</td>
-                              <td>{renderWorkerApplicationAction(job)}</td>
+                              <td>{formatDateTime(job.appliedAt)}</td>
                             </tr>
                           ))
                         ) : (
@@ -2424,7 +2908,7 @@ export default function AppViews({
             </div>
           </section>
         )}
-        {view === "worker-get-verified" && (
+        {(view === "worker-get-verified" || view === "household-get-verified") && (
           <section className="worker-dashboard worker-get-verified-page">
             <div className="worker-layout">
               <aside className="worker-sidebar">
@@ -2433,28 +2917,52 @@ export default function AppViews({
                   <p className="worker-brand mb-0">GawaGo Community Platform</p>
                 </div>
                 <nav className="worker-nav">
-                  <button className="worker-nav-item" onClick={openWorkerDashboard}>
+                  <button
+                    className="worker-nav-item"
+                    onClick={isHouseholdVerification ? openHouseholdDashboard : openWorkerDashboard}
+                  >
                     {navIcon("dashboard")}
                     <span>Dashboard</span>
                   </button>
-                  <button className="worker-nav-item" onClick={openAllWorkerFindJobs}>
-                    {navIcon("search")}
-                    <span>Find Jobs</span>
-                  </button>
-                  <button className="worker-nav-item" onClick={openWorkerProfile}>
+                  {!isHouseholdVerification && (
+                    <button className="worker-nav-item" onClick={openAllWorkerFindJobs}>
+                      {navIcon("search")}
+                      <span>Find Jobs</span>
+                    </button>
+                  )}
+                  {isHouseholdVerification && (
+                    <button className="worker-nav-item" onClick={openHouseholdPostJob}>
+                      {navIcon("post-job")}
+                      <span>Post a Job</span>
+                    </button>
+                  )}
+                  <button
+                    className="worker-nav-item"
+                    onClick={isHouseholdVerification ? openHouseholdProfile : openWorkerProfile}
+                  >
                     {navIcon("profile")}
                     <span>My Profile</span>
                   </button>
-                  <button className="worker-nav-item" onClick={openWorkerApplications}>
-                    {navIcon("applications")}
-                    <span>My Applications</span>
-                    {workerApplicationUnreadCount > 0 && (
-                      <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
-                    )}
-                  </button>
+                  {isHouseholdVerification ? (
+                    <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
+                      {navIcon("jobs")}
+                      <span>My Jobs</span>
+                    </button>
+                  ) : (
+                    <button className="worker-nav-item" onClick={openWorkerApplications}>
+                      {navIcon("applications")}
+                      <span>My Applications</span>
+                      {workerApplicationUnreadCount > 0 && (
+                        <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
+                      )}
+                    </button>
+                  )}
                   <button className="worker-nav-item active">{navIcon("verified")}
-                    <span>Get Verified</span></button>
-                  <button className="worker-nav-item" onClick={openWorkerNotifications}>
+                    <span>{verificationNavLabel}</span></button>
+                  <button
+                    className="worker-nav-item"
+                    onClick={isHouseholdVerification ? openHouseholdNotifications : openWorkerNotifications}
+                  >
                     {navIcon("notifications")}
                     <span>Notifications</span>
                   </button>
@@ -2467,10 +2975,10 @@ export default function AppViews({
                 </div>
               </aside>
               <div className="worker-content">
-                {currentWorker?.verification === "Verified" ? (
+                {verificationAccount?.verification === "Verified" ? (
                   <div className="verification-wrap verification-approved-wrap">
                     <div className="verification-card verification-approved-card">
-                      <div className="verification-card-head">Get Verified</div>
+                      <div className="verification-card-head">{verificationNavLabel}</div>
                       <div className="verification-approved-body">
                         <section className="verification-approved-banner">
                           <h2>You're already verified</h2>
@@ -2481,13 +2989,13 @@ export default function AppViews({
                           <article className="verification-approved-box">
                             <p className="verification-approved-label">Primary ID</p>
                             <p className="verification-approved-value">
-                              {currentWorker.verificationSubmission?.primaryIdName || "Primary ID"}
+                              {verificationAccount.verificationSubmission?.primaryIdName || "Primary ID"}
                             </p>
-                            {currentWorker.verificationSubmission?.primaryIdPreview ? (
+                            {verificationAccount.verificationSubmission?.primaryIdPreview ? (
                               <button
                                 type="button"
                                 className="verification-file-button"
-                                onClick={() => openFilePreview(currentWorker.verificationSubmission.primaryIdPreview)}
+                                onClick={() => openFilePreview(verificationAccount.verificationSubmission.primaryIdPreview)}
                               >
                                 View Primary ID
                               </button>
@@ -2499,13 +3007,13 @@ export default function AppViews({
                           <article className="verification-approved-box">
                             <p className="verification-approved-label">Supporting Documents</p>
                             <p className="verification-approved-value">
-                              {currentWorker.verificationSubmission?.secondaryDocName || "Supporting document"}
+                              {verificationAccount.verificationSubmission?.secondaryDocName || "Supporting document"}
                             </p>
-                            {currentWorker.verificationSubmission?.secondaryDocPreview ? (
+                            {verificationAccount.verificationSubmission?.secondaryDocPreview ? (
                               <button
                                 type="button"
                                 className="verification-file-button"
-                                onClick={() => openFilePreview(currentWorker.verificationSubmission.secondaryDocPreview)}
+                                onClick={() => openFilePreview(verificationAccount.verificationSubmission.secondaryDocPreview)}
                               >
                                 View Supporting Document
                               </button>
@@ -2518,10 +3026,50 @@ export default function AppViews({
                         <section className="verification-approved-box verification-approved-note">
                           <p className="verification-approved-label">Admin Note</p>
                           <p className="verification-approved-value mb-0">
-                            {currentWorker.verificationSubmission?.reviewNote ||
-                              (currentWorker.verificationReviewedBy
-                                ? `Verified by ${currentWorker.verificationReviewedBy} on ${currentWorker.verificationReviewedAt}.`
+                            {verificationAccount.verificationSubmission?.reviewNote ||
+                              (verificationAccount.verificationReviewedBy
+                                ? `Verified by ${verificationAccount.verificationReviewedBy} on ${verificationAccount.verificationReviewedAt}.`
                                 : "Verified by admin.")}
+                          </p>
+                        </section>
+                      </div>
+                    </div>
+                  </div>
+                ) : pendingVerificationSubmission ? (
+                  <div className="verification-wrap verification-approved-wrap">
+                    <div className="verification-card verification-approved-card">
+                      <div className="verification-card-head">Verification Under Review</div>
+                      <div className="verification-approved-body">
+                        <section className="verification-approved-banner verification-pending-banner">
+                          <span className="gg-status-badge gg-status-pending">Under Review</span>
+                          <h2>Your documents have been submitted</h2>
+                          <p>
+                            The verification form is locked while an admin reviews your documents.
+                            You will receive a notification after a decision is made.
+                          </p>
+                        </section>
+
+                        <div className="verification-approved-grid">
+                          <article className="verification-approved-box">
+                            <p className="verification-approved-label">Primary ID</p>
+                            <p className="verification-approved-value">
+                              {verificationAccount.verificationSubmission.primaryIdName || "Primary ID submitted"}
+                            </p>
+                          </article>
+                          <article className="verification-approved-box">
+                            <p className="verification-approved-label">Supporting Document</p>
+                            <p className="verification-approved-value">
+                              {verificationAccount.verificationSubmission.secondaryDocName ||
+                                "Supporting document submitted"}
+                            </p>
+                          </article>
+                        </div>
+
+                        <section className="verification-approved-box verification-approved-note">
+                          <p className="verification-approved-label">Submission Status</p>
+                          <p className="verification-approved-value mb-0">
+                            Submitted {verificationAccount.verificationSubmission.submittedAt || "for admin review"}.
+                            You can submit new documents only if this request is rejected.
                           </p>
                         </section>
                       </div>
@@ -2534,8 +3082,10 @@ export default function AppViews({
                       <form className="p-3 p-md-4" onSubmit={handleVerificationSubmit}>
                         <div className="verification-note mb-3">
                           <p className="mb-0 small">
-                            <strong>Why get verified?</strong> Verified workers appear higher in smart matching and help
-                            households trust your profile faster.{" "}
+                            <strong>Why get verified?</strong>{" "}
+                            {isHouseholdVerification
+                              ? "Verification helps workers trust that job postings come from a reviewed household account."
+                              : "Verified workers appear higher in smart matching and help households trust your profile faster."}
                           </p>
                         </div>
                         <div className="mb-3">
@@ -2583,7 +3133,11 @@ export default function AppViews({
                             {" "}
                             Submit Documents{" "}
                           </button>
-                          <button type="button" className="btn btn-outline-secondary" onClick={openWorkerDashboard}>
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary"
+                            onClick={isHouseholdVerification ? openHouseholdDashboard : openWorkerDashboard}
+                          >
                             {" "}
                             Cancel{" "}
                           </button>
@@ -2627,7 +3181,7 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
-                    <span>Get Verified</span>
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item active">{navIcon("notifications")}
                     <span>Notifications</span></button>
@@ -2648,7 +3202,7 @@ export default function AppViews({
                     onClick={() => markAllNotificationsRead(workerNotificationsWithReadState)}
                   >
                     {" "}
-                    Mark All as Read{" "}
+                    Mark all as read{" "}
                   </button>
                 </div>
                 {currentWorker?.verification !== "Verified" && (
@@ -2660,21 +3214,14 @@ export default function AppViews({
                 <div className="worker-notifications-list">
                   {workerHireRequestCards.map((job) => (
                     <article
-                      className="notification-card worker-hire-request-card worker-hire-request-clickable unread"
+                      className={`notification-card worker-hire-request-card ${job.unread ? "unread" : ""}`}
                       key={`hire-request-${job.applicationId || job.notificationId || job.id}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setWorkerHireRequestPreview(job)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          setWorkerHireRequestPreview(job);
-                        }
-                      }}
                     >
                       <div className="worker-hire-request-head">
                         <div>
-                          <p className="small text-muted mb-1">{job.updatedAt || job.appliedAt || "Recently"}</p>
+                          <p className="small text-muted mb-1">
+                            {formatDateTime(job.updatedAt || job.appliedAt)}
+                          </p>
                           <h2 className="h6 mb-1">Hire request</h2>
                           <p className="mb-0">
                             {job.notificationMessage || (
@@ -2685,7 +3232,63 @@ export default function AppViews({
                             )}
                           </p>
                         </div>
-                        <span className="badge text-bg-warning">Needs your response</span>
+                        <div className="worker-notification-head-actions">
+                          <span className="badge text-bg-warning">Needs your response</span>
+                          <div
+                            className="household-notification-menu-wrap"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              aria-expanded={
+                                workerNotificationMenuId ===
+                                (job.notificationId || `hire-request-${job.applicationId || job.id}`)
+                              }
+                              aria-haspopup="menu"
+                              aria-label="Actions for hire request"
+                              className="household-notification-menu-button"
+                              disabled={
+                                workerNotificationDeletingId ===
+                                (job.notificationId || `hire-request-${job.applicationId || job.id}`)
+                              }
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const menuId = job.notificationId || `hire-request-${job.applicationId || job.id}`;
+                                setWorkerNotificationMenuId((currentId) =>
+                                  currentId === menuId ? null : menuId,
+                                );
+                              }}
+                            >
+                              <span aria-hidden="true">⋮</span>
+                            </button>
+                            {workerNotificationMenuId ===
+                              (job.notificationId || `hire-request-${job.applicationId || job.id}`) && (
+                              <div className="household-notification-menu" role="menu">
+                                <button
+                                  role="menuitem"
+                                  type="button"
+                                  onClick={() => {
+                                    setWorkerNotificationMenuId(null);
+                                    if (job.notificationId) {
+                                      markNotificationRead(job.notificationId);
+                                    }
+                                    setWorkerHireRequestPreview(job);
+                                  }}
+                                >
+                                  View details
+                                </button>
+                                <button
+                                  className="danger"
+                                  role="menuitem"
+                                  type="button"
+                                  onClick={() => deleteWorkerNotification(job)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
                       <div className="worker-hire-request-details">
                         <div>
@@ -2723,25 +3326,55 @@ export default function AppViews({
                   ))}
                   {workerGeneralNotifications.map((item) => (
                     <article
-                      className={`notification-card ${item.requiresAction ? "worker-hire-request-clickable" : ""} ${item.unread ? "unread" : ""}`}
+                      className={`notification-card worker-notification-item ${item.unread ? "unread" : ""}`}
                       key={item.id}
-                      role={item.requiresAction ? "button" : undefined}
-                      tabIndex={item.requiresAction ? 0 : undefined}
-                      onClick={item.requiresAction ? () => openStructuredNotificationAction(item) : undefined}
-                      onKeyDown={
-                        item.requiresAction
-                          ? (event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                openStructuredNotificationAction(item);
-                              }
-                            }
-                          : undefined
-                      }
                     >
-                      <p className="small text-muted mb-1">{item.date}</p>
-                      <h2 className="h6 mb-1">{item.title}</h2>
-                      <p className="mb-0">{item.message}</p>
+                      <div className="worker-notification-copy">
+                        <p className="small text-muted mb-1">{formatDateTime(item.date)}</p>
+                        <h2 className="h6 mb-1">{item.title}</h2>
+                        <p className="mb-0">{item.message}</p>
+                      </div>
+                      <div
+                        className="household-notification-menu-wrap"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          aria-expanded={workerNotificationMenuId === item.id}
+                          aria-haspopup="menu"
+                          aria-label={`Actions for ${item.title}`}
+                          title="Notification actions"
+                          className="household-notification-menu-button"
+                          disabled={workerNotificationDeletingId === item.id}
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setWorkerNotificationMenuId((currentId) =>
+                              currentId === item.id ? null : item.id,
+                            );
+                          }}
+                        >
+                          <span aria-hidden="true">⋮</span>
+                        </button>
+                        {workerNotificationMenuId === item.id && (
+                          <div className="household-notification-menu" role="menu">
+                            <button
+                              role="menuitem"
+                              type="button"
+                              onClick={() => openWorkerNotificationPreview(item)}
+                            >
+                              View details
+                            </button>
+                            <button
+                              className="danger"
+                              role="menuitem"
+                              type="button"
+                              onClick={() => deleteWorkerNotification(item)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </article>
                   ))}
                   {workerHireRequestCards.length === 0 && workerGeneralNotifications.length === 0 && (
@@ -2751,6 +3384,57 @@ export default function AppViews({
                     </article>
                   )}
                 </div>
+                {workerNotificationPreview && (
+                  <div
+                    className="worker-hire-request-modal-backdrop"
+                    role="presentation"
+                    onClick={() => setWorkerNotificationPreview(null)}
+                  >
+                    <section
+                      className="worker-hire-request-modal worker-notification-modal"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="worker-notification-modal-title"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="worker-hire-request-modal-head">
+                        <div>
+                          <p className="small text-muted mb-1">
+                            {formatDateTime(workerNotificationPreview.date)}
+                          </p>
+                          <h2 id="worker-notification-modal-title">
+                            {workerNotificationPreview.title || "Notification"}
+                          </h2>
+                        </div>
+                        <button
+                          className="btn btn-outline-secondary btn-sm"
+                          type="button"
+                          onClick={() => setWorkerNotificationPreview(null)}
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <p className="worker-notification-modal-message">{workerNotificationPreview.message}</p>
+                      {workerNotificationPreview.jobId && (
+                        <div className="worker-hire-request-actions">
+                          <button
+                            className="btn btn-outline-secondary btn-sm"
+                            type="button"
+                            onClick={() => {
+                              const notification = workerNotificationPreview;
+                              setWorkerNotificationPreview(null);
+                              if (!openStructuredNotificationAction(notification)) {
+                                openWorkerJobDetail(notification.jobId);
+                              }
+                            }}
+                          >
+                            View Job Details
+                          </button>
+                        </div>
+                      )}
+                    </section>
+                  </div>
+                )}
                 {workerHireRequestPreviewJob && (
                   <div
                     className="worker-hire-request-modal-backdrop"
@@ -2767,7 +3451,9 @@ export default function AppViews({
                       <div className="worker-hire-request-modal-head">
                         <div>
                           <p className="small text-muted mb-1">
-                            {workerHireRequestPreviewJob.updatedAt || workerHireRequestPreviewJob.appliedAt || "Recently"}
+                            {formatDateTime(
+                              workerHireRequestPreviewJob.updatedAt || workerHireRequestPreviewJob.appliedAt,
+                            )}
                           </p>
                           <h2 id="worker-hire-request-modal-title">Hire request details</h2>
                           <p>
@@ -2932,7 +3618,7 @@ export default function AppViews({
                     </div>
                     <div className="card border-0 shadow-sm mt-4">
                       <div className="card-header bg-white d-flex justify-content-between align-items-center">
-                        <h2 className="h6 mb-0 fw-bold">Worker Verification Requests</h2>
+                        <h2 className="h6 mb-0 fw-bold">Account Verification Requests</h2>
                         <span className="small text-muted">{verificationRequests.length} total</span>
                       </div>
                       {selectedVerificationRequest && (
@@ -2941,6 +3627,9 @@ export default function AppViews({
                             <div>
                               <h3 className="h6 mb-1">{selectedVerificationRequest.workerName}</h3>
                               <p className="small text-muted mb-0">@{selectedVerificationRequest.workerUsername}</p>
+                              <span className="badge text-bg-secondary mt-2 text-capitalize">
+                                {selectedVerificationRequest.accountRole}
+                              </span>
                             </div>
                             <span
                               className={`badge ${selectedVerificationRequest.status === "Approved" ? "text-bg-success" : selectedVerificationRequest.status === "Rejected" ? "text-bg-danger" : "text-bg-warning"}`}
@@ -2999,6 +3688,9 @@ export default function AppViews({
                                 <div>
                                   <h3 className="h6 mb-1">{request.workerName}</h3>
                                   <p className="small text-muted mb-1">@{request.workerUsername}</p>
+                                  <p className="small mb-1 text-capitalize">
+                                    <strong>Account:</strong> {request.accountRole}
+                                  </p>
                                   <p className="small mb-1">
                                     <strong>Status:</strong>
                                     {request.status}
@@ -3147,6 +3839,10 @@ export default function AppViews({
                     {navIcon("profile")}
                     <span>My Profile</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
+                  </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
@@ -3220,7 +3916,7 @@ export default function AppViews({
                           value={householdJobForm.scheduleType}
                           onChange={handleHouseholdJobChange}
                         >
-                          <option>One - Time</option>
+                          <option>One-Time</option>
                           <option>Part-Time</option>
                           <option>Full-Time</option>
                         </select>
@@ -3315,6 +4011,54 @@ export default function AppViews({
                           <option>Fixed Rate</option>
                         </select>
                       </div>
+                      <div className="col-md-6">
+                        <label className="form-label fw-semibold">Job Start Date</label>
+                        <input
+                          type="date"
+                          name="jobStartDate"
+                          className="form-control"
+                          value={householdJobForm.jobStartDate || ""}
+                          onChange={handleHouseholdJobChange}
+                        />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label fw-semibold">Job End Date</label>
+                        <input
+                          type="date"
+                          name="jobEndDate"
+                          className="form-control"
+                          value={householdJobForm.jobEndDate || ""}
+                          onChange={handleHouseholdJobChange}
+                        />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label fw-semibold">Estimated Working Days</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          name="estimatedWorkingDays"
+                          className="form-control"
+                          placeholder="e.g. 5"
+                          value={householdJobForm.estimatedWorkingDays || ""}
+                          onChange={handleHouseholdJobChange}
+                        />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label fw-semibold">Search Radius</label>
+                        <select
+                          name="geographicBoundary"
+                          className="form-select"
+                          value={householdJobForm.geographicBoundary || "1km"}
+                          onChange={handleHouseholdJobChange}
+                        >
+                          <option value="1km">1 Kilometer</option>
+                          <option value="2km">2 Kilometers</option>
+                          <option value="5km">5 Kilometers</option>
+                          <option value="10km">10 Kilometers</option>
+                          <option value="unlimited">Unlimited</option>
+                        </select>
+                      </div>
                     </div>
                     <HouseholdJobMapPanel
                       captureHouseholdJobLocation={captureHouseholdJobLocation}
@@ -3369,6 +4113,10 @@ export default function AppViews({
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active">{navIcon("profile")}
                     <span>My Profile</span></button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
+                  </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
@@ -3408,7 +4156,14 @@ export default function AppViews({
                           )}
                         </h2>
                         <p className="text-muted mb-2">@{householdProfileForm.username || "household"}</p>
-                        <span className="badge text-bg-primary">Household</span>
+                        <div className="d-flex justify-content-center gap-2 flex-wrap">
+                          <span className="badge text-bg-primary">Household</span>
+                          <span
+                            className={`badge ${currentHousehold?.verification === "Verified" ? "text-bg-success" : currentHousehold?.verification === "Rejected" ? "text-bg-danger" : "text-bg-warning"}`}
+                          >
+                            {currentHousehold?.verification || "Not Yet Verified"}
+                          </span>
+                        </div>
                       </div>
                       <div className="profile-summary-list">
                         <p><strong>Account Type:</strong> Household</p>
@@ -3556,9 +4311,11 @@ export default function AppViews({
                             <div className="review-item" key={review.id || `${review.authorName}-${review.createdAt}`}>
                               <div className="d-flex justify-content-between gap-2">
                                 <div>
-                                  <p className="mb-1 fw-semibold">Anonymous Worker</p>
+                                  <p className="mb-1 fw-semibold">{review.authorName || "Masked Worker"}</p>
                                   <p className="mb-1 small text-muted">{review.feedback || review.comment || "No comment provided."}</p>
-                                  <p className="mb-0 small text-muted">{review.createdAt || review.date || "Recently"}</p>
+                                  <p className="mb-0 small text-muted">
+                                    {formatDateTime(review.createdAt || review.date)}
+                                  </p>
                                 </div>
                                 <strong>{review.rating != null ? `${review.rating}/5` : "Feedback"}</strong>
                               </div>
@@ -3590,7 +4347,9 @@ export default function AppViews({
                                 <div>
                                   <p className="mb-1 fw-semibold">{review.targetName || review.target || "Worker"}</p>
                                   <p className="mb-1 small text-muted">{review.feedback || review.comment || "No comment provided."}</p>
-                                  <p className="mb-0 small text-muted">{review.createdAt || review.date || "Recently"}</p>
+                                  <p className="mb-0 small text-muted">
+                                    {formatDateTime(review.createdAt || review.date)}
+                                  </p>
                                 </div>
                                 <strong>{review.rating != null ? `${review.rating}/5` : "Feedback"}</strong>
                               </div>
@@ -3636,6 +4395,10 @@ export default function AppViews({
                     {navIcon("profile")}
                     <span>My Profile</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
+                  </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
@@ -3650,11 +4413,11 @@ export default function AppViews({
               </aside>
               <div className="worker-content">
                 <main className="household-feedback-all-container">
-                  <p className="household-feedback-eyebrow">View all Feedback Household</p>
+                  <p className="household-feedback-eyebrow">All Household Feedback</p>
                   <section className="household-feedback-hero">
                     <div>
                       <h1>All Feedback by Workers</h1>
-                      <p>Feedback from workers are hidden anonymously.</p>
+                      <p>Worker names are partially masked for privacy.</p>
                     </div>
                     <button className="btn btn-outline-secondary btn-sm" type="button" onClick={openHouseholdProfile}>
                       Back
@@ -3686,26 +4449,31 @@ export default function AppViews({
 
                     <div className="household-feedback-list">
                       {filteredHouseholdWorkerFeedback.length > 0 ? (
-                        filteredHouseholdWorkerFeedback.map((review, index) => (
+                        filteredHouseholdWorkerFeedback.map((review, index) => {
+                          const maskedAuthorName = review.authorName || "Masked Worker";
+                          return (
                           <article className="household-feedback-item" key={review.id || `${review.createdAt}-${index}`}>
-                            <div className="household-feedback-avatar">A</div>
+                            <div className="household-feedback-avatar">
+                              {maskedAuthorName.slice(0, 1).toUpperCase()}
+                            </div>
                             <div className="household-feedback-copy">
                               <div className="household-review-title-row">
-                                <h2>Anonymous Worker</h2>
+                                <h2>{maskedAuthorName}</h2>
                                 {review.rating != null && <strong>{review.rating}/5</strong>}
                               </div>
                               <p>{review.feedback || review.comment || "No comment provided."}</p>
-                              <small>{review.createdAt || review.date || "Recently"}</small>
+                              <small>{formatDateTime(review.createdAt || review.date)}</small>
                               <details className="household-feedback-more">
                                 <summary>View more</summary>
                                 <p>
-                                  This feedback was submitted by a worker after a household interaction. Worker identity is
-                                  hidden to keep feedback fair and private.
+                                  This feedback was submitted by a worker after a household interaction. Most letters in
+                                  the worker's name are hidden to protect their privacy.
                                 </p>
                               </details>
                             </div>
                           </article>
-                        ))
+                          );
+                        })
                       ) : (
                         <article className="household-feedback-empty">
                           <h2>No feedback found</h2>
@@ -3748,6 +4516,10 @@ export default function AppViews({
                   <button className="worker-nav-item active" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
                     <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
@@ -3830,7 +4602,7 @@ export default function AppViews({
                                   <strong>{review.rating != null ? `${review.rating}/5` : "No rating"}</strong>
                                 </div>
                                 <p>{review.feedback || review.comment || "No comment provided."}</p>
-                                <small>{review.createdAt || review.date || "Recently"}</small>
+                                <small>{formatDateTime(review.createdAt || review.date)}</small>
                                 <details className="household-feedback-more">
                                   <summary>View more</summary>
                                   <p>
@@ -3882,6 +4654,10 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
                     <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
@@ -4012,6 +4788,10 @@ export default function AppViews({
                     {navIcon("profile")}
                     <span>My Profile</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
+                  </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
@@ -4136,32 +4916,141 @@ export default function AppViews({
                       </div>
                     )}
                     {(householdDashboardReviewOpen || shouldShowSelectedJobReviewForm) && !selectedJobWorkerReview && (
-                      <form className="household-dashboard-review-form" onSubmit={handleHouseholdReviewSubmit}>
-                        <label className="form-label fw-semibold" htmlFor="household-detail-rating-stars">Rating</label>
-                        {renderHouseholdStarRatingInput("household-detail-rating-stars")}
-                        <label className="form-label fw-semibold">Feedback for worker</label>
-                        <textarea
-                          className="form-control"
-                          rows="3"
-                          placeholder="Write feedback about the worker..."
-                          value={householdReviewForm.feedback}
-                          onChange={(event) =>
-                            setHouseholdReviewForm((prev) => ({ ...prev, feedback: event.target.value }))
-                          }
-                        />
-                        <div className="household-dashboard-form-actions">
-                          <button className="btn btn-success" type="submit">
-                            Done
-                          </button>
-                          <button
-                            className="btn btn-outline-secondary"
-                            type="button"
-                            onClick={openHouseholdMyJobs}
-                          >
-                            Close
-                          </button>
-                        </div>
-                      </form>
+                      <>
+                        <form className="household-dashboard-review-form" onSubmit={handleHouseholdReviewSubmit}>
+                          <label className="form-label fw-semibold" htmlFor="household-detail-rating-stars">Overall Rating</label>
+                          {renderHouseholdStarRatingInput("household-detail-rating-stars")}
+
+                          <div className="mt-4 pt-3 border-top">
+                            <p className="small text-muted mb-3">Rate worker on specific metrics (optional):</p>
+
+                            <div className="mb-3">
+                              <label className="form-label">Quality of Work</label>
+                              <div className="d-flex gap-2">
+                                {[1, 2, 3, 4, 5].map((val) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    className={`btn btn-sm ${householdReviewForm.quality_of_work == val ? 'btn-success' : 'btn-outline-success'}`}
+                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, quality_of_work: val }))}
+                                  >
+                                    {val}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="mb-3">
+                              <label className="form-label">Punctuality</label>
+                              <div className="d-flex gap-2">
+                                {[1, 2, 3, 4, 5].map((val) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    className={`btn btn-sm ${householdReviewForm.punctuality == val ? 'btn-success' : 'btn-outline-success'}`}
+                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, punctuality: val }))}
+                                  >
+                                    {val}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="mb-3">
+                              <label className="form-label">Communication</label>
+                              <div className="d-flex gap-2">
+                                {[1, 2, 3, 4, 5].map((val) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    className={`btn btn-sm ${householdReviewForm.communication == val ? 'btn-success' : 'btn-outline-success'}`}
+                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, communication: val }))}
+                                  >
+                                    {val}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="mb-3">
+                              <label className="form-label">Professionalism</label>
+                              <div className="d-flex gap-2">
+                                {[1, 2, 3, 4, 5].map((val) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    className={`btn btn-sm ${householdReviewForm.professionalism == val ? 'btn-success' : 'btn-outline-success'}`}
+                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, professionalism: val }))}
+                                  >
+                                    {val}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <label className="form-label fw-semibold mt-3">Feedback for worker</label>
+                          <textarea
+                            className="form-control"
+                            rows="3"
+                            placeholder="Write feedback about the worker..."
+                            value={householdReviewForm.feedback}
+                            onChange={(event) =>
+                              setHouseholdReviewForm((prev) => ({ ...prev, feedback: event.target.value }))
+                            }
+                          />
+                          <div className="household-dashboard-form-actions">
+                            <button className="btn btn-success" type="submit">
+                              Done
+                            </button>
+                            <button
+                              className="btn btn-outline-secondary"
+                              type="button"
+                              onClick={openHouseholdMyJobs}
+                            >
+                              Close
+                            </button>
+                          </div>
+                        </form>
+                        {selectedJobAssignedWorker && (
+                          <div style={{ marginTop: "2rem", paddingTop: "2rem", borderTop: "1px solid #e0e0e0" }}>
+                            <h4 style={{ marginBottom: "1rem" }}>Rate Worker Skills (Optional)</h4>
+                            <SkillRatingForm
+                              jobId={selectedJob.id}
+                              workerId={selectedJobAssignedWorker.id}
+                              workerName={getDisplayName(
+                                selectedJobAssignedWorker.firstName,
+                                selectedJobAssignedWorker.lastName,
+                                selectedJobAssignedWorker.username,
+                              )}
+                              jobTitle={selectedJob.jobTitle || selectedJob.serviceType}
+                              onSubmitSuccess={() => {
+                                alert("Skills rated successfully!");
+                                openHouseholdMyJobs();
+                              }}
+                              onCancel={() => setHouseholdDashboardReviewOpen(false)}
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {selectedJob.status === "Completed" && (
+                      <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #e0e0e0" }}>
+                        <button
+                          type="button"
+                          className="btn btn-outline-danger btn-sm"
+                          onClick={() => {
+                            setComplaintForm({
+                              complaint_type: "",
+                              description: "",
+                              job: selectedJob.id,
+                            });
+                            setShowComplaintModal(true);
+                          }}
+                        >
+                          📋 File a Complaint
+                        </button>
+                      </div>
                     )}
                   </div>
                 </section>
@@ -4195,7 +5084,7 @@ export default function AppViews({
                                 {getDisplayName(worker.firstName, worker.lastName, worker.username)}
                               </p>
                               <div className="d-flex gap-2 flex-wrap">
-                                <span className="badge text-bg-primary">{worker.applicationStatus || "Pending"}</span>
+                                <span className="badge text-bg-primary">{getApplicationStatusLabel(worker.applicationStatus) || "Applied"}</span>
                                 {(worker.skills || []).slice(0, 2).map((skill) => (
                                   <span className="badge text-bg-light border text-dark" key={`${worker.id}-${skill}`}>
                                     {skill}
@@ -4206,9 +5095,6 @@ export default function AppViews({
                                 >
                                   {worker.verification || "Not Yet Verified"}
                                 </span>
-                                {worker.availableAtRequestedTime === false && (
-                                  <span className="badge text-bg-light border text-dark">Availability not set</span>
-                                )}
                                 <span className="badge text-bg-light border text-dark">
                                   {formatCurrency(worker.dailyRate)}/day
                                 </span>
@@ -4218,7 +5104,7 @@ export default function AppViews({
                               {worker.distanceLabel ||
                                 formatDistance(worker.distanceKm, worker.distanceLabel) ||
                                 "Distance unavailable"}
-                              <small className="d-block">Road route</small>
+                              <small className="d-block">Driving route</small>
                             </span>
                           </button>
                         );
@@ -4232,7 +5118,7 @@ export default function AppViews({
                 <section className="household-detail-panel profile-card p-3 p-md-4 mt-3">
                   <h2 className="household-detail-section-title">Smart Matched Workers</h2>
                   <p className="small text-muted mb-3">
-                    Suggested workers ranked by skill, availability, verification, and distance.
+                    Suggested workers ranked by skill, verification status, distance, ratings, and service rate.
                   </p>
                   <div className="household-applicant-list d-grid gap-3">
                     {selectedSuggestedWorkers.length > 0 ? (
@@ -4279,13 +5165,15 @@ export default function AppViews({
                               {worker.distanceLabel ||
                                 formatDistance(worker.distanceKm, worker.distanceLabel) ||
                                 "Distance unavailable"}
-                              <small className="d-block">Road route</small>
+                              <small className="d-block">Driving route</small>
                             </span>
                           </button>
                         );
                       })
                     ) : (
-                      <div className="household-applicant-empty">No smart matched workers yet.</div>
+                      <div className="household-applicant-empty">
+                        No recommended workers are available yet. Add worker skills, verification, or location details and check again later.
+                      </div>
                     )}
                   </div>
                 </section>
@@ -4318,6 +5206,10 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
                     <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
@@ -4364,11 +5256,15 @@ export default function AppViews({
                     <span>My Jobs</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
-                  <button className="worker-nav-item" onClick={openHouseholdProfile}>
-                    {navIcon("profile")}
-                    <span>My Profile</span>
+	                  <button className="worker-nav-item" onClick={openHouseholdProfile}>
+	                    {navIcon("profile")}
+	                    <span>My Profile</span>
+	                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
                   </button>
-                  <button className="worker-nav-item active" onClick={openHouseholdNotifications}>
+	                  <button className="worker-nav-item active" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
                     {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
@@ -4394,14 +5290,28 @@ export default function AppViews({
                         <h2 className="h5 mb-1">
                           {getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username)}
                         </h2>
-                        <p className="small text-muted mb-2">
-                          {formatLocation(selectedWorker.barangay, selectedWorker.streetAddress)}
-                        </p>
-                        <span
-                          className={`badge ${selectedWorker.verification === "Verified" ? "text-bg-success" : "text-bg-warning"}`}
-                        >
-                          {selectedWorker.verification || "Not Yet Verified"}
-                        </span>
+                        <p className="small text-muted mb-2">{selectedWorkerLocationLabel}</p>
+                        <div className="mb-2">
+                          <span
+                            className={`badge ${selectedWorker.verification === "Verified" ? "text-bg-success" : "text-bg-warning"}`}
+                          >
+                            {selectedWorker.verification || "Not Yet Verified"}
+                          </span>
+                          {selectedWorker.reputationTier && (
+                            <span className="badge text-bg-info ms-1">
+                              {selectedWorker.reputationTier === "elite" && "⭐ Elite"}
+                              {selectedWorker.reputationTier === "trusted" && "✓ Trusted"}
+                              {selectedWorker.reputationTier === "established" && "◆ Established"}
+                              {selectedWorker.reputationTier === "new" && "◇ New"}
+                            </span>
+                          )}
+                          {selectedWorker.ratingTrend && selectedWorker.ratingTrend !== "neutral" && (
+                            <span className={`badge ms-1 ${selectedWorker.ratingTrend === "improving" ? "text-bg-success" : "text-bg-warning"}`}>
+                              {selectedWorker.ratingTrend === "improving" && "📈 Improving"}
+                              {selectedWorker.ratingTrend === "declining" && "📉 Declining"}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="px-3 pb-3">
                         <p className="mb-1 small d-flex justify-content-between">
@@ -4414,14 +5324,14 @@ export default function AppViews({
                         </p>
                         <p className="mb-1 small d-flex justify-content-between">
                           <span>Experience</span>
-                          <strong>{selectedWorker.yearsExperience || 0} yr(s)</strong>
+                          <strong>{formatExperience(selectedWorker.yearsExperience)}</strong>
                         </p>
                         <p className="mb-1 small d-flex justify-content-between">
                           <span>Status</span>
                           <strong>{selectedWorker.status || "Available"}</strong>
                         </p>
                         <p className="mb-1 small d-flex justify-content-between">
-                          <span>Road Route</span>
+                          <span>Driving Distance</span>
                           <strong>{selectedWorkerDistanceLabel || "Distance unavailable"}</strong>
                         </p>
                         <p className="mb-1 small d-flex justify-content-between">
@@ -4476,11 +5386,8 @@ export default function AppViews({
                           userLongitude={selectedWorkerJobLongitude}
                           targetLatitude={selectedWorkerPoint?.latitude ?? null}
                           targetLongitude={selectedWorkerPoint?.longitude ?? null}
-                          userLocation={formatLocation(
-                            currentHousehold?.barangay || selectedJob?.barangay,
-                            currentHousehold?.streetAddress || selectedJob?.streetAddress,
-                          )}
-                          targetLocation={formatLocation(selectedWorker.barangay, selectedWorker.streetAddress)}
+                          userLocation={selectedWorkerJobLocationLabel}
+                          targetLocation={selectedWorkerLocationLabel}
                           distanceKm={selectedWorkerDistanceKm}
                           routePoints={selectedWorker.routePoints || []}
                           formatDistanceFn={formatDistance}
@@ -4536,105 +5443,17 @@ export default function AppViews({
                         </div>
                       </div>
                     )}
-                    <div className="profile-card mb-3">
-                      <div className="profile-card-head">Skills & Expertise</div>
-                      <div className="p-3 d-flex gap-2 flex-wrap">
-                        {(selectedWorker.skills || []).map((skill) => (
-                          <span className="badge text-bg-primary" key={`${selectedWorker.id}-${skill}`}>
-                            {skill}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 </div>
-                <section className="smart-match-feedback-section profile-footer worker-rating-summary" aria-labelledby="smart-match-feedback-title">
-                  <header className="worker-rating-header">
-                    <h2 id="smart-match-feedback-title">Feedback & Rating</h2>
-                    <span>From households</span>
-                  </header>
-                  <div className="worker-rating-body">
-                    <div className="worker-rating-overview">
-                      <div className="worker-rating-score">
-                        <strong>
-                          {selectedWorkerAverageRating != null ? selectedWorkerAverageRating.toFixed(1) : "No ratings yet"}
-                        </strong>
-                        {selectedWorkerAverageRating != null && <span className="worker-rating-stars">5-star average</span>}
-                        <small>
-                          {selectedWorkerTotalReviews} {selectedWorkerTotalReviews === 1 ? "review" : "reviews"}
-                        </small>
-                      </div>
-                      <div className="worker-rating-bars" aria-label="Rating distribution">
-                        {selectedWorkerRatingCounts.map(({ rating, count }) => {
-                          const percentage = selectedWorkerTotalReviews > 0 ? (count / selectedWorkerTotalReviews) * 100 : 0;
-                          return (
-                            <div className="worker-rating-bar-row" key={rating}>
-                              <span>{rating} star</span>
-                              <div className="worker-rating-track">
-                                <div className="worker-rating-fill" style={{ width: `${percentage}%` }} />
-                              </div>
-                              <strong>{count}</strong>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="worker-rating-stats">
-                      <div>
-                        <strong>{selectedWorkerTotalReviews}</strong>
-                        <span>Total reviews</span>
-                      </div>
-                      <div>
-                        <strong>{selectedWorkerAverageRating != null ? selectedWorkerAverageRating.toFixed(1) : "--"}</strong>
-                        <span>Average rating</span>
-                      </div>
-                      <div>
-                        <strong>{selectedWorkerTotalReviews > 0 ? `${selectedWorkerFiveStarRate}%` : "--"}</strong>
-                        <span>5-star rate</span>
-                      </div>
-                    </div>
-
-                    <div className="worker-recent-reviews-head">
-                      <h3>Recent reviews</h3>
-                    </div>
-
-                    <div className="worker-recent-reviews">
-                      {selectedWorkerReviews.slice(0, 2).length > 0 ? (
-                        selectedWorkerReviews.slice(0, 2).map((review) => {
-                          const author = review.authorName || review.author || "Household";
-                          const initials = author
-                            .split(" ")
-                            .map((part) => part.slice(0, 1))
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase();
-                          return (
-                            <article className="worker-recent-review" key={review.id || `${author}-${review.createdAt}`}>
-                              <div className="worker-review-avatar">{initials || "HH"}</div>
-                              <div className="worker-review-copy">
-                                <div className="worker-review-title-row">
-                                  <div>
-                                    <strong>{author}</strong>
-                                    <small>{formatDateTime(review.createdAt || review.date || "") || "Recently"}</small>
-                                  </div>
-                                  {review.rating != null && (
-                                    <span className="worker-review-rating">{Number(review.rating).toFixed(1)} / 5</span>
-                                  )}
-                                </div>
-                                <p>{review.feedback || review.comment || "No comment provided."}</p>
-                              </div>
-                            </article>
-                          );
-                        })
-                      ) : (
-                        <article className="worker-recent-review worker-recent-review-empty">
-                          <p>No household feedback or ratings yet.</p>
-                        </article>
-                      )}
-                    </div>
+                <div className="row g-3">
+                  <div className="col-12">
+                    <WorkerPortfolioViewPublic
+                      workerId={selectedWorker.id}
+                      workerName={getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username)}
+                      currentUser={currentUser}
+                    />
                   </div>
-                </section>
+                </div>
               </div>
             </div>
           </section>
@@ -4664,6 +5483,10 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
                     <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item active" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
@@ -4713,7 +5536,7 @@ export default function AppViews({
                         type="button"
                         onClick={() => markAllNotificationsRead(householdNotificationsWithReadState)}
                       >
-                        Mark all as Read
+                        Mark all as read
                       </button>
                     </div>
 
@@ -4721,24 +5544,56 @@ export default function AppViews({
                       {filteredHouseholdNotifications.length > 0 ? (
                         filteredHouseholdNotifications.map((item) => (
                           <article
-                            className={`notification-card household-notification-item household-notification-clickable ${item.unread ? "unread" : ""}`}
+                            className={`notification-card household-notification-item ${item.unread ? "unread" : ""}`}
                             key={item.id}
-                            onClick={() => openHouseholdNotificationPreview(item)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                openHouseholdNotificationPreview(item);
-                              }
-                            }}
-                            role="button"
-                            tabIndex={0}
-                          >
-                            <div>
-                              <p className="small text-muted mb-1">{item.date}</p>
-                              <h2 className="h6 mb-1">{item.title}</h2>
-                              <p className="mb-0">{item.message}</p>
-                            </div>
-                          </article>
+	                          >
+	                            <div className="household-notification-copy">
+	                              <p className="small text-muted mb-1">{formatDateTime(item.date)}</p>
+	                              <h2 className="h6 mb-1">{item.title}</h2>
+	                              <p className="mb-0">{item.message}</p>
+	                            </div>
+                              <div
+                                className="household-notification-menu-wrap"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <button
+                                  aria-expanded={householdNotificationMenuId === item.id}
+                                  aria-haspopup="menu"
+                                  aria-label={`Actions for ${item.title}`}
+                                  title="Notification actions"
+                                  className="household-notification-menu-button"
+                                  disabled={householdNotificationDeletingId === item.id}
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setHouseholdNotificationMenuId((currentId) =>
+                                      currentId === item.id ? null : item.id,
+                                    );
+                                  }}
+                                >
+                                  <span aria-hidden="true">⋮</span>
+                                </button>
+                                {householdNotificationMenuId === item.id && (
+                                  <div className="household-notification-menu" role="menu">
+                                    <button
+                                      role="menuitem"
+                                      type="button"
+                                      onClick={() => openHouseholdNotificationPreview(item)}
+                                    >
+                                      View details
+                                    </button>
+                                    <button
+                                      className="danger"
+                                      role="menuitem"
+                                      type="button"
+                                      onClick={() => deleteHouseholdNotification(item)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+	                          </article>
                         ))
                       ) : (
                         <article className="notification-card household-notification-item household-notification-empty">
@@ -4824,7 +5679,7 @@ export default function AppViews({
                                 </div>
                                 <div>
                                   <dt>Date</dt>
-                                  <dd>{householdNotificationPreview.date || "Recently"}</dd>
+                                  <dd>{formatDateTime(householdNotificationPreview.date)}</dd>
                                 </div>
                               </dl>
                             </div>
@@ -4841,7 +5696,7 @@ export default function AppViews({
                                 type="button"
                                 onClick={openHouseholdNotificationPreviewDetails}
                               >
-                                View Details
+                                View details
                               </button>
                             </div>
                           </section>
@@ -4878,6 +5733,10 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
                     <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
                   </button>
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
@@ -5076,6 +5935,15 @@ export default function AppViews({
                               </span>
                             </div>
                           </div>
+                          {householdDashboardDetailJob.status === "Completed" && householdDashboardDetailWorker && (
+                            <button
+                              type="button"
+                              className="btn btn-success w-100 mt-3"
+                              onClick={() => openRatingModal(householdDashboardDetailJob, householdDashboardDetailWorker)}
+                            >
+                              ⭐ Rate Worker
+                            </button>
+                          )}
                         </aside>
                         <div className="household-dashboard-completion-panel household-review-main-panel">
                           <div className="household-dashboard-job-summary">
@@ -5237,6 +6105,60 @@ export default function AppViews({
                     </div>
                   </section>
                 )}
+                {ratingModalOpen && ratingWorker && (
+                  <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={() => setRatingModalOpen(false)}>
+                    <div className="modal-dialog modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
+                      <div className="modal-content">
+                        <div className="modal-header bg-success text-white">
+                          <h5 className="modal-title">Rate {getDisplayName(ratingWorker.firstName, ratingWorker.lastName, ratingWorker.username)}</h5>
+                          <button type="button" className="btn-close btn-close-white" onClick={() => setRatingModalOpen(false)}></button>
+                        </div>
+                        <div className="modal-body">
+                          <p className="mb-3">Rate the worker's performance on specific skills:</p>
+                          {(ratingWorker.skills || []).length > 0 ? (
+                            <div className="mb-3">
+                              {ratingWorker.skills.map((skill, idx) => (
+                                <div key={idx} className="mb-4 p-3 border rounded">
+                                  <div className="d-flex justify-content-between align-items-center mb-2">
+                                    <label className="form-label mb-0 fw-bold">{skill}</label>
+                                    <span className="badge bg-info">{skillRatings[`skill_${idx}`] || 0} ⭐</span>
+                                  </div>
+                                  <div className="d-flex gap-2">
+                                    {[1, 2, 3, 4, 5].map((ratingValue) => (
+                                      <button
+                                        key={ratingValue}
+                                        type="button"
+                                        className={`btn btn-sm ${skillRatings[`skill_${idx}`] >= ratingValue ? 'btn-warning' : 'btn-outline-warning'}`}
+                                        onClick={() => setSkillRatings({ ...skillRatings, [`skill_${idx}`]: ratingValue })}
+                                      >
+                                        ⭐
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-muted">No skills to rate</p>
+                          )}
+                        </div>
+                        <div className="modal-footer">
+                          <button type="button" className="btn btn-secondary" onClick={() => setRatingModalOpen(false)}>Cancel</button>
+                          <button type="button" className="btn btn-success" onClick={handleSubmitRatings}>Submit Ratings</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <ComplaintModal
+                  isOpen={showComplaintModal}
+                  complaint={complaintForm}
+                  onClose={() => setShowComplaintModal(false)}
+                  onChange={setComplaintForm}
+                  onSubmit={handleSubmitComplaint}
+                  isWorker={currentUser?.role === "worker"}
+                  postedJobs={workerVisibleJobs || []}
+                />
               </div>
             </div>
           </section>

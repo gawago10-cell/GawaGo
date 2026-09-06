@@ -71,6 +71,7 @@ export function normalizeVerificationRequest(request) {
   const workerLocation = parseLocationLabel(source.worker_location_label || source.workerLocationLabel || "");
   return {
     id: source.id,
+    accountRole: source.account_role || source.accountRole || "worker",
     workerId,
     workerUsername,
     workerName: source.worker_name || source.workerName || workerUsername || "Worker",
@@ -110,6 +111,20 @@ export function normalizeAvailabilityWindow(window) {
   };
 }
 
+export function normalizeWeeklyAvailabilityWindow(window) {
+  if (!window) {
+    return null;
+  }
+  return {
+    id: window.id || `weekly-availability-${window.weekday ?? Date.now()}`,
+    weekday: Number(window.weekday),
+    weekdayLabel: window.weekday_label || window.weekdayLabel || "",
+    startTime: window.start_time || window.startTime || "",
+    endTime: window.end_time || window.endTime || "",
+    isAvailable: window.is_available ?? window.isAvailable ?? true,
+  };
+}
+
 export function normalizeBackendWorker(currentUser) {
   if (!currentUser || currentUser.role !== "worker" || !currentUser.profile) {
     return null;
@@ -133,12 +148,17 @@ export function normalizeBackendWorker(currentUser) {
     verification: profile.verification_status === "verified" ? "Verified" : profile.verification_status === "pending" ? "Under Review" : profile.verification_status === "rejected" ? "Rejected" : "Not Yet Verified",
     rating: profile.display_rating || "No ratings yet",
     reviewsDone: profile.rating_count || 0,
+    reputationTier: profile.reputation_tier || "new",
+    ratingTrend: profile.rating_trend || "neutral",
     status: "Available",
-    distanceKm: "0.00",
+    distanceKm: null,
     latitude: profile.latitude ?? currentUser.latitude ?? null,
     longitude: profile.longitude ?? currentUser.longitude ?? null,
     profilePhotoPreview: profile.profile_photo_url || profile.profile_photo || currentUser.profilePhotoPreview || "",
     availabilityWindows: (profile.availability_windows || []).map(normalizeAvailabilityWindow).filter(Boolean),
+    weeklyAvailability: (profile.weekly_availability || [])
+      .map(normalizeWeeklyAvailabilityWindow)
+      .filter(Boolean),
     avatar: (currentUser.displayName || currentUser.username || "W").slice(0, 1).toUpperCase(),
     receivedReviews: [],
     givenFeedback: [],
@@ -199,7 +219,12 @@ export function normalizeProfileRecord(profile) {
     longitude: profile.longitude,
     profilePhotoPreview: profile.profile_photo_url || profile.profile_photo || "",
     availabilityWindows: (profile.availability_windows || []).map(normalizeAvailabilityWindow).filter(Boolean),
+    weeklyAvailability: (profile.weekly_availability || [])
+      .map(normalizeWeeklyAvailabilityWindow)
+      .filter(Boolean),
     role: profile.role || profile.user_type || "worker",
+    verificationSubmission: normalizeVerificationRequest(profile.verification_request),
+    verificationRequestId: profile.verification_request?.id || null,
   };
 }
 
@@ -275,6 +300,11 @@ export function normalizeBackendApplication(application) {
     workerId: application.worker ?? application.worker_id ?? null,
     workerUsername: application.worker_username || application.workerUsername || "",
     workerName: application.worker_name || application.workerName || application.worker_username || "Worker",
+    workerLocationLabel: application.worker_location_label || application.workerLocationLabel || "",
+    workerLatitude: application.worker_latitude ?? application.workerLatitude ?? null,
+    workerLongitude: application.worker_longitude ?? application.workerLongitude ?? null,
+    routeDistanceKm: application.route_distance_km ?? application.routeDistanceKm ?? null,
+    routePoints: application.route_points || application.routePoints || [],
     status: normalizeJobApplicationStatus(application.status),
     appliedAt: application.applied_at || application.appliedAt || "",
     updatedAt: application.updated_at || application.updatedAt || "",
@@ -306,7 +336,7 @@ export function normalizeBackendJob(job) {
     householdName: job.household_name || job.householdName || job.household_username || "Household",
     jobTitle: job.title || job.job_title || job.required_skill || job.jobType || "",
     serviceType: job.required_skill || job.job_type || job.jobType || job.title || "",
-    scheduleType: job.schedule_type || job.scheduleType || job.schedule || "One - Time",
+    scheduleType: job.schedule_type || job.scheduleType || job.schedule || "One-Time",
     preferredDate: job.preferred_date || "",
     preferredTime: job.preferred_time || "",
     description: job.description || "",
@@ -390,7 +420,22 @@ export function normalizeBackendReview(review) {
 export function dedupeNotifications(notifications) {
   const seenKeys = new Set();
   return notifications.filter((notification) => {
-    const key = notification.backendId || `${notification.notificationType || "generic"}-${notification.title}-${notification.message}`;
+    const type = String(notification.notificationType || notification.type || "generic").toLowerCase();
+    const title = String(notification.title || "").trim().toLowerCase();
+    const actor =
+      notification.workerId ||
+      notification.actorId ||
+      notification.actorUsername ||
+      notification.workerUsername ||
+      "";
+    const job = notification.jobId || "";
+    const application = notification.applicationId || "";
+    const key =
+      type === "application" || title === "new worker application"
+        ? `application-${job}-${actor || application}`
+        : type === "verification"
+          ? `verification-${title}-${notification.backendId || notification.id}`
+          : `${type}-${title}-${job}-${application}-${String(notification.message || "").trim().toLowerCase()}`;
     if (seenKeys.has(key)) {
       return false;
     }

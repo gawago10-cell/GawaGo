@@ -1,6 +1,18 @@
 import { DEMO_LOCATIONS } from "../constants/appConstants";
 import { getDisplayName } from "./formatters";
 
+export function getApplicationStatusLabel(status) {
+  const statusMap = {
+    pending: "Applied",
+    hire_requested: "Hire Requested",
+    hired: "Hired",
+    rejected: "Rejected",
+    closed: "Closed",
+    completed: "Hired", // Display completed as Hired to avoid confusion with job completion
+  };
+  return statusMap[status] || status;
+}
+
 export function getWorkersNeeded(job) {
   const workersNeeded = Number(job?.workersNeeded || job?.workerSlots || 1);
   return Number.isFinite(workersNeeded) && workersNeeded > 0 ? workersNeeded : 1;
@@ -125,7 +137,7 @@ export function buildWorkerFallbackFromJob(job, selectedWorkerId) {
     rating: "No ratings yet",
     reviewsDone: 0,
     status: application.status === "Hired" ? "Hired" : "Available",
-    distanceKm: "0.00",
+    distanceKm: null,
     avatar: (application.workerName || application.workerUsername || "W").slice(0, 1).toUpperCase(),
     receivedReviews: [],
     givenFeedback: [],
@@ -138,9 +150,14 @@ export function getWorkerJobMatches(worker, jobs) {
   if (!worker) {
     return [];
   }
-  const workerSkills = worker.skills || [];
+  const normalizeSkill = (value) => String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+  const workerSkills = new Set((worker.skills || []).map(normalizeSkill));
   return jobs.filter(isJobOpenForApplications).map((job) => {
-    const matchesSkill = workerSkills.includes(job.serviceType);
+    const matchesSkill = workerSkills.has(normalizeSkill(job.serviceType))
+      || workerSkills.has(normalizeSkill(job.requiredSkill));
     return { ...job, matchesSkill };
   }).sort((firstJob, secondJob) => {
     if (firstJob.matchesSkill === secondJob.matchesSkill) {

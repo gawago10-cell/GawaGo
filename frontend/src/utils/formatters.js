@@ -18,18 +18,34 @@ export function isImagePreviewUrl(url) {
 }
 
 export function formatScheduleLabel(scheduleType) {
-  return (scheduleType || "").replace(" - ", "-");
+  if (typeof scheduleType !== "string") {
+    return "";
+  }
+  return scheduleType.replace(/\s*-\s*/g, "-");
 }
 
 export function formatDateTime(dateValue, timeValue) {
   if (!dateValue) {
     return "Schedule not set";
   }
-  const parsedDate = new Date(`${dateValue}T${timeValue || "00:00"}`);
+  const rawDate = String(dateValue).trim();
+  const hasEmbeddedTime = /[T ]\d{2}:\d{2}/.test(rawDate);
+  const parsedDate = new Date(hasEmbeddedTime ? rawDate : `${rawDate}T${timeValue || "00:00"}`);
   if (Number.isNaN(parsedDate.getTime())) {
-    return "Schedule not set";
+    return rawDate;
   }
-  return parsedDate.toLocaleString("en-PH", { month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return parsedDate.toLocaleString("en-PH", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function formatExperience(years) {
+  const numericYears = Number(years || 0);
+  return `${numericYears} ${numericYears === 1 ? "year" : "years"}`;
 }
 
 export function formatLocation(barangay, streetAddress) {

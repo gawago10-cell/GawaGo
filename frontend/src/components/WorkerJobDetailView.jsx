@@ -2,8 +2,15 @@ import React, { useEffect, useState } from "react";
 import { DashboardSidebar, DashboardTopbar } from "./DashboardLayout";
 import JobImageGallery from "./JobImageGallery";
 import LocationDistanceMap from "./LocationDistanceMap";
-import { formatDistance, formatLocation, formatRate, getDisplayName, getHouseholdPhoto } from "../utils/formatters";
-import { getHiringProgressLabel, getJobStatusBadgeClass } from "../utils/jobUtils";
+import {
+  formatDateTime,
+  formatDistance,
+  formatLocation,
+  formatRate,
+  getDisplayName,
+  getHouseholdPhoto,
+} from "../utils/formatters";
+import { getApplicationStatusLabel, getHiringProgressLabel, getJobStatusBadgeClass } from "../utils/jobUtils";
 
 export default function WorkerJobDetailView({
   currentWorker,
@@ -43,6 +50,14 @@ export default function WorkerJobDetailView({
   const currentWorkerApplicationId = job?.applicationId || currentWorkerApplication?.id || null;
   const hasRejectedHireRequest = currentWorkerApplicationStatus === "Rejected";
   const isAssignedWorker = ["Hired", "Completed"].includes(currentWorkerApplicationStatus);
+  const verificationNavLabel =
+    currentWorker?.verification === "Verified"
+      ? "Verified"
+      : currentWorker?.verification === "Under Review"
+        ? "Under Review"
+        : currentWorker?.verification === "Rejected"
+          ? "Verify Again"
+          : "Get Verified";
   const isCompletionRequested = job?.status === "Waiting for Household Confirmation";
   const isCompletedJob = job?.status === "Completed";
   const canApply = Boolean(job?.canApply);
@@ -120,7 +135,7 @@ export default function WorkerJobDetailView({
                 },
                 {
                   id: "verified",
-                  label: "Get Verified",
+                  label: verificationNavLabel,
                   section: "Account",
                   onClick: openWorkerGetVerified,
                 },
@@ -166,9 +181,11 @@ export default function WorkerJobDetailView({
                             {formatLocation(household?.barangay || job.barangay, household?.streetAddress || job.streetAddress)}
                           </p>
                           <p className="mb-0 small text-muted">
-                            {[household?.phone ? `+63${household.phone}` : "", household?.email || ""]
-                              .filter(Boolean)
-                              .join(" | ") || "Contact details not provided"}
+                            {isAssignedWorker
+                              ? [household?.phone ? `+63${household.phone}` : "", household?.email || ""]
+                                  .filter(Boolean)
+                                  .join(" | ") || "Contact details not provided"
+                              : "Contact details become available after you are hired."}
                           </p>
                         </div>
                       </div>
@@ -191,11 +208,15 @@ export default function WorkerJobDetailView({
                           </div>
                           <div>
                             <dt>Date</dt>
-                            <dd>{job.preferredDate || "Not set"}</dd>
+                            <dd>
+                              {job.preferredDate
+                                ? formatDateTime(job.preferredDate, job.preferredTime)
+                                : "Not set"}
+                            </dd>
                           </div>
                           <div>
                             <dt>Time</dt>
-                            <dd>{job.preferredTime || "Not set"}</dd>
+                            <dd>{job.preferredTime ? "Included above" : "Not set"}</dd>
                           </div>
                           <div>
                             <dt>Needed</dt>
@@ -211,7 +232,7 @@ export default function WorkerJobDetailView({
                           </div>
                         </dl>
                         <div className="worker-job-description">
-                          <p className="small text-muted fw-semibold mb-1">Descriptions</p>
+                          <p className="small text-muted fw-semibold mb-1">Description</p>
                           <p className="mb-0">{job.description || "No description provided."}</p>
                         </div>
                         {isAssignedWorker && (

@@ -12,6 +12,77 @@ import {
 } from "../utils/analyticsUtils";
 import { SKILLS } from "../constants/appConstants";
 
+// Enhanced Analytics Helper Functions
+function calculateHiringSuccessRate(postedJobs) {
+  let totalApplications = 0;
+  let hiredCount = 0;
+  postedJobs.forEach((job) => {
+    (job.applications || []).forEach((app) => {
+      if (!["Pending"].includes(app.status)) {
+        totalApplications++;
+        if (app.status === "Hired") hiredCount++;
+      }
+    });
+  });
+  return totalApplications > 0 ? Math.round((hiredCount / totalApplications) * 100) : 0;
+}
+
+function calculateApplicationsByDate(postedJobs) {
+  const dateMap = {};
+  postedJobs.forEach((job) => {
+    (job.applications || []).forEach((app) => {
+      const date = new Date(app.created_at || app.createdAt || Date.now());
+      const dateStr = date.toISOString().split("T")[0];
+      dateMap[dateStr] = (dateMap[dateStr] || 0) + 1;
+    });
+  });
+  return Object.entries(dateMap)
+    .map(([date, count]) => ({ date, applications: count }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .slice(-30);
+}
+
+function buildApplicationTrends(postedJobs) {
+  const monthMap = {};
+  postedJobs.forEach((job) => {
+    (job.applications || []).forEach((app) => {
+      const date = new Date(app.created_at || app.createdAt || Date.now());
+      const month = date.toLocaleString("en-US", { month: "short", year: "2-digit" });
+      monthMap[month] = (monthMap[month] || 0) + 1;
+    });
+  });
+  return Object.entries(monthMap).map(([month, count]) => ({ month, applications: count }));
+}
+
+function calculateWorkerHiringStats(postedJobs, registeredWorkers) {
+  const workerHireMap = {};
+  postedJobs.forEach((job) => {
+    (job.applications || []).forEach((app) => {
+      if (app.status === "Hired") {
+        const workerId = app.workerId || app.worker_id;
+        workerHireMap[workerId] = (workerHireMap[workerId] || 0) + 1;
+      }
+    });
+  });
+  const hiredWorkers = Object.keys(workerHireMap).length;
+  const repeatHires = Object.values(workerHireMap).filter((count) => count > 1).length;
+  return {
+    hiredWorkers,
+    repeatHires,
+    hirePercentage: registeredWorkers.length ? Math.round((hiredWorkers / registeredWorkers.length) * 100) : 0,
+  };
+}
+
+function calculateJobMatchRate(postedJobs) {
+  let jobsWithHires = 0;
+  postedJobs.forEach((job) => {
+    if ((job.applications || []).some((app) => app.status === "Hired")) {
+      jobsWithHires++;
+    }
+  });
+  return postedJobs.length ? Math.round((jobsWithHires / postedJobs.length) * 100) : 0;
+}
+
 function buildDefaultAnalytics() {
   return {
     summary: {
@@ -131,6 +202,13 @@ function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorke
       averageRatesByCategory: serviceRateSummary,
       pricingTrends,
     },
+    enhancedAnalytics: {
+      hiringSuccessRate: calculateHiringSuccessRate(postedJobs),
+      applicationsByDate: calculateApplicationsByDate(postedJobs),
+      workerHiringStats: calculateWorkerHiringStats(postedJobs, registeredWorkers),
+      jobMatchRate: calculateJobMatchRate(postedJobs),
+      applicationTrends: buildApplicationTrends(postedJobs),
+    },
     serviceRateSummary: serviceRateSummary.slice(0, 5),
   };
 }
@@ -158,14 +236,20 @@ export function useDashboardMetrics({ currentUser, postedJobs, registeredHouseho
         verifiedWorkers: registeredWorkers.filter((worker) => worker.verification === "Verified").length,
         completedJobs: postedJobs.filter((job) => job.status === "Completed").length,
         totalAccounts: registeredWorkers.length + registeredHouseholds.length,
-        avgRating: null,
+        avgRating: buildLocalAnalytics({
+          postedJobs,
+          registeredHouseholds,
+          registeredWorkers,
+          verificationRequests,
+        }).summary.averageWorkerRating,
         analytics: buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorkers, verificationRequests }),
       };
     }
 
     async function loadDashboardMetrics() {
       const authToken = getAuthToken();
-      if (currentUser?.role !== "admin" || !authToken) {
+      const isPlatformAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
+      if (!isPlatformAdmin || !authToken) {
         if (!cancelled) {
           setDashboardMetrics(buildLocalMetrics());
         }
