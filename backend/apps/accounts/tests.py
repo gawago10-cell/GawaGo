@@ -7,7 +7,11 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.accounts.models import PasswordResetRequest, UserProfile, WorkerAvailability
+from apps.accounts.models import (
+    PasswordResetRequest,
+    UserProfile,
+    WorkerAvailability,
+)
 from apps.common.authentication import create_jwt_token
 from apps.notifications.models import Notification
 
@@ -23,6 +27,10 @@ class RegisterLoginFlowTests(TestCase):
                 "first_name": "Juan",
                 "last_name": "Worker",
                 "role": UserProfile.ROLE_WORKER,
+                "hourly_rate": "150.00",
+                "location_label": "Isabang, Tayabas City",
+                "latitude": "13.9622745",
+                "longitude": "121.5632841",
             },
             content_type="application/json",
         )
@@ -40,6 +48,37 @@ class RegisterLoginFlowTests(TestCase):
         self.assertEqual(login_response.status_code, 200)
         self.assertEqual(login_response.json()["username"], "JuanWorker")
         self.assertEqual(login_response.json()["role"], UserProfile.ROLE_WORKER)
+
+    def test_worker_registration_requires_positive_rate_and_location(self):
+        response = self.client.post(
+            reverse("register"),
+            {
+                "username": "IncompleteWorker",
+                "email": "incomplete.worker@gmail.com",
+                "password": "worker-pass123",
+                "role": UserProfile.ROLE_WORKER,
+                "hourly_rate": "0.00",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("service_rate", response.json())
+        self.assertFalse(User.objects.filter(username="IncompleteWorker").exists())
+
+    def test_household_registration_does_not_require_worker_rates(self):
+        response = self.client.post(
+            reverse("register"),
+            {
+                "username": "NewHousehold",
+                "email": "new.household@gmail.com",
+                "password": "household-pass123",
+                "role": UserProfile.ROLE_HOUSEHOLD,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
 
     def test_login_activates_existing_inactive_account_with_valid_password(self):
         user = User.objects.create_user(
@@ -72,6 +111,39 @@ class RegisterLoginFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["username"], "MixedCaseUser")
+
+    def test_staff_login_returns_admin_role(self):
+        User.objects.create_user(
+            username="StaffAdmin",
+            email="staff.admin@gawago.test",
+            password="admin-pass123",
+            is_staff=True,
+        )
+
+        response = self.client.post(
+            reverse("login"),
+            {"username": "StaffAdmin", "password": "admin-pass123"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["role"], "admin")
+
+    def test_superuser_login_returns_superadmin_role(self):
+        User.objects.create_superuser(
+            username="RootAdmin",
+            email="root.admin@gawago.test",
+            password="admin-pass123",
+        )
+
+        response = self.client.post(
+            reverse("login"),
+            {"username": "RootAdmin", "password": "admin-pass123"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["role"], "superadmin")
 
 
 class PasswordResetFlowTests(TestCase):
@@ -135,7 +207,14 @@ class ProfileUpdateTests(TestCase):
             email="worker.profile@gmail.com",
             password="worker-pass123",
         )
-        self.profile = UserProfile.objects.create(user=self.user, role=UserProfile.ROLE_WORKER)
+        self.profile = UserProfile.objects.create(
+            user=self.user,
+            role=UserProfile.ROLE_WORKER,
+            hourly_rate="150.00",
+            location_label="Isabang, Tayabas City",
+            latitude="13.9622745",
+            longitude="121.5632841",
+        )
         self.client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {create_jwt_token({'user_id': self.user.id})}"
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
@@ -159,6 +238,30 @@ class ProfileUpdateTests(TestCase):
         )
         self.assertEqual(mail.outbox[-1].to, [self.user.email])
         self.assertEqual(mail.outbox[-1].subject, "GawaGo: Profile updated")
+
+    def test_worker_cannot_clear_last_service_rate(self):
+        response = self.client.patch(
+            reverse("profile-me"),
+            {"hourly_rate": None, "daily_rate": None},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("service_rate", response.json())
+        self.profile.refresh_from_db()
+        self.assertEqual(str(self.profile.hourly_rate), "150.00")
+
+    def test_worker_cannot_clear_exact_location(self):
+        response = self.client.patch(
+            reverse("profile-me"),
+            {"latitude": None, "longitude": None},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("location", response.json())
+        self.profile.refresh_from_db()
+        self.assertIsNotNone(self.profile.latitude)
 
 
 class WorkerAvailabilityTests(TestCase):
@@ -237,7 +340,6 @@ class WorkerAvailabilityTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(WorkerAvailability.objects.filter(worker=self.worker).exists())
-
 
 class PublicProfilePrivacyTests(TestCase):
     def setUp(self):

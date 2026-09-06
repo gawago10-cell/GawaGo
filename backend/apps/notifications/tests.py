@@ -85,6 +85,26 @@ class NotificationPermissionTests(TestCase):
         self.notification.refresh_from_db()
         self.assertTrue(self.notification.is_read)
 
+    def test_recipient_can_delete_notification(self):
+        self.client.force_authenticate(user=self.recipient)
+
+        response = self.client.delete(
+            reverse("notification-delete", args=[self.notification.id]),
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Notification.objects.filter(pk=self.notification.id).exists())
+
+    def test_non_recipient_cannot_delete_notification(self):
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.delete(
+            reverse("notification-delete", args=[self.notification.id]),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Notification.objects.filter(pk=self.notification.id).exists())
+
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
     def test_create_notification_sends_full_detail_email(self):
         self.recipient.email = "notify-recipient@example.com"

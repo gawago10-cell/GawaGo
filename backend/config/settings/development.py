@@ -26,6 +26,11 @@ else:
         "http://127.0.0.1:5173",
     ]
 
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+]
+
 CORS_ALLOW_CREDENTIALS = True
 
 USE_CONSOLE_EMAIL = os.environ.get("DJANGO_USE_CONSOLE_EMAIL", "True") == "True"

@@ -8,7 +8,7 @@ from rest_framework.views import APIView
 from apps.jobs.models import JobApplication, JobPosting
 from apps.reviews.models import Review
 from apps.reviews.serializers import ReviewCreateSerializer, ReviewSerializer
-from apps.reviews.services import assign_due_default_worker_ratings
+from apps.reviews.services import assign_due_default_worker_ratings, update_worker_reputation
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 
@@ -101,6 +101,10 @@ class ReviewListCreateView(APIView):
                 job_title=serializer.validated_data.get("job_title") or job.title,
                 rating=serializer.validated_data.get("rating"),
                 feedback=serializer.validated_data.get("feedback", ""),
+                quality_of_work=serializer.validated_data.get("quality_of_work"),
+                punctuality=serializer.validated_data.get("punctuality"),
+                communication=serializer.validated_data.get("communication"),
+                professionalism=serializer.validated_data.get("professionalism"),
             )
         except IntegrityError:
             return Response({"detail": "This user has already been reviewed for this completed job."}, status=status.HTTP_400_BAD_REQUEST)
@@ -119,4 +123,6 @@ class ReviewListCreateView(APIView):
             action_type=Notification.ACTION_REVIEW,
             action_url=f"/reviews/jobs/{job.id}",
         )
+        # Update reputation tier and trend after new review
+        update_worker_reputation(target_user)
         return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)

@@ -19,6 +19,10 @@ class Review(models.Model):
     job_title = models.CharField(max_length=255, blank=True, default="")
     rating = models.DecimalField(max_digits=2, decimal_places=1, null=True, blank=True)
     feedback = models.TextField(blank=True, default="")
+    quality_of_work = models.IntegerField(null=True, blank=True, choices=[(i, str(i)) for i in range(1, 6)])
+    punctuality = models.IntegerField(null=True, blank=True, choices=[(i, str(i)) for i in range(1, 6)])
+    communication = models.IntegerField(null=True, blank=True, choices=[(i, str(i)) for i in range(1, 6)])
+    professionalism = models.IntegerField(null=True, blank=True, choices=[(i, str(i)) for i in range(1, 6)])
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

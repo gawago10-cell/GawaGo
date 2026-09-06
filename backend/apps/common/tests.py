@@ -87,6 +87,7 @@ class VerificationRequestPermissionTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_worker_submits_verification_documents_as_private_files(self):
+        self.request_record.delete()
         self.client.force_authenticate(user=self.worker)
         primary_file = SimpleUploadedFile("primary.png", b"primary-image", content_type="image/png")
         secondary_file = SimpleUploadedFile("clearance.pdf", b"%PDF-1.4", content_type="application/pdf")
@@ -109,6 +110,63 @@ class VerificationRequestPermissionTests(TestCase):
         self.assertTrue(request_record.secondary_doc_file.name)
         self.assertNotIn("primary-image", response.data["verification_request"]["primary_id_preview"])
         self.assertIn("/api/common/verification-requests/", response.data["verification_request"]["primary_id_preview"])
+
+    def test_pending_verification_request_cannot_be_submitted_again(self):
+        self.client.force_authenticate(user=self.worker)
+
+        response = self.client.post(
+            reverse("verification-request-list-create"),
+            {
+                "primary_id_name": "replacement.png",
+                "secondary_doc_name": "replacement.pdf",
+                "primary_id_file": SimpleUploadedFile(
+                    "replacement.png",
+                    b"replacement-image",
+                    content_type="image/png",
+                ),
+                "secondary_doc_file": SimpleUploadedFile(
+                    "replacement.pdf",
+                    b"%PDF-1.4 replacement",
+                    content_type="application/pdf",
+                ),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("already under review", response.data["detail"])
+        self.assertEqual(VerificationRequest.objects.filter(worker=self.worker).count(), 1)
+
+    def test_rejected_verification_request_can_be_resubmitted(self):
+        self.request_record.status = VerificationRequest.STATUS_REJECTED
+        self.request_record.save(update_fields=["status"])
+        self.profile.verification_status = "rejected"
+        self.profile.save(update_fields=["verification_status"])
+        self.client.force_authenticate(user=self.worker)
+
+        response = self.client.post(
+            reverse("verification-request-list-create"),
+            {
+                "primary_id_name": "corrected.png",
+                "secondary_doc_name": "corrected.pdf",
+                "primary_id_file": SimpleUploadedFile(
+                    "corrected.png",
+                    b"corrected-image",
+                    content_type="image/png",
+                ),
+                "secondary_doc_file": SimpleUploadedFile(
+                    "corrected.pdf",
+                    b"%PDF-1.4 corrected",
+                    content_type="application/pdf",
+                ),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.verification_status, "pending")
+        self.assertEqual(VerificationRequest.objects.filter(worker=self.worker).count(), 2)
 
     def test_verification_document_requires_owner_or_staff(self):
         self.request_record.primary_id_file.save(
@@ -156,12 +214,51 @@ class VerificationRequestPermissionTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_household_cannot_list_verification_requests(self):
+    def test_household_can_list_own_verification_requests(self):
         self.client.force_authenticate(user=self.household)
 
         response = self.client.get(reverse("verification-request-list-create"))
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [])
+
+    def test_household_can_submit_verification_request(self):
+        self.client.force_authenticate(user=self.household)
+        primary_file = SimpleUploadedFile("household-primary.png", b"primary-image", content_type="image/png")
+        secondary_file = SimpleUploadedFile("household-clearance.pdf", b"%PDF-1.4", content_type="application/pdf")
+
+        response = self.client.post(
+            reverse("verification-request-list-create"),
+            {
+                "primary_id_name": "household-primary.png",
+                "secondary_doc_name": "household-clearance.pdf",
+                "primary_id_file": primary_file,
+                "secondary_doc_file": secondary_file,
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["verification_request"]["account_role"], UserProfile.ROLE_HOUSEHOLD)
+        self.assertEqual(response.data["account"]["profile"]["role"], UserProfile.ROLE_HOUSEHOLD)
+
+    def test_admin_can_approve_household_verification_request(self):
+        household_request = VerificationRequest.objects.create(
+            worker=self.household,
+            primary_id_name="household-primary.png",
+            secondary_doc_name="household-clearance.pdf",
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            reverse("verification-request-review", args=[household_request.id]),
+            {"action": "approve"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.household.profile.refresh_from_db()
+        self.assertEqual(self.household.profile.verification_status, "verified")
 
     def test_admin_can_list_all_verification_requests(self):
         self.client.force_authenticate(user=self.admin)

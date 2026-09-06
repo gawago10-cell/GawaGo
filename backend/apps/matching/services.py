@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from decimal import Decimal
 from urllib import error, request
 
@@ -71,11 +72,13 @@ def cached_coordinates_match(cache_record, job, profile):
 
 
 def fetch_road_route(lat1, lon1, lat2, lon2):
-    if not settings.OPENROUTESERVICE_API_KEY or None in (lat1, lon1, lat2, lon2):
+    if None in (lat1, lon1, lat2, lon2):
         return None
     coordinates = [float(lat1), float(lon1), float(lat2), float(lon2)]
     if any(value == 0.0 for value in coordinates):
         return None
+    if not settings.OPENROUTESERVICE_API_KEY:
+        return fetch_osrm_route(lat1, lon1, lat2, lon2)
     payload = json.dumps(
         {
             "coordinates": [
@@ -102,6 +105,50 @@ def fetch_road_route(lat1, lon1, lat2, lon2):
     feature = (data.get("features") or [None])[0] or {}
     distance_meters = feature.get("properties", {}).get("summary", {}).get("distance")
     raw_coordinates = feature.get("geometry", {}).get("coordinates") or []
+    route_points = [
+        [float(coordinate[1]), float(coordinate[0])]
+        for coordinate in raw_coordinates
+        if isinstance(coordinate, list)
+        and len(coordinate) >= 2
+        and isinstance(coordinate[0], (int, float))
+        and isinstance(coordinate[1], (int, float))
+    ]
+    try:
+        return {
+            "distance_km": float(distance_meters) / 1000,
+            "route_points": route_points,
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_osrm_route(lat1, lon1, lat2, lon2):
+    coordinates = f"{float(lon1)},{float(lat1)};{float(lon2)},{float(lat2)}"
+    route_url = (
+        f"{settings.OSRM_DIRECTIONS_URL.rstrip('/')}/{coordinates}"
+        "?overview=full&geometries=geojson&steps=false"
+    )
+    route_request = request.Request(
+        route_url,
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "GawaGo/1.0",
+        },
+    )
+    try:
+        with request.urlopen(
+            route_request,
+            timeout=settings.OPENROUTESERVICE_TIMEOUT_SECONDS,
+        ) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, error.URLError, error.HTTPError):
+        return None
+    if data.get("code") != "Ok":
+        return None
+    route = (data.get("routes") or [None])[0] or {}
+    distance_meters = route.get("distance")
+    raw_coordinates = route.get("geometry", {}).get("coordinates") or []
     route_points = [
         [float(coordinate[1]), float(coordinate[0])]
         for coordinate in raw_coordinates
@@ -153,29 +200,17 @@ def time_in_window(target_time, start_time, end_time):
     return target_time >= start_time or target_time <= end_time
 
 
-def is_worker_available_for_job(profile, job):
-    if not job.preferred_date or not job.preferred_time:
-        return True
-    return profile.user.availability_windows.filter(
-        date=job.preferred_date,
-        is_available=True,
-    ).filter(
-        start_time__lte=job.preferred_time,
-        end_time__gte=job.preferred_time,
-    ).exists() or any(
-        time_in_window(job.preferred_time, window.start_time, window.end_time)
-        for window in profile.user.availability_windows.filter(
-            date=job.preferred_date,
-            is_available=True,
-            start_time__gt=models.F("end_time"),
-        )
-    )
-
-
-def has_worker_availability_for_job_date(profile, job):
-    if not job.preferred_date or not job.preferred_time:
-        return True
-    return profile.user.availability_windows.filter(date=job.preferred_date, is_available=True).exists()
+def windows_cover_time(windows, target_time, include_overnight_start=True, include_overnight_end=False):
+    for window in windows:
+        if window.start_time <= window.end_time:
+            if window.start_time <= target_time <= window.end_time:
+                return True
+            continue
+        if include_overnight_start and target_time >= window.start_time:
+            return True
+        if include_overnight_end and target_time <= window.end_time:
+            return True
+    return False
 
 
 def get_worker_rate(profile):
@@ -203,34 +238,33 @@ def calculate_distance_score(distance_km):
     return max(0, 10 - distance_km) / 10
 
 
-def calculate_match_score(matches_skill, available, verified, distance_km, rating, rate_score):
+def calculate_match_score(matches_skill, verified, distance_km, rating, rate_score):
     return (
         (50 if matches_skill else 0)
-        + (20 if available else 0)
-        + (12 if verified else 0)
-        + (calculate_distance_score(distance_km) * 8)
-        + (min(float(rating or 0), 5) * 1.5)
-        + (rate_score * 2.5)
+        + (20 if verified else 0)
+        + (calculate_distance_score(distance_km) * 15)
+        + (min(float(rating or 0), 5) * 2)
+        + (rate_score * 5)
     )
 
 
 def build_match_results(job, worker_profiles):
+    max_distance_km = float(job.max_distance_km) if job.max_distance_km else None
     results = []
     for profile in worker_profiles:
-        available = is_worker_available_for_job(profile, job)
-        has_schedule_for_date = has_worker_availability_for_job_date(profile, job)
-        if has_schedule_for_date and not available:
-            continue
         skills = profile.skills or []
         matches_skill = skill_matches(job.required_skill, skills)
         route = get_road_route_for_match(job, profile)
         distance_km = route["distance_km"]
+
+        if max_distance_km is not None and distance_km is not None and distance_km > max_distance_km:
+            continue
+
         is_verified = profile.verification_status == "verified"
         rating_score = float(profile.average_rating or 0)
         rate_score = calculate_rate_score(job, profile)
         match_score = calculate_match_score(
             matches_skill=matches_skill,
-            available=available,
             verified=is_verified,
             distance_km=distance_km,
             rating=rating_score,
@@ -245,15 +279,15 @@ def build_match_results(job, worker_profiles):
                 "verification_status": profile.verification_status,
                 "worker_latitude": float(profile.latitude) if profile.latitude is not None else None,
                 "worker_longitude": float(profile.longitude) if profile.longitude is not None else None,
-                "distance_km": round(distance_km, 2) if distance_km is not None else None,
+                "distance_km": round(distance_km, 3) if distance_km is not None else None,
                 "distance_label": (
-                    f"{round(distance_km, 2)} km away" if distance_km is not None else "Road distance unavailable"
+                    f"{round(distance_km, 3)} km away" if distance_km is not None else "Road distance unavailable"
                 ),
                 "route_points": route.get("route_points") or [],
                 "match_score": round(match_score, 2),
                 "rating_label": profile.display_rating,
                 "rating_score": round(rating_score, 2),
-                "available_at_requested_time": available,
+                "available_at_requested_time": True,
                 "rate_score": round(rate_score, 2),
                 "worker_rate": str(get_worker_rate(profile) or ""),
             }
@@ -262,7 +296,6 @@ def build_match_results(job, worker_profiles):
         results,
         key=lambda item: (
             0 if item["matches_skill"] else 1,
-            0 if item["available_at_requested_time"] else 1,
             0 if item["verification_status"] == "verified" else 1,
             0 if item["distance_km"] is not None else 1,
             item["distance_km"] if item["distance_km"] is not None else float("inf"),

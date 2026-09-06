@@ -1,19 +1,23 @@
 from rest_framework import serializers
 from django.urls import reverse
+from pathlib import Path
 
 from apps.common.models import VerificationRequest
 
 
-ALLOWED_VERIFICATION_DOCUMENT_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-    "application/pdf",
+ALLOWED_VERIFICATION_DOCUMENT_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".pdf",
 }
-MAX_VERIFICATION_DOCUMENT_SIZE = 5 * 1024 * 1024
 
 
 class VerificationRequestSerializer(serializers.ModelSerializer):
+    account_role = serializers.SerializerMethodField()
     worker_username = serializers.CharField(source="worker.username", read_only=True)
     worker_name = serializers.SerializerMethodField()
     worker_email = serializers.EmailField(source="worker.email", read_only=True)
@@ -32,6 +36,7 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "worker",
+            "account_role",
             "worker_username",
             "worker_name",
             "worker_email",
@@ -57,6 +62,10 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
     def get_worker_name(self, obj):
         full_name = obj.worker.get_full_name().strip()
         return full_name or obj.worker.username
+
+    def get_account_role(self, obj):
+        profile = self.get_worker_profile(obj)
+        return profile.role if profile else ""
 
     def get_worker_profile(self, obj):
         return getattr(obj.worker, "profile", None)
@@ -121,9 +130,6 @@ class VerificationRequestCreateSerializer(serializers.Serializer):
 
     @staticmethod
     def validate_document_file(value):
-        content_type = getattr(value, "content_type", "")
-        if content_type not in ALLOWED_VERIFICATION_DOCUMENT_TYPES:
-            raise serializers.ValidationError("Only JPG, PNG, WebP, and PDF files are allowed.")
-        if value.size > MAX_VERIFICATION_DOCUMENT_SIZE:
-            raise serializers.ValidationError("Each document must be 5MB or smaller.")
+        if Path(value.name).suffix.lower() not in ALLOWED_VERIFICATION_DOCUMENT_EXTENSIONS:
+            raise serializers.ValidationError("Choose an image or PDF document.")
         return value

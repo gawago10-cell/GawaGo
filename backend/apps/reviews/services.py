@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import timedelta
 
 from django.db import IntegrityError
 from django.utils import timezone
@@ -82,3 +83,90 @@ def assign_default_worker_ratings(after_hours: int = DEFAULT_NO_FEEDBACK_AFTER_H
 
 def assign_due_default_worker_ratings() -> int:
     return assign_default_worker_ratings(after_hours=DEFAULT_NO_FEEDBACK_AFTER_HOURS)
+
+
+def calculate_reputation_tier(user) -> str:
+    """
+    Calculate reputation tier based on:
+    - Average rating (4.5+ = Elite, 4.0+ = Trusted, 3.5+ = Established, < 3.5 = New)
+    - Number of ratings (minimum 5 ratings required for Elite/Trusted)
+    """
+    profile = getattr(user, "profile", None)
+    if not profile:
+        return UserProfile.TIER_NEW
+
+    rating = profile.average_rating
+    count = profile.rating_count
+
+    # Not enough ratings yet
+    if count < 2:
+        return UserProfile.TIER_NEW
+
+    if count >= 5 and rating is not None:
+        if rating >= Decimal("4.5"):
+            return UserProfile.TIER_ELITE
+        elif rating >= Decimal("4.0"):
+            return UserProfile.TIER_TRUSTED
+        elif rating >= Decimal("3.5"):
+            return UserProfile.TIER_ESTABLISHED
+
+    # With fewer ratings, use lower thresholds
+    if rating is not None:
+        if rating >= Decimal("4.5"):
+            return UserProfile.TIER_TRUSTED
+        elif rating >= Decimal("3.8"):
+            return UserProfile.TIER_ESTABLISHED
+
+    return UserProfile.TIER_NEW
+
+
+def calculate_rating_trend(user) -> str:
+    """
+    Calculate rating trend by comparing recent ratings to older ratings.
+    Weights recent ratings (last 30 days) higher.
+    Returns: 'improving', 'declining', or 'neutral'
+    """
+    profile = getattr(user, "profile", None)
+    if not profile or not profile.rating_count:
+        return "neutral"
+
+    thirty_days_ago = timezone.now() - timedelta(days=30)
+
+    # Get recent ratings
+    recent_reviews = Review.objects.filter(
+        target=user, rating__isnull=False, created_at__gte=thirty_days_ago
+    ).order_by("-created_at")[:10]
+
+    # Get older ratings
+    old_reviews = Review.objects.filter(
+        target=user, rating__isnull=False, created_at__lt=thirty_days_ago
+    ).order_by("-created_at")[:10]
+
+    if not recent_reviews or not old_reviews:
+        return "neutral"
+
+    recent_avg = sum(
+        float(r.overall_rating or r.rating or 0) for r in recent_reviews
+    ) / len(recent_reviews)
+    old_avg = sum(
+        float(r.overall_rating or r.rating or 0) for r in old_reviews
+    ) / len(old_reviews)
+
+    # Calculate trend
+    if recent_avg > old_avg + 0.5:
+        return "improving"
+    elif recent_avg < old_avg - 0.5:
+        return "declining"
+    else:
+        return "neutral"
+
+
+def update_worker_reputation(user) -> None:
+    """Update both reputation tier and rating trend for a worker."""
+    profile = getattr(user, "profile", None)
+    if not profile:
+        return
+
+    profile.reputation_tier = calculate_reputation_tier(user)
+    profile.rating_trend = calculate_rating_trend(user)
+    profile.save(update_fields=["reputation_tier", "rating_trend"])

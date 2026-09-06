@@ -22,8 +22,16 @@ class JobPermissionTests(TestCase):
         self.household = User.objects.create_user(username="household1", email="household1@example.com", password="password")
         self.other_household = User.objects.create_user(username="household2", email="household2@example.com", password="password")
         self.worker = User.objects.create_user(username="worker1", email="worker1@example.com", password="password")
-        UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD)
-        UserProfile.objects.create(user=self.other_household, role=UserProfile.ROLE_HOUSEHOLD)
+        UserProfile.objects.create(
+            user=self.household,
+            role=UserProfile.ROLE_HOUSEHOLD,
+            verification_status="verified",
+        )
+        UserProfile.objects.create(
+            user=self.other_household,
+            role=UserProfile.ROLE_HOUSEHOLD,
+            verification_status="verified",
+        )
         UserProfile.objects.create(
             user=self.worker,
             role=UserProfile.ROLE_WORKER,
@@ -78,6 +86,9 @@ class JobPermissionTests(TestCase):
         self.assertFalse(response.data["can_accept_hire_request"])
         self.assertFalse(response.data["can_request_completion"])
         self.assertFalse(response.data["can_review"])
+        self.assertIsNone(response.data["latitude"])
+        self.assertIsNone(response.data["longitude"])
+        self.assertEqual(response.data["route_points"], [])
 
     def test_anonymous_job_list_hides_applications(self):
         response = self.client.get(reverse("job-list"))
@@ -85,6 +96,63 @@ class JobPermissionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         first_job = response.data["results"][0]
         self.assertEqual(first_job["applications"], [])
+        self.assertIsNone(first_job["latitude"])
+        self.assertIsNone(first_job["longitude"])
+
+    def test_household_can_filter_job_list_to_own_posts(self):
+        JobPosting.objects.create(
+            household=self.other_household,
+            title="Other household job",
+            job_type="Laundry",
+            required_skill="Laundry",
+            schedule="2026-06-03 10:00",
+            location_label="Calumpang, Tayabas",
+            latitude="13.9500000",
+            longitude="121.5900000",
+            service_rate="300.00",
+        )
+        self.client.force_authenticate(user=self.household)
+
+        response = self.client.get(reverse("job-list"), {"mine": "true"})
+
+        self.assertEqual(response.status_code, 200)
+        titles = [job["title"] for job in response.data["results"]]
+        self.assertEqual(titles, ["Cleaning help"])
+
+    def test_household_mine_list_includes_completed_and_cancelled_posts(self):
+        completed_job = JobPosting.objects.create(
+            household=self.household,
+            title="Completed laundry",
+            job_type="Laundry",
+            required_skill="Laundry",
+            schedule="2026-06-04 10:00",
+            location_label="Calumpang, Tayabas",
+            latitude="13.9500000",
+            longitude="121.5900000",
+            service_rate="300.00",
+            status=JobPosting.STATUS_COMPLETED,
+        )
+        cancelled_job = JobPosting.objects.create(
+            household=self.household,
+            title="Cancelled cooking",
+            job_type="Cooking",
+            required_skill="Cooking",
+            schedule="2026-06-05 10:00",
+            location_label="Mainit, Tayabas",
+            latitude="13.9500000",
+            longitude="121.5900000",
+            service_rate="450.00",
+            status=JobPosting.STATUS_CANCELLED,
+        )
+        self.client.force_authenticate(user=self.household)
+
+        response = self.client.get(reverse("job-list"), {"mine": "true"})
+
+        self.assertEqual(response.status_code, 200)
+        ids = {job["id"] for job in response.data["results"]}
+        self.assertIn(self.job.id, ids)
+        self.assertIn(completed_job.id, ids)
+        self.assertIn(cancelled_job.id, ids)
 
     def test_job_owner_can_see_applications(self):
         self.client.force_authenticate(user=self.household)
@@ -95,11 +163,41 @@ class JobPermissionTests(TestCase):
         self.assertEqual(len(response.data["applications"]), 1)
         self.assertEqual(response.data["applications"][0]["worker_username"], self.worker.username)
         self.assertIsNone(response.data["current_worker_application"])
+        self.assertEqual(float(response.data["latitude"]), float(self.job.latitude))
+        self.assertEqual(float(response.data["longitude"]), float(self.job.longitude))
+
+    def test_job_owner_receives_applicant_location_and_road_route(self):
+        self.worker.profile.location_label = "Near Mayowe, Tayabas City"
+        self.worker.profile.latitude = "13.9800000"
+        self.worker.profile.longitude = "121.5800000"
+        self.worker.profile.save(update_fields=["location_label", "latitude", "longitude"])
+        route = {
+            "distance_km": 6.9,
+            "route_points": [
+                [float(self.job.latitude), float(self.job.longitude)],
+                [13.9700000, 121.5700000],
+                [13.9800000, 121.5800000],
+            ],
+        }
+
+        self.client.force_authenticate(user=self.household)
+        with patch("apps.matching.services.fetch_road_route", return_value=route):
+            response = self.client.get(reverse("job-detail", args=[self.job.id]))
+
+        self.assertEqual(response.status_code, 200)
+        application = response.data["applications"][0]
+        self.assertEqual(application["worker_location_label"], "Near Mayowe, Tayabas City")
+        self.assertEqual(application["worker_latitude"], 13.98)
+        self.assertEqual(application["worker_longitude"], 121.58)
+        self.assertEqual(application["route_distance_km"], 6.9)
+        self.assertEqual(application["route_points"][1], [13.97, 121.57])
 
     def test_worker_job_payload_uses_cached_road_route_distance(self):
         self.worker.profile.latitude = "13.9800000"
         self.worker.profile.longitude = "121.5800000"
         self.worker.profile.save(update_fields=["latitude", "longitude"])
+        self.application.status = JobApplication.STATUS_HIRED
+        self.application.save(update_fields=["status"])
 
         def fake_road_route(lat1, lon1, lat2, lon2):
             return {
@@ -118,6 +216,37 @@ class JobPermissionTests(TestCase):
         self.assertEqual(response.data["route_points"][1], [13.97, 121.57])
         self.assertEqual(route_fetch.call_count, 1)
         self.assertEqual(RouteDistanceCache.objects.count(), 1)
+
+    def test_unrelated_authenticated_worker_cannot_see_exact_job_location(self):
+        unrelated_worker = User.objects.create_user(username="worker-location-private", password="password")
+        UserProfile.objects.create(
+            user=unrelated_worker,
+            role=UserProfile.ROLE_WORKER,
+            verification_status="verified",
+            hourly_rate="120.00",
+            location_label="Alitao, Tayabas City",
+            latitude="14.0537324",
+            longitude="121.5336725",
+        )
+        self.client.force_authenticate(user=unrelated_worker)
+
+        response = self.client.get(reverse("job-detail", args=[self.job.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["latitude"])
+        self.assertIsNone(response.data["longitude"])
+        self.assertEqual(response.data["route_points"], [])
+
+    def test_hired_worker_can_see_exact_job_location(self):
+        self.application.status = JobApplication.STATUS_HIRED
+        self.application.save(update_fields=["status"])
+        self.client.force_authenticate(user=self.worker)
+
+        response = self.client.get(reverse("job-detail", args=[self.job.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(float(response.data["latitude"]), float(self.job.latitude))
+        self.assertEqual(float(response.data["longitude"]), float(self.job.longitude))
 
     def test_worker_only_sees_own_application_on_job_detail(self):
         second_worker = User.objects.create_user(username="worker-private-other", password="password")
@@ -401,9 +530,39 @@ class JobPermissionTests(TestCase):
         self.assertEqual(str(job.preferred_date), "2026-06-02")
         self.assertEqual(job.preferred_time.strftime("%H:%M"), "09:30")
 
+    def test_unverified_household_can_create_job(self):
+        self.household.profile.verification_status = "pending"
+        self.household.profile.save(update_fields=["verification_status"])
+        self.client.force_authenticate(user=self.household)
+
+        response = self.client.post(
+            reverse("job-list"),
+            {
+                "title": "Blocked household job",
+                "job_type": "House Cleaning",
+                "required_skill": "House Cleaning",
+                "schedule_type": "One-Time",
+                "preferred_date": "2026-06-02",
+                "preferred_time": "09:30",
+                "location_label": "Isabang, Tayabas",
+                "latitude": "13.9622745",
+                "longitude": "121.5632841",
+                "service_rate": "500.00",
+                "worker_slots": 1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(JobPosting.objects.filter(title="Blocked household job").exists())
+
     def test_household_token_repairs_stale_profile_role_when_creating_job(self):
         stale_household = User.objects.create_user(username="stalehousehold", password="password")
-        UserProfile.objects.create(user=stale_household, role=UserProfile.ROLE_WORKER)
+        UserProfile.objects.create(
+            user=stale_household,
+            role=UserProfile.ROLE_WORKER,
+            verification_status="verified",
+        )
         token = create_jwt_token(
             {
                 "user_id": stale_household.id,
@@ -652,13 +811,25 @@ class JobPermissionTests(TestCase):
     def test_job_owner_can_directly_hire_pending_application_with_structured_notification(self):
         self.client.force_authenticate(user=self.household)
 
-        response = self.client.patch(
-            reverse("job-application-status", args=[self.application.id]),
-            {"status": JobApplication.STATUS_HIRED},
-            format="json",
-        )
+        with (
+            patch(
+                "apps.jobs.services.JobPosting.objects.select_for_update",
+                wraps=JobPosting.objects.select_for_update,
+            ) as job_lock,
+            patch(
+                "apps.jobs.services.JobApplication.objects.select_for_update",
+                wraps=JobApplication.objects.select_for_update,
+            ) as application_lock,
+        ):
+            response = self.client.patch(
+                reverse("job-application-status", args=[self.application.id]),
+                {"status": JobApplication.STATUS_HIRED},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
+        job_lock.assert_called_once_with()
+        application_lock.assert_called_once_with()
         self.application.refresh_from_db()
         self.job.refresh_from_db()
         self.assertEqual(self.application.status, JobApplication.STATUS_HIRED)
@@ -706,6 +877,21 @@ class JobPermissionTests(TestCase):
         self.assertEqual(mail.outbox[-1].to, [self.worker.email])
         self.assertEqual(mail.outbox[-1].subject, "GawaGo: Hire request")
         self.assertIn(self.job.title, mail.outbox[-1].body)
+
+    def test_unverified_household_can_manage_job_applications(self):
+        self.household.profile.verification_status = "pending"
+        self.household.profile.save(update_fields=["verification_status"])
+        self.client.force_authenticate(user=self.household)
+
+        response = self.client.patch(
+            reverse("job-application-status", args=[self.application.id]),
+            {"status": JobApplication.STATUS_HIRE_REQUESTED},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, JobApplication.STATUS_HIRE_REQUESTED)
 
     def test_job_owner_cannot_hire_unverified_worker(self):
         self.worker.profile.verification_status = "pending"
@@ -815,7 +1001,11 @@ class JobLifecycleTransitionTests(TestCase):
         self.household = User.objects.create_user(username="lifecycle-household", password="password")
         self.worker = User.objects.create_user(username="lifecycle-worker", password="password")
         self.reject_worker = User.objects.create_user(username="lifecycle-reject-worker", password="password")
-        UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD)
+        UserProfile.objects.create(
+            user=self.household,
+            role=UserProfile.ROLE_HOUSEHOLD,
+            verification_status="verified",
+        )
         UserProfile.objects.create(
             user=self.worker,
             role=UserProfile.ROLE_WORKER,
@@ -919,9 +1109,21 @@ class JobLifecycleTransitionTests(TestCase):
         application = JobApplication.objects.get(job=self.job, worker=self.worker)
         self.send_hire_request(application)
 
-        response = self.decide_hire_request(application, "accept")
+        with (
+            patch(
+                "apps.jobs.services.JobPosting.objects.select_for_update",
+                wraps=JobPosting.objects.select_for_update,
+            ) as job_lock,
+            patch(
+                "apps.jobs.services.JobApplication.objects.select_for_update",
+                wraps=JobApplication.objects.select_for_update,
+            ) as application_lock,
+        ):
+            response = self.decide_hire_request(application, "accept")
 
         self.assertEqual(response.status_code, 200)
+        job_lock.assert_called_once_with()
+        application_lock.assert_called_once_with()
         application.refresh_from_db()
         self.job.refresh_from_db()
         self.assertEqual(application.status, JobApplication.STATUS_HIRED)

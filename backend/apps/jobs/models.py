@@ -22,6 +22,14 @@ class JobPosting(models.Model):
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
+    DISTANCE_CHOICES = [
+        ('1km', '1 Kilometer'),
+        ('2km', '2 Kilometers'),
+        ('5km', '5 Kilometers'),
+        ('10km', '10 Kilometers'),
+        ('unlimited', 'Unlimited'),
+    ]
+
     household = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="job_postings")
     title = models.CharField(max_length=255)
     job_type = models.CharField(max_length=120)
@@ -37,6 +45,13 @@ class JobPosting(models.Model):
     service_rate = models.DecimalField(max_digits=10, decimal_places=2)
     worker_slots = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
+
+    job_start_date = models.DateField(null=True, blank=True)
+    job_end_date = models.DateField(null=True, blank=True)
+    estimated_working_days = models.IntegerField(null=True, blank=True)
+    max_distance_km = models.FloatField(default=1.0)
+    geographic_boundary = models.CharField(max_length=20, choices=DISTANCE_CHOICES, default='1km')
+
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

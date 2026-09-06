@@ -1,17 +1,19 @@
 import mimetypes
 
+from django.db import transaction
 from django.http import FileResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import UserProfile
 from apps.accounts.serializers import UserProfileSerializer
 from apps.common.models import VerificationRequest
+from apps.common.permissions import IsPlatformAdmin, is_platform_admin
 from apps.common.serializers import VerificationRequestCreateSerializer, VerificationRequestSerializer
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
@@ -27,9 +29,9 @@ class VerificationRequestListCreateView(APIView):
             .filter(worker__is_staff=False)
             .order_by("-submitted_at")
         )
-        if not request.user.is_staff:
+        if not is_platform_admin(request.user):
             profile = getattr(request.user, "profile", None)
-            if not profile or profile.role != UserProfile.ROLE_WORKER:
+            if not profile or profile.role not in {UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD}:
                 return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
             requests = requests.filter(worker=request.user)
         return Response(VerificationRequestSerializer(requests, many=True, context={"request": request}).data)
@@ -37,44 +39,59 @@ class VerificationRequestListCreateView(APIView):
     def post(self, request):
         serializer = VerificationRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        worker = request.user
-        if worker.is_staff or not getattr(worker, "profile", None) or worker.profile.role != UserProfile.ROLE_WORKER:
-            return Response({"detail": "Only workers can submit verification requests."}, status=status.HTTP_403_FORBIDDEN)
-        request_record = VerificationRequest.objects.filter(worker=worker).exclude(status=VerificationRequest.STATUS_REJECTED).order_by("-submitted_at").first()
-        if request_record:
-            request_record.primary_id_name = serializer.validated_data["primary_id_name"]
-            request_record.secondary_doc_name = serializer.validated_data["secondary_doc_name"]
-            request_record.primary_id_file = serializer.validated_data["primary_id_file"]
-            request_record.secondary_doc_file = serializer.validated_data["secondary_doc_file"]
-            request_record.notes = serializer.validated_data.get("notes", "")
-            request_record.status = VerificationRequest.STATUS_PENDING
-            request_record.reviewed_at = None
-            request_record.review_note = ""
-            request_record.save(update_fields=["primary_id_name", "secondary_doc_name", "primary_id_file", "secondary_doc_file", "notes", "status", "reviewed_at", "review_note"])
-        else:
+        account = request.user
+        profile = getattr(account, "profile", None)
+        if account.is_staff or not profile or profile.role not in {UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD}:
+            return Response({"detail": "Only worker and household accounts can submit verification requests."}, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            profile = UserProfile.objects.select_for_update().get(pk=profile.pk)
+            active_request = (
+                VerificationRequest.objects.filter(worker=account)
+                .exclude(status=VerificationRequest.STATUS_REJECTED)
+                .order_by("-submitted_at")
+                .first()
+            )
+            if active_request or profile.verification_status == "verified":
+                message = (
+                    "Your account is already verified."
+                    if profile.verification_status == "verified"
+                    else "Your verification request is already under review."
+                )
+                return Response({"detail": message}, status=status.HTTP_409_CONFLICT)
+
             request_record = VerificationRequest.objects.create(
-                worker=worker,
+                worker=account,
                 primary_id_name=serializer.validated_data["primary_id_name"],
                 secondary_doc_name=serializer.validated_data["secondary_doc_name"],
                 primary_id_file=serializer.validated_data["primary_id_file"],
                 secondary_doc_file=serializer.validated_data["secondary_doc_file"],
                 notes=serializer.validated_data.get("notes", ""),
             )
-        profile, _ = UserProfile.objects.get_or_create(user=worker, defaults={"role": UserProfile.ROLE_WORKER})
-        if profile.verification_status != "pending":
-            profile.verification_status = "pending"
-            profile.save(update_fields=["verification_status"])
+            if profile.verification_status != "pending":
+                profile.verification_status = "pending"
+                profile.save(update_fields=["verification_status"])
         return Response(
             {
                 "verification_request": VerificationRequestSerializer(request_record, context={"request": request}).data,
+                "account": {
+                    "id": account.id,
+                    "username": account.username,
+                    "email": account.email,
+                    "first_name": account.first_name,
+                    "last_name": account.last_name,
+                    "display_name": account.get_full_name().strip() or account.username,
+                    "is_staff": account.is_staff,
+                    "profile": UserProfileSerializer(profile, context={"request": request}).data,
+                },
                 "worker": {
-                    "id": worker.id,
-                    "username": worker.username,
-                    "email": worker.email,
-                    "first_name": worker.first_name,
-                    "last_name": worker.last_name,
-                    "display_name": worker.get_full_name().strip() or worker.username,
-                    "is_staff": worker.is_staff,
+                    "id": account.id,
+                    "username": account.username,
+                    "email": account.email,
+                    "first_name": account.first_name,
+                    "last_name": account.last_name,
+                    "display_name": account.get_full_name().strip() or account.username,
+                    "is_staff": account.is_staff,
                     "profile": UserProfileSerializer(profile, context={"request": request}).data,
                 },
             },
@@ -83,17 +100,17 @@ class VerificationRequestListCreateView(APIView):
 
 
 class VerificationRequestReviewView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsPlatformAdmin]
 
     def post(self, request, pk):
-        request_record = get_object_or_404(VerificationRequest.objects.select_related("worker"), pk=pk)
+        request_record = get_object_or_404(VerificationRequest.objects.select_related("worker", "worker__profile"), pk=pk)
         action = request.data.get("action")
         if action == "approve":
             request_record.status = VerificationRequest.STATUS_APPROVED
             request_record.review_note = "Approved by admin review."
             profile_status = "verified"
             notification_title = "Verification approved"
-            notification_message = "Your worker account is now Verified."
+            notification_message = f"Your {request_record.worker.profile.get_role_display().lower()} account is now Verified."
         elif action == "reject":
             request_record.status = VerificationRequest.STATUS_REJECTED
             request_record.review_note = request.data.get("review_note", "Rejected by admin.")
@@ -118,6 +135,16 @@ class VerificationRequestReviewView(APIView):
         return Response(
             {
                 "verification_request": request_data,
+                "account": {
+                    "id": request_record.worker.id,
+                    "username": request_record.worker.username,
+                    "email": request_record.worker.email,
+                    "first_name": request_record.worker.first_name,
+                    "last_name": request_record.worker.last_name,
+                    "display_name": request_record.worker.get_full_name().strip() or request_record.worker.username,
+                    "is_staff": request_record.worker.is_staff,
+                    "profile": UserProfileSerializer(profile, context={"request": request}).data,
+                },
                 "worker": {
                     "id": request_record.worker.id,
                     "username": request_record.worker.username,
@@ -137,7 +164,7 @@ class VerificationRequestDetailView(APIView):
 
     def get(self, request, pk):
         request_record = get_object_or_404(VerificationRequest.objects.select_related("worker", "worker__profile"), pk=pk)
-        if request_record.worker != request.user and not request.user.is_staff:
+        if request_record.worker != request.user and not is_platform_admin(request.user):
             return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
         return Response(
             {
@@ -161,7 +188,7 @@ class VerificationRequestDocumentView(APIView):
 
     def get(self, request, pk, document_type):
         request_record = get_object_or_404(VerificationRequest.objects.select_related("worker"), pk=pk)
-        if request_record.worker != request.user and not request.user.is_staff:
+        if request_record.worker != request.user and not is_platform_admin(request.user):
             return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
         if document_type == "primary":
             document = request_record.primary_id_file

@@ -1,3 +1,5 @@
+import json
+
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -8,7 +10,7 @@ from apps.accounts.models import UserProfile, WorkerAvailability
 from apps.common.authentication import create_jwt_token
 from apps.jobs.models import JobPosting
 from apps.matching.models import RouteDistanceCache
-from apps.matching.services import normalize_skill_label, skill_matches
+from apps.matching.services import fetch_osrm_route, normalize_skill_label, skill_matches
 
 
 class SkillNormalizationTests(TestCase):
@@ -23,6 +25,48 @@ class SkillNormalizationTests(TestCase):
 
     def test_unknown_skill_normalizes_consistently(self):
         self.assertEqual(normalize_skill_label("Pet Care"), "pet_care")
+
+
+class RoadRoutingProviderTests(TestCase):
+    @override_settings(OSRM_DIRECTIONS_URL="https://router.example/route/v1/driving")
+    def test_osrm_route_returns_driving_distance_and_geometry(self):
+        payload = {
+            "code": "Ok",
+            "routes": [
+                {
+                    "distance": 2450.5,
+                    "geometry": {
+                        "coordinates": [
+                            [121.5632841, 13.9622745],
+                            [121.5812345, 13.9787654],
+                        ]
+                    },
+                }
+            ],
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        with patch("apps.matching.services.request.urlopen", return_value=FakeResponse()) as urlopen:
+            route = fetch_osrm_route(13.9622745, 121.5632841, 13.9787654, 121.5812345)
+
+        self.assertEqual(route["distance_km"], 2.4505)
+        self.assertEqual(
+            route["route_points"],
+            [
+                [13.9622745, 121.5632841],
+                [13.9787654, 121.5812345],
+            ],
+        )
+        self.assertIn("geometries=geojson", urlopen.call_args.args[0].full_url)
 
 
 class RecommendedWorkersAvailabilityTests(TestCase):
@@ -94,7 +138,7 @@ class RecommendedWorkersAvailabilityTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-    def test_matching_only_returns_workers_available_at_requested_datetime(self):
+    def test_matching_keeps_workers_regardless_of_requested_datetime(self):
         WorkerAvailability.objects.create(
             worker=self.available_worker,
             date="2026-06-02",
@@ -112,16 +156,34 @@ class RecommendedWorkersAvailabilityTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         usernames = [item["worker_username"] for item in response.data["results"]]
-        self.assertEqual(usernames, ["available-worker"])
-        self.assertTrue(response.data["results"][0]["available_at_requested_time"])
+        self.assertEqual(set(usernames), {"available-worker", "unavailable-worker"})
+        self.assertTrue(all(item["available_at_requested_time"] for item in response.data["results"]))
 
-    def test_matching_keeps_workers_without_availability_as_lower_confidence_matches(self):
+    def test_matching_keeps_workers_without_availability(self):
         response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
 
         self.assertEqual(response.status_code, 200)
-        usernames = {item["worker_username"] for item in response.data["results"]}
-        self.assertEqual(usernames, {"available-worker", "unavailable-worker"})
-        self.assertTrue(all(not item["available_at_requested_time"] for item in response.data["results"]))
+        self.assertEqual(
+            {item["worker_username"] for item in response.data["results"]},
+            {"available-worker", "unavailable-worker"},
+        )
+
+    def test_matching_does_not_filter_date_specific_availability(self):
+        WorkerAvailability.objects.create(
+            worker=self.available_worker,
+            date="2026-06-02",
+            start_time="00:00",
+            end_time="23:59",
+            is_available=False,
+        )
+
+        response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {item["worker_username"] for item in response.data["results"]},
+            {"available-worker", "unavailable-worker"},
+        )
 
     def test_matching_keeps_legacy_jobs_without_structured_datetime_compatible(self):
         self.job.preferred_date = None
@@ -156,9 +218,17 @@ class RecommendedWorkersAvailabilityTests(TestCase):
 
     @override_settings(OPENROUTESERVICE_API_KEY="")
     def test_matching_does_not_fall_back_to_straight_line_distance(self):
-        response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
+        WorkerAvailability.objects.create(
+            worker=self.available_worker,
+            date="2026-06-02",
+            start_time="09:00",
+            end_time="10:00",
+        )
+        with patch("apps.matching.services.fetch_osrm_route", return_value=None):
+            response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["results"]), 2)
         self.assertTrue(all(item["distance_km"] is None for item in response.data["results"]))
         self.assertTrue(all(item["distance_label"] == "Road distance unavailable" for item in response.data["results"]))
 
@@ -177,6 +247,7 @@ class RecommendedWorkersRankingTests(TestCase):
             latitude="13.9622745",
             longitude="121.5632841",
             service_rate="500.00",
+            max_distance_km=10.0,
         )
         self.client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {create_jwt_token({'user_id': self.household.id})}"
 

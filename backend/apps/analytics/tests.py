@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.urls import reverse
+from rest_framework.test import APIClient
 
 from apps.accounts.models import UserProfile
 from apps.analytics.services import build_dashboard_metrics
@@ -125,3 +127,30 @@ class DashboardMetricsServiceTests(TestCase):
         self.assertEqual(heat_map_alitao["jobs"], 1)
         self.assertEqual(heat_map_alitao["pendingVerifications"], 1)
         self.assertEqual(analytics["ratingDistribution"][1]["count"], 1)
+
+
+class DashboardMetricsPermissionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("dashboard-metrics")
+        self.user = User.objects.create_user(username="regular", password="password")
+        self.admin = User.objects.create_user(username="staff-admin", password="password", is_staff=True)
+
+    def test_dashboard_metrics_requires_authentication(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_dashboard_metrics_rejects_non_staff_users(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_dashboard_metrics_allows_staff_admins(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)

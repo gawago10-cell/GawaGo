@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.analytics",
     "apps.common",
+    "apps.complaints",
 ]
 
 REST_FRAMEWORK = {
@@ -139,7 +140,7 @@ else:
         }
     }
 
-CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Manila"
@@ -168,3 +169,7 @@ OPENROUTESERVICE_DIRECTIONS_URL = os.environ.get(
     "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
 )
 OPENROUTESERVICE_TIMEOUT_SECONDS = float(os.environ.get("OPENROUTESERVICE_TIMEOUT_SECONDS", "4"))
+OSRM_DIRECTIONS_URL = os.environ.get(
+    "OSRM_DIRECTIONS_URL",
+    "https://router.project-osrm.org/route/v1/driving",
+)

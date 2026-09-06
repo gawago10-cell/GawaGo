@@ -4,11 +4,28 @@ from rest_framework import serializers
 from apps.reviews.models import Review
 
 
+def mask_name_part(value):
+    name_part = str(value or "").strip()
+    if not name_part:
+        return ""
+    return f"{name_part[0].lower()}{'*' * (len(name_part) - 1)}"
+
+
+def get_masked_user_name(user):
+    name_parts = [user.first_name.strip(), user.last_name.strip()]
+    visible_parts = [mask_name_part(part) for part in name_parts if part]
+    if visible_parts:
+        return " ".join(visible_parts)
+    username_parts = [part for part in user.username.replace("_", " ").replace("-", " ").split() if part]
+    return " ".join(mask_name_part(part) for part in username_parts) or "Masked worker"
+
+
 class ReviewSerializer(serializers.ModelSerializer):
     author_username = serializers.CharField(source="author.username", read_only=True)
     target_username = serializers.CharField(source="target.username", read_only=True)
     author_name = serializers.SerializerMethodField()
     target_name = serializers.SerializerMethodField()
+    overall_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Review
@@ -26,16 +43,21 @@ class ReviewSerializer(serializers.ModelSerializer):
             "job_title",
             "rating",
             "feedback",
+            "quality_of_work",
+            "punctuality",
+            "communication",
+            "professionalism",
+            "overall_rating",
             "created_at",
         ]
-        read_only_fields = ["id", "author", "author_username", "target_username", "created_at"]
+        read_only_fields = ["id", "author", "author_username", "target_username", "overall_rating", "created_at"]
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
         if self.is_anonymous_worker_feedback(instance):
             data["author"] = None
             data["author_username"] = ""
-            data["author_name"] = "Anonymous worker"
+            data["author_name"] = get_masked_user_name(instance.author)
         return data
 
     @staticmethod
@@ -47,6 +69,13 @@ class ReviewSerializer(serializers.ModelSerializer):
 
     def get_target_name(self, obj):
         return obj.target.get_full_name().strip() or obj.target.username
+
+    def get_overall_rating(self, obj):
+        metrics = [obj.quality_of_work, obj.punctuality, obj.communication, obj.professionalism]
+        valid_metrics = [m for m in metrics if m is not None]
+        if not valid_metrics:
+            return obj.rating
+        return round(sum(valid_metrics) / len(valid_metrics), 1)
 
 
 class ReviewCreateSerializer(serializers.Serializer):
@@ -63,6 +92,10 @@ class ReviewCreateSerializer(serializers.Serializer):
         allow_null=True,
     )
     feedback = serializers.CharField(required=False, allow_blank=True)
+    quality_of_work = serializers.IntegerField(required=False, min_value=1, max_value=5, allow_null=True)
+    punctuality = serializers.IntegerField(required=False, min_value=1, max_value=5, allow_null=True)
+    communication = serializers.IntegerField(required=False, min_value=1, max_value=5, allow_null=True)
+    professionalism = serializers.IntegerField(required=False, min_value=1, max_value=5, allow_null=True)
 
     def validate_author_username(self, value):
         if not value:

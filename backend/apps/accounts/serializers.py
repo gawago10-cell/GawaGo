@@ -1,9 +1,71 @@
-from django.contrib.auth.models import User
 import json
+from decimal import Decimal
+from pathlib import Path
+
+from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from apps.accounts.models import PasswordResetRequest, SignupVerificationRequest, UserProfile, WorkerAvailability
+from apps.common.fields import RoundedCoordinateField
+from apps.accounts.models import (
+    PasswordResetRequest,
+    SignupVerificationRequest,
+    UserProfile,
+    WorkerAvailability,
+    WorkerPortfolio,
+    WorkerSkill,
+    WorkerCertification,
+    WorkerPortfolioItem,
+    SkillRating,
+    VerificationDocument,
+)
 from apps.common.serializers import VerificationRequestSerializer
+
+
+def validate_tayabas_coordinates(attrs):
+    latitude = attrs.get("latitude")
+    longitude = attrs.get("longitude")
+    if (latitude is None) != (longitude is None):
+        raise serializers.ValidationError(
+            {"location": "Latitude and longitude must be provided together."}
+        )
+    if latitude is None or longitude is None:
+        return attrs
+    return attrs
+
+
+def validate_worker_profile_requirements(attrs, *, role, profile=None):
+    attrs = validate_tayabas_coordinates(attrs)
+    if role != UserProfile.ROLE_WORKER:
+        return attrs
+
+    hourly_rate = attrs.get("hourly_rate", getattr(profile, "hourly_rate", None))
+    daily_rate = attrs.get("daily_rate", getattr(profile, "daily_rate", None))
+    if not any(
+        rate is not None and Decimal(str(rate)) > 0
+        for rate in (hourly_rate, daily_rate)
+    ):
+        raise serializers.ValidationError(
+            {"service_rate": "Workers must provide a positive hourly or daily service rate."}
+        )
+
+    latitude = attrs.get("latitude", getattr(profile, "latitude", None))
+    longitude = attrs.get("longitude", getattr(profile, "longitude", None))
+    location_label = attrs.get(
+        "location_label",
+        getattr(profile, "location_label", ""),
+    )
+    if latitude is None or longitude is None or not str(location_label or "").strip():
+        raise serializers.ValidationError(
+            {"location": "Workers must provide a location and exact map coordinates."}
+        )
+
+    validate_tayabas_coordinates(
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+        }
+    )
+    return attrs
 
 
 class FlexibleStringListField(serializers.ListField):
@@ -54,6 +116,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "average_rating",
             "rating_count",
             "display_rating",
+            "reputation_tier",
+            "rating_trend",
             "verification_request",
             "availability_windows",
         ]
@@ -100,12 +164,21 @@ class WorkerAvailabilityBulkSerializer(serializers.Serializer):
     availability_windows = WorkerAvailabilitySerializer(many=True)
 
 
+
+
 class PublicUserProfileSerializer(UserProfileSerializer):
     class Meta(UserProfileSerializer.Meta):
         fields = [
             field
             for field in UserProfileSerializer.Meta.fields
-            if field not in {"email", "phone", "verification_request", "latitude", "longitude"}
+            if field not in {
+                "email",
+                "phone",
+                "verification_request",
+                "latitude",
+                "longitude",
+                "availability_windows",
+            }
         ]
 
 
@@ -120,11 +193,22 @@ class RegisterSerializer(serializers.Serializer):
     bio = serializers.CharField(required=False, allow_blank=True)
     years_experience = serializers.IntegerField(required=False, min_value=0)
     skills = FlexibleStringListField(required=False)
-    hourly_rate = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
-    daily_rate = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    hourly_rate = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
+    )
+    daily_rate = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
+    )
     location_label = serializers.CharField(required=False, allow_blank=True)
-    latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
-    longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+
+
+    def validate(self, attrs):
+        return validate_worker_profile_requirements(
+            attrs,
+            role=attrs.get("role", UserProfile.ROLE_WORKER),
+        )
 
 
 class LoginSerializer(serializers.Serializer):
@@ -140,12 +224,33 @@ class ProfileUpdateSerializer(serializers.Serializer):
     bio = serializers.CharField(required=False, allow_blank=True)
     years_experience = serializers.IntegerField(required=False, min_value=0)
     skills = FlexibleStringListField(required=False)
-    hourly_rate = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
-    daily_rate = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    hourly_rate = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
+    )
+    daily_rate = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
+    )
     location_label = serializers.CharField(required=False, allow_blank=True)
-    latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
-    longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
-    profile_photo = serializers.ImageField(required=False, allow_null=True)
+    latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    profile_photo = serializers.FileField(required=False, allow_null=True)
+
+    def validate_profile_photo(self, value):
+        if value is None:
+            return value
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+        if Path(value.name).suffix.lower() not in allowed_extensions:
+            raise serializers.ValidationError("Choose an image file for the profile photo.")
+        return value
+
+
+    def validate(self, attrs):
+        profile = self.context.get("profile")
+        return validate_worker_profile_requirements(
+            attrs,
+            role=getattr(profile, "role", None),
+            profile=profile,
+        )
 
 
 class ForgotPasswordRequestSerializer(serializers.Serializer):
@@ -178,3 +283,98 @@ class SignupVerificationRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = SignupVerificationRequest
         fields = ["id", "email", "created_at", "expires_at", "verified_at"]
+
+
+class WorkerSkillSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WorkerSkill
+        fields = ["id", "skill_name", "proficiency", "average_rating", "rating_count", "created_at"]
+        read_only_fields = ["id", "average_rating", "rating_count", "created_at"]
+
+
+class WorkerCertificationSerializer(serializers.ModelSerializer):
+    certificate_file_url = serializers.SerializerMethodField()
+    verified_by_username = serializers.CharField(source="verified_by.username", read_only=True, allow_null=True)
+
+    class Meta:
+        model = WorkerCertification
+        fields = [
+            "id", "certificate_type", "certificate_name", "issuer", "issue_date", "expiry_date",
+            "certificate_file", "certificate_file_url", "is_verified", "verification_status",
+            "verified_by", "verified_by_username", "verification_notes", "verified_at", "created_at"
+        ]
+        read_only_fields = ["id", "is_verified", "verification_status", "verified_by", "verified_by_username",
+                           "verification_notes", "verified_at", "created_at"]
+
+    def get_certificate_file_url(self, obj):
+        if not obj.certificate_file:
+            return None
+        request = self.context.get("request")
+        url = obj.certificate_file.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class WorkerPortfolioItemSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    before_image_url = serializers.SerializerMethodField()
+    after_image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WorkerPortfolioItem
+        fields = ["id", "title", "description", "image", "image_url",
+                  "before_image", "before_image_url", "after_image", "after_image_url", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get("request")
+        url = obj.image.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_before_image_url(self, obj):
+        if not obj.before_image:
+            return None
+        request = self.context.get("request")
+        url = obj.before_image.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_after_image_url(self, obj):
+        if not obj.after_image:
+            return None
+        request = self.context.get("request")
+        url = obj.after_image.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class SkillRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SkillRating
+        fields = ["id", "job", "skill", "rating", "feedback", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class VerificationDocumentSerializer(serializers.ModelSerializer):
+    verified_by_username = serializers.CharField(source="verified_by.username", read_only=True, allow_null=True)
+
+    class Meta:
+        model = VerificationDocument
+        fields = [
+            "id", "user", "id_type", "id_number", "document_file", "is_primary",
+            "verification_status", "verified_by", "verified_by_username",
+            "verification_notes", "verified_at", "created_at", "updated_at"
+        ]
+        read_only_fields = ["id", "user", "verification_status", "verified_by", "verified_by_username",
+                           "verification_notes", "verified_at", "created_at", "updated_at"]
+
+
+class WorkerPortfolioSerializer(serializers.ModelSerializer):
+    skills = WorkerSkillSerializer(source="worker.portfolio_skills", many=True, read_only=True)
+    certifications = WorkerCertificationSerializer(source="worker.portfolio_certifications", many=True, read_only=True)
+    portfolio_items = WorkerPortfolioItemSerializer(source="worker.portfolio_items", many=True, read_only=True)
+
+    class Meta:
+        model = WorkerPortfolio
+        fields = ["id", "bio", "years_experience", "skills", "certifications",
+                  "portfolio_items", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]

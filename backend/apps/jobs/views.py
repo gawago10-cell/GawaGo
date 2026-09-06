@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
+from pathlib import Path
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -14,7 +15,14 @@ from apps.jobs.serializers import (
     JobCreateSerializer,
     JobPostingSerializer,
 )
-from apps.jobs.services import complete_job
+from apps.jobs.services import (
+    HiringApplicationStateError,
+    HiringCapacityReached,
+    HiringJobStateError,
+    HiringWorkerVerificationError,
+    complete_job,
+    hire_application,
+)
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 from apps.accounts.models import UserProfile
@@ -96,6 +104,17 @@ class JobViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         params = self.request.query_params
+        if params.get("mine", "").lower() in {"1", "true", "yes"}:
+            user = getattr(self.request, "user", None)
+            profile = getattr(user, "profile", None)
+            if not user or not user.is_authenticated:
+                return queryset.none()
+            if getattr(profile, "role", None) == UserProfile.ROLE_HOUSEHOLD:
+                queryset = queryset.filter(household=user)
+            elif getattr(profile, "role", None) == UserProfile.ROLE_WORKER:
+                queryset = queryset.filter(applications__worker=user).distinct()
+            elif not user.is_staff:
+                return queryset.none()
         if params.get("status"):
             queryset = queryset.filter(status=params["status"])
         if params.get("job_type"):
@@ -114,15 +133,13 @@ class JobViewSet(viewsets.ModelViewSet):
         serializer = JobCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         image_files = request.FILES.getlist("images")
-        if image_files and len(image_files) > 5:
-            return Response({"detail": "You can upload up to 5 images only."}, status=status.HTTP_400_BAD_REQUEST)
-        allowed_types = {"image/jpeg", "image/png", "image/webp"}
-        max_file_size = 5 * 1024 * 1024
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
         for image_file in image_files:
-            if image_file.content_type not in allowed_types:
-                return Response({"detail": "Only JPG, PNG, and WebP images are allowed."}, status=status.HTTP_400_BAD_REQUEST)
-            if image_file.size > max_file_size:
-                return Response({"detail": "Each image must be 5MB or smaller."}, status=status.HTTP_400_BAD_REQUEST)
+            if Path(image_file.name).suffix.lower() not in allowed_extensions:
+                return Response(
+                    {"detail": "Choose an image file for each reference attachment."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         household = request.user
         auth_payload = request.auth if isinstance(request.auth, dict) else {}
         household_profile = ensure_household_profile(household, auth_payload.get("role", ""))
@@ -147,6 +164,11 @@ class JobViewSet(viewsets.ModelViewSet):
             service_rate=serializer.validated_data["service_rate"],
             worker_slots=serializer.validated_data["worker_slots"],
             status=JobPosting.STATUS_OPEN,
+            job_start_date=serializer.validated_data.get("job_start_date"),
+            job_end_date=serializer.validated_data.get("job_end_date"),
+            estimated_working_days=serializer.validated_data.get("estimated_working_days"),
+            max_distance_km=serializer.validated_data.get("max_distance_km", 1.0),
+            geographic_boundary=serializer.validated_data.get("geographic_boundary", "1km"),
         )
         for index, image_file in enumerate(image_files):
             JobImage.objects.create(job=job, image=image_file, order=index)
@@ -277,28 +299,19 @@ class JobApplicationStatusView(APIView):
                     {"detail": "Only pending worker applications can be hired directly."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            worker_profile = getattr(application.worker, "profile", None)
-            if not worker_profile or worker_profile.verification_status != "verified":
+            try:
+                application = hire_application(application.id, JobApplication.STATUS_PENDING)
+            except HiringCapacityReached:
+                return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
+            except HiringWorkerVerificationError:
                 return Response({"detail": "Only verified workers can be hired."}, status=status.HTTP_400_BAD_REQUEST)
-            hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).count()
-            if hired_count >= application.job.worker_slots:
-                return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
-        if requested_status == JobApplication.STATUS_HIRE_REQUESTED:
-            worker_profile = getattr(application.worker, "profile", None)
-            if not worker_profile or worker_profile.verification_status != "verified":
-                return Response({"detail": "Only verified workers can receive hire requests."}, status=status.HTTP_400_BAD_REQUEST)
-            hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).count()
-            if hired_count >= application.job.worker_slots:
-                return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
-        application.status = requested_status
-        application.save(update_fields=["status", "updated_at"])
-        if application.status == JobApplication.STATUS_HIRED:
-            application.job.status = JobPosting.STATUS_ASSIGNED
-            application.job.save(update_fields=["status"])
-            if application.job.applications.filter(status=JobApplication.STATUS_HIRED).count() >= application.job.worker_slots:
-                application.job.applications.filter(
-                    status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
-                ).exclude(pk=application.pk).update(status=JobApplication.STATUS_CLOSED)
+            except HiringJobStateError:
+                return Response({"detail": "Applications cannot be updated for completed or cancelled jobs."}, status=status.HTTP_400_BAD_REQUEST)
+            except HiringApplicationStateError:
+                return Response(
+                    {"detail": "Only pending worker applications can be hired directly."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             create_notification(
                 recipient=application.worker,
                 notification_type=Notification.TYPE_ACCEPTED,
@@ -310,7 +323,17 @@ class JobApplicationStatusView(APIView):
                 action_type=Notification.ACTION_JOB_DETAIL,
                 action_url=f"/worker/jobs/{application.job_id}",
             )
-        elif application.status == JobApplication.STATUS_HIRE_REQUESTED:
+            return Response(JobApplicationSerializer(application).data)
+        if requested_status == JobApplication.STATUS_HIRE_REQUESTED:
+            worker_profile = getattr(application.worker, "profile", None)
+            if not worker_profile or worker_profile.verification_status != "verified":
+                return Response({"detail": "Only verified workers can receive hire requests."}, status=status.HTTP_400_BAD_REQUEST)
+            hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).count()
+            if hired_count >= application.job.worker_slots:
+                return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
+        application.status = requested_status
+        application.save(update_fields=["status", "updated_at"])
+        if application.status == JobApplication.STATUS_HIRE_REQUESTED:
             create_notification(
                 recipient=application.worker,
                 notification_type=Notification.TYPE_HIRING,
@@ -456,19 +479,16 @@ class JobApplicationDecisionView(APIView):
         if application.job.status in {JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED}:
             return Response({"detail": "This job is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
         if decision == "accept":
-            hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).exclude(pk=application.pk).count()
-            if hired_count >= application.job.worker_slots:
-                application.status = JobApplication.STATUS_CLOSED
-                application.save(update_fields=["status", "updated_at"])
+            try:
+                application = hire_application(application.id, JobApplication.STATUS_HIRE_REQUESTED)
+            except HiringCapacityReached:
                 return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
-            application.status = JobApplication.STATUS_HIRED
-            application.save(update_fields=["status", "updated_at"])
-            application.job.status = JobPosting.STATUS_ASSIGNED
-            application.job.save(update_fields=["status"])
-            if application.job.applications.filter(status=JobApplication.STATUS_HIRED).count() >= application.job.worker_slots:
-                application.job.applications.filter(
-                    status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
-                ).exclude(pk=application.pk).update(status=JobApplication.STATUS_CLOSED)
+            except HiringWorkerVerificationError:
+                return Response({"detail": "Only verified workers can be hired."}, status=status.HTTP_400_BAD_REQUEST)
+            except HiringJobStateError:
+                return Response({"detail": "This job is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
+            except HiringApplicationStateError:
+                return Response({"detail": "This hire request is no longer pending."}, status=status.HTTP_400_BAD_REQUEST)
             create_notification(
                 recipient=application.job.household,
                 notification_type=Notification.TYPE_ACCEPTED,

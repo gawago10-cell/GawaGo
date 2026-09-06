@@ -18,7 +18,12 @@ class ReviewPermissionTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.household = User.objects.create_user(username="household-reviewer", password="password")
-        self.worker = User.objects.create_user(username="worker-target", password="password")
+        self.worker = User.objects.create_user(
+            username="worker-target",
+            first_name="John",
+            last_name="Israel",
+            password="password",
+        )
         self.other_worker = User.objects.create_user(username="worker-other", password="password")
         UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD)
         UserProfile.objects.create(user=self.worker, role=UserProfile.ROLE_WORKER)
@@ -189,7 +194,7 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(self.household.profile.rating_count, 1)
         self.assertIsNone(response.data["author"])
         self.assertEqual(response.data["author_username"], "")
-        self.assertEqual(response.data["author_name"], "Anonymous worker")
+        self.assertEqual(response.data["author_name"], "j*** i*****")
         notification = Notification.objects.get(
             recipient=self.household,
             notification_type=Notification.TYPE_ANALYTICS,
@@ -218,7 +223,7 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(len(response.data), 1)
         self.assertIsNone(response.data[0]["author"])
         self.assertEqual(response.data[0]["author_username"], "")
-        self.assertEqual(response.data[0]["author_name"], "Anonymous worker")
+        self.assertEqual(response.data[0]["author_name"], "j*** i*****")
         self.assertEqual(response.data[0]["feedback"], "Fair household")
 
     def test_public_author_filter_does_not_expose_worker_feedback(self):
@@ -255,7 +260,7 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(len(response.data), 1)
         self.assertIsNone(response.data[0]["author"])
         self.assertEqual(response.data[0]["author_username"], "")
-        self.assertEqual(response.data[0]["author_name"], "Anonymous worker")
+        self.assertEqual(response.data[0]["author_name"], "j*** i*****")
 
     def test_household_review_author_identity_is_still_visible(self):
         Review.objects.create(
