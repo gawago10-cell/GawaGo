@@ -34,7 +34,7 @@ Build a centralized, responsive web and mobile application platform that helps h
 - Workers can rate households to support fairness on both sides.
 - System sends reminders to submit feedback after job completion.
 - Neutral no-feedback policy:
-  - If no household rating is submitted within 48 to 72 hours, system assigns default 3.5-star rating to the worker.
+  - If no household rating is submitted within 48 to 72 hours, system assigns default 4-star rating to the worker.
 - New users display `No ratings yet` instead of `0` or empty numeric score.
 
 ### B. Price Transparency
@@ -73,8 +73,10 @@ Build a centralized, responsive web and mobile application platform that helps h
   - Disclosed rates by job category
   - Average pricing trends
   - Purpose: support fair pricing and protect both workers and households from underpricing or overpricing
-
 ## Implementation Notes
+## Implementation Notes
+
+
 - Platform type: centralized web-based and mobile application system.
 - UX requirement: responsive on desktop and mobile.
 - Matching assistance is advisory; user autonomy in final selection must remain intact.
