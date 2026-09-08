@@ -3,17 +3,21 @@ import 'package:flutter/material.dart';
 import '../utils/display_formatters.dart';
 
 class StatusBadge extends StatelessWidget {
-  const StatusBadge({super.key, required this.status, this.prefix});
+  const StatusBadge({super.key, required this.status, this.prefix, this.label});
 
   final String status;
   final String? prefix;
 
+  /// Overrides the auto-formatted status text (e.g. for application
+  /// statuses, which use Applied/Hired/Rejected rather than a
+  /// title-cased raw status). Falls back to [formatStatus] when omitted.
+  final String? label;
+
   @override
   Widget build(BuildContext context) {
     final color = statusColor(status);
-    final label = prefix == null
-        ? formatStatus(status)
-        : '$prefix: ${formatStatus(status)}';
+    final displayText = label ?? formatStatus(status);
+    final resolvedLabel = prefix == null ? displayText : '$prefix: $displayText';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
@@ -22,7 +26,7 @@ class StatusBadge extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text(
-        label,
+        resolvedLabel,
         style: TextStyle(
           color: color,
           fontSize: 12,

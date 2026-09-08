@@ -67,6 +67,10 @@ class HouseholdJob {
     required this.canReview,
     required this.applications,
     required this.images,
+    required this.jobStartDate,
+    required this.jobEndDate,
+    required this.estimatedWorkingDays,
+    required this.geographicBoundary,
   });
 
   final int id;
@@ -86,6 +90,10 @@ class HouseholdJob {
   final bool canReview;
   final List<HouseholdApplication> applications;
   final List<JobImage> images;
+  final String? jobStartDate;
+  final String? jobEndDate;
+  final int? estimatedWorkingDays;
+  final String geographicBoundary;
 
   factory HouseholdJob.fromJson(Map<String, dynamic> json) {
     return HouseholdJob(
@@ -110,6 +118,12 @@ class HouseholdJob {
       images: _list(
         json['images'],
       ).map((item) => JobImage.fromJson(_map(item))).toList(),
+      jobStartDate: json['job_start_date'] as String?,
+      jobEndDate: json['job_end_date'] as String?,
+      estimatedWorkingDays: json['estimated_working_days'] == null
+          ? null
+          : _integer(json['estimated_working_days']),
+      geographicBoundary: _text(json['geographic_boundary'], '1km'),
     );
   }
 }

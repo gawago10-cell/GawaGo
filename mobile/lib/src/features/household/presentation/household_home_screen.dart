@@ -832,12 +832,16 @@ class _PostJobState extends State<_PostJob> {
   final _location = TextEditingController();
   final _rate = TextEditingController();
   final _slots = TextEditingController(text: '1');
+  final _workingDays = TextEditingController();
   String? _skill;
   String? _barangay;
   String _scheduleType = 'One-Time';
   String _rateType = 'Per Day';
+  String _geographicBoundary = '1km';
   DateTime? _date;
   TimeOfDay? _time;
+  DateTime? _startDate;
+  DateTime? _endDate;
   LatLng? _pin;
   final List<String> _imagePaths = [];
   bool _posting = false;
@@ -890,6 +894,10 @@ class _PostJobState extends State<_PostJob> {
       _message('Complete all required job, schedule, rate, and map fields.');
       return;
     }
+    if (_startDate != null && _endDate != null && !_endDate!.isAfter(_startDate!)) {
+      _message('Job end date must be after the job start date.');
+      return;
+    }
     setState(() => _posting = true);
     try {
       final locationLabel = '${_barangay!}, ${_location.text.trim()}';
@@ -908,6 +916,13 @@ class _PostJobState extends State<_PostJob> {
         'longitude': _coordinateForApi(_pin!.longitude),
         'service_rate': _rate.text.trim(),
         'worker_slots': int.tryParse(_slots.text) ?? 1,
+        if (_startDate != null)
+          'job_start_date': _startDate!.toIso8601String().split('T').first,
+        if (_endDate != null)
+          'job_end_date': _endDate!.toIso8601String().split('T').first,
+        if (int.tryParse(_workingDays.text) != null)
+          'estimated_working_days': int.parse(_workingDays.text),
+        'geographic_boundary': _geographicBoundary,
       }, imagePaths: _imagePaths);
       widget.onCreated();
       if (mounted) _message('Job posted successfully.');
@@ -935,6 +950,34 @@ class _PostJobState extends State<_PostJob> {
         }
         if (!snapshot.hasData) return const AppLoadingState();
         final profile = snapshot.data!;
+        if (profile.verificationStatus.trim().toLowerCase() != 'verified') {
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(10, 14, 10, 28),
+            children: [
+              _PostJobShell(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text(
+                      'Your household must be verified before posting a job.',
+                      style: TextStyle(
+                        color: GawaGoColors.ink,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'Submit your verification documents from the Get '
+                      'Verified menu, then come back here once approved.',
+                      style: TextStyle(color: Color(0xFF5F687A), fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }
         final profilePin = profile.latitude == null || profile.longitude == null
             ? null
             : LatLng(profile.latitude!, profile.longitude!);
@@ -990,16 +1033,24 @@ class _PostJobState extends State<_PostJob> {
                         street: _location,
                         rate: _rate,
                         slots: _slots,
+                        workingDays: _workingDays,
                         serviceType: _skill,
                         scheduleType: _scheduleType,
                         barangay: _barangay,
                         rateType: _rateType,
+                        geographicBoundary: _geographicBoundary,
                         dateLabel: _date == null
                             ? 'mm/dd/yyyy'
                             : '${_date!.month.toString().padLeft(2, '0')}/${_date!.day.toString().padLeft(2, '0')}/${_date!.year}',
                         timeLabel: _time == null
                             ? '--:-- --'
                             : _time!.format(context),
+                        startDateLabel: _startDate == null
+                            ? 'mm/dd/yyyy'
+                            : '${_startDate!.month.toString().padLeft(2, '0')}/${_startDate!.day.toString().padLeft(2, '0')}/${_startDate!.year}',
+                        endDateLabel: _endDate == null
+                            ? 'mm/dd/yyyy'
+                            : '${_endDate!.month.toString().padLeft(2, '0')}/${_endDate!.day.toString().padLeft(2, '0')}/${_endDate!.year}',
                         onServiceChanged: (value) =>
                             setState(() => _skill = value),
                         onScheduleChanged: (value) => setState(
@@ -1009,6 +1060,9 @@ class _PostJobState extends State<_PostJob> {
                             setState(() => _barangay = value),
                         onRateTypeChanged: (value) =>
                             setState(() => _rateType = value ?? _rateType),
+                        onGeographicBoundaryChanged: (value) => setState(
+                          () => _geographicBoundary = value ?? _geographicBoundary,
+                        ),
                         onPickDate: () async {
                           final value = await showDatePicker(
                             context: context,
@@ -1025,6 +1079,26 @@ class _PostJobState extends State<_PostJob> {
                             initialTime: TimeOfDay.now(),
                           );
                           if (value != null) setState(() => _time = value);
+                        },
+                        onPickStartDate: () async {
+                          final value = await showDatePicker(
+                            context: context,
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 730),
+                            ),
+                          );
+                          if (value != null) setState(() => _startDate = value);
+                        },
+                        onPickEndDate: () async {
+                          final value = await showDatePicker(
+                            context: context,
+                            firstDate: _startDate ?? DateTime.now(),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 730),
+                            ),
+                          );
+                          if (value != null) setState(() => _endDate = value);
                         },
                       );
                       final map = _PostJobMapPanel(
@@ -1128,18 +1202,25 @@ class _PostJobFields extends StatelessWidget {
     required this.street,
     required this.rate,
     required this.slots,
+    required this.workingDays,
     required this.serviceType,
     required this.scheduleType,
     required this.barangay,
     required this.rateType,
+    required this.geographicBoundary,
     required this.dateLabel,
     required this.timeLabel,
+    required this.startDateLabel,
+    required this.endDateLabel,
     required this.onServiceChanged,
     required this.onScheduleChanged,
     required this.onBarangayChanged,
     required this.onRateTypeChanged,
+    required this.onGeographicBoundaryChanged,
     required this.onPickDate,
     required this.onPickTime,
+    required this.onPickStartDate,
+    required this.onPickEndDate,
   });
 
   final TextEditingController title;
@@ -1147,18 +1228,25 @@ class _PostJobFields extends StatelessWidget {
   final TextEditingController street;
   final TextEditingController rate;
   final TextEditingController slots;
+  final TextEditingController workingDays;
   final String? serviceType;
   final String scheduleType;
   final String? barangay;
   final String rateType;
+  final String geographicBoundary;
   final String dateLabel;
   final String timeLabel;
+  final String startDateLabel;
+  final String endDateLabel;
   final ValueChanged<String?> onServiceChanged;
   final ValueChanged<String?> onScheduleChanged;
   final ValueChanged<String?> onBarangayChanged;
   final ValueChanged<String?> onRateTypeChanged;
+  final ValueChanged<String?> onGeographicBoundaryChanged;
   final VoidCallback onPickDate;
   final VoidCallback onPickTime;
+  final VoidCallback onPickStartDate;
+  final VoidCallback onPickEndDate;
 
   @override
   Widget build(BuildContext context) {
@@ -1241,6 +1329,34 @@ class _PostJobFields extends StatelessWidget {
               items: const ['Per Day', 'Per Hour'],
               onChanged: onRateTypeChanged,
             ),
+          ),
+        ),
+        _PostJobTwoColumn(
+          left: _PostJobPickerField(
+            label: 'Job Start Date',
+            value: startDateLabel,
+            icon: Icons.calendar_today_outlined,
+            onTap: onPickStartDate,
+          ),
+          right: _PostJobPickerField(
+            label: 'Job End Date',
+            value: endDateLabel,
+            icon: Icons.calendar_today_outlined,
+            onTap: onPickEndDate,
+          ),
+        ),
+        _PostJobTwoColumn(
+          left: _PostJobInput(
+            label: 'Estimated Working Days',
+            controller: workingDays,
+            hint: 'e.g. 5',
+            keyboardType: TextInputType.number,
+          ),
+          right: _PostJobDropdown(
+            label: 'Search Radius',
+            value: geographicBoundary,
+            items: const ['1km', '2km', '5km', '10km', 'unlimited'],
+            onChanged: onGeographicBoundaryChanged,
           ),
         ),
       ],
@@ -2180,6 +2296,21 @@ class _JobDetailsSummaryCard extends StatelessWidget {
           _LargeDetailBox(label: 'Location', value: _barangay(job)),
           _LargeDetailBox(label: 'Offered Rate', value: _rateLabel(job)),
           _LargeDetailBox(label: 'Schedule', value: _jobScheduleDisplay(job)),
+          if (job.jobStartDate != null || job.jobEndDate != null)
+            _LargeDetailBox(
+              label: 'Job Period',
+              value:
+                  '${job.jobStartDate ?? 'Not set'} to ${job.jobEndDate ?? 'Not set'}',
+            ),
+          if (job.estimatedWorkingDays != null)
+            _LargeDetailBox(
+              label: 'Estimated Working Days',
+              value: '${job.estimatedWorkingDays}',
+            ),
+          _LargeDetailBox(
+            label: 'Search Radius',
+            value: job.geographicBoundary,
+          ),
           _LargeDetailBox(
             label: 'Workers Needed',
             value: '${job.workerSlots} worker(s)',
@@ -2709,8 +2840,8 @@ class _ApplicantRow extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       application.distanceKm == null
-                          ? formatStatus(application.status)
-                          : '${formatStatus(application.status)} | ${application.distanceKm!.toStringAsFixed(1)} km away',
+                          ? applicationStatusLabel(application.status)
+                          : '${applicationStatusLabel(application.status)} | ${application.distanceKm!.toStringAsFixed(1)} km away',
                       style: const TextStyle(
                         color: Color(0xFF4A5E4F),
                         fontSize: 12,
@@ -3088,6 +3219,7 @@ class _ApplicantProfileCard extends StatelessWidget {
             child: StatusBadge(
               status: application.status,
               prefix: 'Application',
+              label: applicationStatusLabel(application.status),
             ),
           ),
         ],

@@ -1,3 +1,20 @@
+/// Maps a raw job-application status to the same display label the web
+/// app uses (frontend/src/utils/jobUtils.js: getApplicationStatusLabel),
+/// so mobile and web show identical Applied/Hired/Rejected vocabulary.
+String applicationStatusLabel(String status) {
+  const labels = {
+    'pending': 'Applied',
+    'hire_requested': 'Hire Requested',
+    'hired': 'Hired',
+    'rejected': 'Rejected',
+    'closed': 'Closed',
+    // Displayed as Hired to avoid confusion with job completion.
+    'completed': 'Hired',
+  };
+  final normalized = status.trim().toLowerCase();
+  return labels[normalized] ?? formatStatus(status);
+}
+
 String formatStatus(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty) return 'Unknown';

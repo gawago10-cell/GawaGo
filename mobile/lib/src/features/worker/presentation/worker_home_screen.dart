@@ -1457,6 +1457,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                   child: StatusBadge(
                     status: job.application!.status,
                     prefix: 'Application',
+                    label: applicationStatusLabel(job.application!.status),
                   ),
                 ),
               ],
@@ -2071,13 +2072,11 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
 
 String _workerApplicationDisplayStatus(WorkerApplication item) {
   final jobStatus = item.jobStatus.trim().toLowerCase();
-  final appStatus = item.status.trim().toLowerCase();
-  if (jobStatus == 'completed' || appStatus == 'completed') return 'Completed';
   if (jobStatus == 'completion_requested') {
     return 'Waiting for Household Confirmation';
   }
-  if (appStatus == 'hired') return 'In Progress';
-  return formatStatus(item.status.isEmpty ? 'pending' : item.status);
+  if (jobStatus == 'completed') return 'Hired';
+  return applicationStatusLabel(item.status.isEmpty ? 'pending' : item.status);
 }
 
 String _workerApplicationSummary(WorkerApplication item) {
@@ -2534,11 +2533,23 @@ class _ProfileFormState extends State<_ProfileForm> {
                       (skill) => FilterChip(
                         label: Text(skill),
                         selected: _skills.contains(skill),
-                        onSelected: (selected) => setState(
-                          () => selected
-                              ? _skills.add(skill)
-                              : _skills.remove(skill),
-                        ),
+                        onSelected: (selected) {
+                          if (selected && _skills.length >= 4) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'You can select up to 4 skills only.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          setState(
+                            () => selected
+                                ? _skills.add(skill)
+                                : _skills.remove(skill),
+                          );
+                        },
                       ),
                     )
                     .toList(),

@@ -21,4 +21,14 @@ void main() {
       'One-Time on June 15 at 10:00 AM',
     );
   });
+
+  test('maps application statuses to the web app vocabulary', () {
+    expect(applicationStatusLabel('pending'), 'Applied');
+    expect(applicationStatusLabel('hired'), 'Hired');
+    expect(applicationStatusLabel('rejected'), 'Rejected');
+    // Displayed as Hired, not Completed, to avoid confusion with job
+    // completion (matches frontend/src/utils/jobUtils.js).
+    expect(applicationStatusLabel('completed'), 'Hired');
+    expect(applicationStatusLabel('closed'), 'Closed');
+  });
 }
