@@ -4894,7 +4894,6 @@ export default function AppViews({
                     <div className="my-jobs-list">
                       {filteredHouseholdJobs.length > 0 ? (
                         filteredHouseholdJobs.map((job) => {
-                          const isCompletedJob = String(job.status || "").toLowerCase() === "completed";
                           return (
                             <article
                               key={job.id}
@@ -4916,15 +4915,13 @@ export default function AppViews({
                                   <dd>{(job.applications || []).length}</dd>
                                 </div>
                               </dl>
-                              {!isCompletedJob && (
-                                <button
-                                  type="button"
-                                  className="btn btn-primary job-summary-action"
-                                  onClick={() => openHouseholdJobDetail(job.id)}
-                                >
-                                  View Details
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                className="btn btn-primary job-summary-action"
+                                onClick={() => openHouseholdJobDetail(job.id)}
+                              >
+                                View Details
+                              </button>
                               {selectedJob?.id === job.id && (
                                 <div className="alert alert-info mt-3 mb-0 py-2">
                                   Hiring progress: {getHiringProgressLabel(job)} worker(s) hired. Pending applications:{" "}
