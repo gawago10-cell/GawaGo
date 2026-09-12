@@ -1075,7 +1075,13 @@ export default function AppViews({
           workerNames.includes(review.targetUsername) ||
           workerNames.includes(review.targetName) ||
           workerNames.includes(review.target);
-        const sameJob = !review.jobTitle || jobTitles.includes(review.jobTitle);
+        // Prefer matching by job id -- two different job postings can share
+        // the same title/service type (e.g. hiring the same worker for
+        // "House Cleaning" twice), and matching by title alone would treat
+        // an old review as if it already covered the new job.
+        const sameJob = review.jobId
+          ? String(review.jobId) === String(job.id)
+          : !review.jobTitle || jobTitles.includes(review.jobTitle);
         return sameWorker && sameJob && review.rating != null;
       }) || null
     );

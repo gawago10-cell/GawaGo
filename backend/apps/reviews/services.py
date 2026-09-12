@@ -12,6 +12,22 @@ DEFAULT_NO_FEEDBACK_RATING = Decimal("3.5")
 DEFAULT_NO_FEEDBACK_AFTER_HOURS = 72
 
 
+def effective_review_rating(review) -> Decimal:
+    """The rating a review actually contributes to averages/trends.
+
+    Mirrors ReviewSerializer.get_overall_rating(): when the four detailed
+    metrics (quality_of_work, punctuality, communication, professionalism)
+    are present, the review's effective rating is their average rather than
+    the plain star-picker value, so a household's per-metric scores are what
+    actually move a worker's aggregate rating.
+    """
+    metrics = [review.quality_of_work, review.punctuality, review.communication, review.professionalism]
+    valid_metrics = [m for m in metrics if m is not None]
+    if not valid_metrics:
+        return review.rating
+    return Decimal(sum(valid_metrics)) / Decimal(len(valid_metrics))
+
+
 def recalculate_user_rating(user) -> None:
     profile = getattr(user, "profile", None)
     if not profile or profile.role not in {UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD}:
@@ -26,7 +42,7 @@ def recalculate_user_rating(user) -> None:
         profile.average_rating = None
         profile.rating_count = 0
     else:
-        total_rating = sum((review.rating for review in ratings), Decimal("0.0"))
+        total_rating = sum((effective_review_rating(review) for review in ratings), Decimal("0.0"))
         profile.average_rating = total_rating / rating_count
         profile.rating_count = rating_count
     profile.save(update_fields=["average_rating", "rating_count"])
@@ -146,10 +162,10 @@ def calculate_rating_trend(user) -> str:
         return "neutral"
 
     recent_avg = sum(
-        float(r.overall_rating or r.rating or 0) for r in recent_reviews
+        float(effective_review_rating(r) or 0) for r in recent_reviews
     ) / len(recent_reviews)
     old_avg = sum(
-        float(r.overall_rating or r.rating or 0) for r in old_reviews
+        float(effective_review_rating(r) or 0) for r in old_reviews
     ) / len(old_reviews)
 
     # Calculate trend
