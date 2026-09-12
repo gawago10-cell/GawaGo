@@ -553,6 +553,13 @@ export function useGawaGoActions({
                 ? "household-dashboard"
                 : "worker-dashboard",
         );
+        // The jobs list is fetched anonymously before login (no per-user
+        // application data), and the background poll that would otherwise
+        // pick up the authenticated view can take several seconds. Refresh
+        // immediately so pages like "My Applications" aren't briefly empty
+        // right after logging in.
+        refreshJobsFromBackend();
+        refreshNotificationsFromBackend();
       } catch (error) {
         if (error.status === 403) {
           window.alert(error.message || "Account is not verified yet.");
