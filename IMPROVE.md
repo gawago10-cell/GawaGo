@@ -14,18 +14,18 @@ This guide outlines the improvements and features recommended by the thesis defe
 ### 1. Worker Verification Before Ratings
 **Panelist:** Ma'am Borella  
 **Impact:** Trust System  
-**Status:** ⏳ Pending (backend setup done, permission checks needed)
+**Status:** ✅ COMPLETED
 
-**What to do:**
-- Add verification mechanism to confirm worker actually worked before allowing ratings
-- Check job completion status before rating submission
-- Require both household and worker to confirm job completion
-- Prevent ratings on incomplete jobs
+**Implementation Details:**
+- ✅ `ReviewListCreateView.post()` requires `job.status == JobPosting.STATUS_COMPLETED` before a review can be created
+- ✅ Requires a matching `JobApplication` with `STATUS_COMPLETED` between the specific author/target pair (mutual job relationship, not just job status)
+- ✅ Two-step completion flow in `jobs/views.py` — worker marks the job done, household then confirms ("please confirm if the service was completed")
+- ✅ Duplicate-review guard: rejects a second review for the same job/author/target combination
 
-**Files to modify:**
-- `backend/apps/reviews/views.py` — Add permission checks
-- `backend/apps/reviews/permissions.py` — Create custom permission
-- `backend/apps/jobs/models.py` — Ensure job completion tracking
+**Files implemented:**
+- ✅ `backend/apps/reviews/views.py` — Eligibility + completion checks in `post()`
+- ✅ `backend/apps/jobs/views.py` — Worker-marks-done / household-confirms completion flow
+- ✅ `backend/apps/jobs/models.py` — `JobPosting`/`JobApplication` completion status tracking
 
 ---
 
@@ -513,20 +513,26 @@ geographic_boundary = CharField(choices=[...])
 ### 15. AI-Based Job Matching
 **Panelist:** Sir LA  
 **Impact:** Recommendation Quality  
-**Status:** Not implemented (complex)
+**Status:** 🔶 IN PROGRESS (content-based recommender done; explainability + learning from history pending)
 
-**What to do:**
-- Build ML model to predict job-worker fit
-- Analyze historical performance data
-- Provide match confidence score
-- Learn from successful/failed matches
-- Explain recommendations to users
+**Implementation Details:**
+- ✅ Content-based recommender: TF-IDF skill similarity + road-distance proximity, blended into one `ai_score` (`backend/apps/matching/recommendations.py`)
+- ✅ Pull-based endpoint: `GET /api/matching/recommended-jobs/` ranks open jobs for the logged-in worker
+- ✅ Push-based notifications: `post_save` signal scores every new job against candidate workers and notifies matches above threshold (`backend/apps/matching/signals.py`)
+- ✅ Match confidence score surfaced in the UI (`% match`, distance) in `frontend/src/components/AppViews.jsx`
+- ⏳ Explainability breakdown — show *why* a job matched (skill-overlap vs. distance contribution), not just the final score
+- ⏳ Collaborative filtering / learning from historical hire outcomes — needs a worker-job interaction dataset that doesn't exist yet (noted as a future enhancement in `recommendations.py`)
 
-**Estimated effort:** High (2-4 weeks)
+**Files implemented:**
+- ✅ `backend/apps/matching/recommendations.py` — Scoring algorithm
+- ✅ `backend/apps/matching/signals.py` — Proactive notification hook
+- ✅ `backend/apps/matching/views.py`, `urls.py`, `serializers.py` — `recommended-jobs` endpoint
+- ✅ `backend/apps/notifications/models.py` — `TYPE_JOB_MATCH` notification type
+- ✅ `frontend/src/services/backendDataService.js`, `frontend/src/components/AppViews.jsx` — Fetch + display recommendations
 
-**Files to create:**
-- `backend/apps/matching/ml_models/` — New module
-- Prediction and training pipelines
+**Remaining files to touch:**
+- `backend/apps/matching/recommendations.py` — Return a skill-vs-distance contribution breakdown alongside `ai_score`
+- `frontend/src/components/AppViews.jsx` — Display the "why this match" breakdown
 
 ---
 
@@ -569,7 +575,7 @@ geographic_boundary = CharField(choices=[...])
 - [ ] UI/UX improvements (bug fixes + clutter reduction done on household/worker views; broader pass still pending)
 
 ### Phase 4 (Later - Advanced)
-- [ ] AI matching (if timeline allows)
+- [x] AI matching — content-based recommender (pull + push) done; explainability breakdown still pending
 - [x] Certification uploads
 - [x] Multiple ID types
 
@@ -578,7 +584,7 @@ geographic_boundary = CharField(choices=[...])
 ## 📊 Quick Reference by Panelist
 
 **Ma'am Borella** (Focus: Trust & Analytics)
-- Worker verification before ratings ✅ CRITICAL
+- Worker verification before ratings ✅ COMPLETED
 - Application status terminology ✅ CRITICAL
 - Job start/end dates ✅ CRITICAL
 - Multiple ID types ✅ COMPLETED
@@ -590,7 +596,7 @@ geographic_boundary = CharField(choices=[...])
 - Lighter UI/UX design 🔶 IN PROGRESS (bug fixes + clutter reduction on household/worker views; broader pass still pending)
 - Complaint/issue reporting ✅ HIGH
 - Worker portfolio ✅ HIGH
-- AI-based job matching (not started)
+- AI-based job matching 🔶 IN PROGRESS (recommender done, explainability pending)
 
 **Sir NJ** (Focus: Geographic & Tracking)
 - Distance boundaries ✅ CRITICAL
@@ -645,5 +651,5 @@ When these improvements are complete:
 
 ---
 
-**Last Updated:** September 3, 2026  
-**Status:** Portfolio feature complete ✅ | Development roadmap active
+**Last Updated:** September 12, 2026  
+**Status:** Portfolio feature complete ✅ | AI job-match recommender (pull + push) complete ✅ | Worker verification before ratings confirmed complete ✅ | Development roadmap active
