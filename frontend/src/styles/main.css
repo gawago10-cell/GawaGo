@@ -5331,20 +5331,18 @@ body {
 }
 
 .household-my-jobs-title {
-  color: #0d1f48;
+  color: var(--gg-dark);
   font-size: 1.65rem;
   font-weight: 800;
   margin: 0 0 0.75rem;
 }
 
 .household-my-jobs-panel {
-  background:
-    radial-gradient(circle at top left, rgba(47, 107, 255, 0.1), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(239, 244, 255, 0.98) 100%);
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  background: var(--gg-soft);
+  border: 1px solid var(--gg-tayabas-border);
   border-radius: 1rem;
   padding: 1.4rem;
-  box-shadow: 0 12px 28px rgba(31, 72, 221, 0.07);
+  box-shadow: 0 12px 28px rgba(26, 42, 30, 0.06);
 }
 
 .household-my-jobs-filters {
@@ -5356,10 +5354,10 @@ body {
 
 .household-job-filter {
   min-width: 104px;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border);
   border-radius: 999px;
   background: #ffffff;
-  color: #1e4fe0;
+  color: var(--gg-primary-strong);
   padding: 0.45rem 0.9rem;
   font-weight: 700;
   font-size: 0.85rem;
@@ -5389,7 +5387,7 @@ body {
 }
 
 .household-my-jobs-page .job-summary-title {
-  color: #0d1f48;
+  color: var(--gg-dark);
   font-size: 1.08rem;
   margin: 0;
 }
@@ -5398,7 +5396,7 @@ body {
   display: grid;
   gap: 0.25rem;
   margin: 0.65rem 0 1rem;
-  color: #10224d;
+  color: var(--gg-text);
 }
 
 .household-my-jobs-page .job-summary-meta div {
@@ -5427,15 +5425,15 @@ body {
 .household-my-jobs-empty {
   grid-column: 1 / -1;
   background: #ffffff;
-  border: 1px dashed rgba(173, 197, 255, 0.82);
+  border: 1px dashed var(--gg-tayabas-border);
   border-radius: 1rem;
-  color: #10224d;
+  color: var(--gg-text);
   padding: 1.25rem;
   text-align: center;
 }
 
 .household-my-jobs-empty h2 {
-  color: #0d1f48;
+  color: var(--gg-dark);
   font-size: 1rem;
   font-weight: 800;
   margin: 0 0 0.35rem;
