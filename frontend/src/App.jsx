@@ -196,6 +196,9 @@ function App() {
   const isAdminPortalPath =
     typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/admin";
   const [view, setView] = useState(isAdminPortalPath ? "login" : "home");
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
   const [loginForm, setLoginForm] = useState({
     username: "",
     password: "",
