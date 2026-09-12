@@ -508,7 +508,8 @@ geographic_boundary = CharField(choices=[...])
 - ✅ Fixed app-wide bug: views never reset scroll position on navigation, so on mobile a page opened already-scrolled had its top content (banner, first stat card) hidden under the sticky mobile header. Added a `window.scrollTo(0, 0)` on view change in `App.jsx`.
 - ✅ Found that the app already has an established cream/green design system (`--gg-*` tokens in `main.css`), but some panels (e.g. the household My Jobs panel) still carried an older, unrelated blue-gradient theme (~140 leftover occurrences of that palette across `main.css`). Migrated the My Jobs panel to the established tokens.
 - ✅ Migrated the household job detail modal (worker panel, job summary, completion steps, review form) off the same leftover blue theme — most visibly, the "current step" indicator used plain blue while "done" steps used green, two competing accents on one screen.
-- ⏳ Same blue-theme leftovers likely remain in other views (worker job detail, superadmin dashboard) — not yet audited.
+- ✅ Migrated the worker job detail view's key-value list and button shadow off the same leftover blue theme. Cross-checked all other classes it uses (`.profile-card`, `.household-profile-photo/fallback`, `.worker-completion-request-card`, `.profile-card-head`) against `main.css` — already green/cream via base rules or the existing global card-theme override, so nothing else needed there.
+- ⏳ Same blue-theme leftovers likely remain in the superadmin dashboard — not yet audited.
 - ⏳ Favicon was also missing entirely (index.html linked an empty `data:` icon); added `frontend/public/favicon.svg` from the existing `gawago_icon_mark_combined_v2.svg` icon mark. Not part of #14's original scope but same "polish" bucket.
 
 **Files to review:**
