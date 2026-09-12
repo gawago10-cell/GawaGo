@@ -153,10 +153,10 @@
   gap: 1rem;
   flex-wrap: wrap;
   padding: 1rem 1.1rem;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border, #e0d8cc);
   border-radius: 0.8rem;
-  background: linear-gradient(180deg, #ffffff 0%, #f5f8ff 100%);
-  box-shadow: 0 12px 28px rgba(31, 72, 221, 0.07);
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(26, 42, 30, 0.06);
 }
 
 .analytics-summary-card {
@@ -262,9 +262,9 @@
   position: relative;
   min-height: 25rem;
   overflow: hidden;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border, #e0d8cc);
   border-radius: 0.75rem;
-  background: #eef4ff;
+  background: #f5f0e8;
   touch-action: none;
 }
 
@@ -280,10 +280,10 @@
   display: grid;
   place-items: center;
   padding: 1rem;
-  color: #5f6b7b;
+  color: var(--gg-dark-2, #4a5e4f);
   font-size: 0.9rem;
   text-align: center;
-  background: linear-gradient(180deg, rgba(248, 251, 255, 0.92), rgba(238, 244, 255, 0.88));
+  background: rgba(245, 240, 232, 0.92);
 }
 
 .analytics-heatmap-side {
@@ -296,9 +296,9 @@
   display: grid;
   gap: 0.45rem;
   padding: 0.8rem;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border, #e0d8cc);
   border-radius: 0.75rem;
-  background: #f8fbff;
+  background: #fffdf8;
 }
 
 .analytics-heatmap-legend span {
@@ -339,10 +339,10 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.75rem 0.85rem;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border, #e0d8cc);
   border-radius: 0.65rem;
   background: #ffffff;
-  color: #25324a;
+  color: var(--gg-dark, #1a2a1e);
 }
 
 .analytics-heatmap-rank span {
@@ -355,12 +355,12 @@
 }
 
 .analytics-heatmap-rank strong {
-  color: #0d6efd;
+  color: var(--gg-primary-strong, #2d7a4f);
   font-size: 1rem;
 }
 
 .analytics-table th {
-  color: #5f6b7b;
+  color: var(--gg-dark-2, #4a5e4f);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -371,18 +371,18 @@
   height: 0.58rem;
   overflow: hidden;
   border-radius: 999px;
-  background: #e8eeff;
+  background: var(--gg-tayabas-border, #e0d8cc);
 }
 
 .analytics-meter span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #667eea 0%, #4f2ea4 100%);
+  background: linear-gradient(90deg, #f0c040 0%, #c98500 100%);
 }
 
 .analytics-meter.availability span {
-  background: linear-gradient(90deg, #17a2b8 0%, #28a745 100%);
+  background: linear-gradient(90deg, #4caf74 0%, #2d7a4f 100%);
 }
 
 .analytics-rating-summary {
@@ -394,14 +394,14 @@
 }
 
 .analytics-rating-value {
-  color: #0d1f48;
+  color: var(--gg-dark, #1a2a1e);
   font-size: 3rem;
   font-weight: 800;
   line-height: 1;
 }
 
 .verification-detail-panel {
-  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  background: #ffffff;
 }
 
 .verification-doc-chip {
@@ -411,7 +411,7 @@
 
 .verification-document-card {
   padding: 0.9rem;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border, #e0d8cc);
   border-radius: 0.75rem;
   background: #ffffff;
 }
@@ -423,9 +423,9 @@
   max-height: 12rem;
   overflow: hidden;
   padding: 0;
-  border: 1px solid rgba(173, 197, 255, 0.82);
+  border: 1px solid var(--gg-tayabas-border, #e0d8cc);
   border-radius: 0.65rem;
-  background: #f5f8ff;
+  background: #fffdf8;
 }
 
 .verification-document-preview img {

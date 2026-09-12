@@ -673,18 +673,18 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e1e0d9" />
                                 <XAxis
                                   dataKey="month"
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#898781",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#898781",
                                     fontSize: 12,
                                   }}
                                 />
@@ -692,7 +692,7 @@ export default function SuperAdminDashboardView({
                                 <Line
                                   type="monotone"
                                   dataKey="requests"
-                                  stroke="#667eea"
+                                  stroke="#2d7a4f"
                                   strokeWidth={3}
                                   dot={{
                                     r: 4,
@@ -720,18 +720,18 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e1e0d9" />
                                 <XAxis
                                   dataKey="service"
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#898781",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#898781",
                                     fontSize: 12,
                                   }}
                                 />

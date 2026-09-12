@@ -138,7 +138,19 @@ export const TAYABAS_MAP_BOUNDS = {
   north: 14.11,
   east: 121.73,
 };
-export const ANALYTICS_CHART_COLORS = ["#667eea", "#28a745", "#ffc107", "#dc3545", "#17a2b8", "#4f2ea4"];
+// Validated categorical palette (dataviz skill reference palette, light mode):
+// fixed hue order chosen so adjacent slots clear CVD-safety checks. Never reorder
+// or cycle the first N slots independently -- add categories in this order.
+export const ANALYTICS_CHART_COLORS = [
+  "#2a78d6", // blue
+  "#eb6834", // orange
+  "#1baf7a", // aqua
+  "#eda100", // yellow
+  "#e87ba4", // magenta
+  "#008300", // green
+  "#4a3aa7", // violet
+  "#e34948", // red
+];
 export const ANALYTICS_SERVICE_CATEGORIES = SKILLS.filter((skill) => skill !== "Other");
 export const SHARED_DEMO_PASSWORD = "GawaGo123";
 export const DEMO_LOCATIONS = [
