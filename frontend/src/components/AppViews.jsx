@@ -706,6 +706,28 @@ export default function AppViews({
     const safeAmount = Number.isFinite(amount) ? amount : 0;
     return `₱${safeAmount.toFixed(2)}${job?.rateType ? ` / ${job.rateType}` : ""}`;
   };
+  const renderAiMatchBreakdown = (job) => {
+    const skillPart = Number(job.aiSkillContribution) || 0;
+    const proximityPart = Number(job.aiProximityContribution) || 0;
+    const total = skillPart + proximityPart;
+    if (total <= 0) {
+      return null;
+    }
+    const skillSharePct = Math.round((skillPart / total) * 100);
+    const proximitySharePct = 100 - skillSharePct;
+    return (
+      <div className="worker-ai-match-breakdown mb-2">
+        <div className="worker-ai-match-breakdown-bar">
+          <span className="worker-ai-match-breakdown-skill" style={{ width: `${skillSharePct}%` }} />
+          <span className="worker-ai-match-breakdown-proximity" style={{ width: `${proximitySharePct}%` }} />
+        </div>
+        <p className="small text-muted mb-0">
+          Why this match: {skillSharePct}% skill fit, {proximitySharePct}% proximity
+          {job.aiExactSkillMatch ? " — exact skill match" : ""}
+        </p>
+      </div>
+    );
+  };
   const filteredHouseholdNotifications = useMemo(() => {
     const visibleNotifications = householdNotificationsWithReadState.filter(
       (notification) => !householdDismissedNotificationIds.includes(notification.id),
@@ -1887,6 +1909,7 @@ export default function AppViews({
                               </span>
                             )}
                           </div>
+                          {aiModeActive && renderAiMatchBreakdown(job)}
                           <dl className="worker-job-card-details">
                             <div>
                               <dt>Service Type</dt>

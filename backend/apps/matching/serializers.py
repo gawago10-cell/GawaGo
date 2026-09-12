@@ -12,6 +12,9 @@ class RecommendedJobSerializer(serializers.Serializer):
     ai_score = serializers.FloatField()
     skill_similarity = serializers.FloatField()
     distance_km = serializers.FloatField(allow_null=True)
+    skill_contribution = serializers.FloatField()
+    proximity_contribution = serializers.FloatField()
+    exact_skill_match = serializers.BooleanField()
 
 
 class MatchRequestSerializer(serializers.Serializer):

@@ -144,6 +144,9 @@ export async function fetchRecommendedJobs() {
         aiScore: entry.ai_score,
         aiSkillSimilarity: entry.skill_similarity,
         aiDistanceKm: entry.distance_km,
+        aiSkillContribution: entry.skill_contribution,
+        aiProximityContribution: entry.proximity_contribution,
+        aiExactSkillMatch: entry.exact_skill_match,
       };
     })
     .filter(Boolean);

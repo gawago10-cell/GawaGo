@@ -42,6 +42,18 @@ def _job_skill_document(job):
     return normalize_skill_label(job.required_skill)
 
 
+def _has_exact_skill_match(profile, job):
+    """True if one of the worker's skills is exactly the job's required skill
+    (after normalization), as opposed to a partial/related TF-IDF match.
+
+    Used to explain *why* a job matched -- an exact match is a stronger,
+    easier-to-state reason than "62% skill similarity".
+    """
+    required = normalize_skill_label(job.required_skill)
+    worker_skills = {normalize_skill_label(skill) for skill in (profile.skills or [])}
+    return required in worker_skills
+
+
 def _within_radius(job, distance_km):
     """Hard scope filter: True only if the job accepts workers this far away.
 
@@ -78,8 +90,11 @@ def score_job_for_worker(job, profile):
     what counts as a match.
 
     Returns:
-        dict with "ai_score", "skill_similarity", "distance_km", or None if
-        the worker has no location/skills or the job is outside their radius.
+        dict with "ai_score", "skill_similarity", "distance_km", plus an
+        explainability breakdown ("skill_contribution",
+        "proximity_contribution", "exact_skill_match" -- see
+        _build_score_result()), or None if the worker has no
+        location/skills or the job is outside their radius.
     """
     if profile is None or not profile.has_location:
         return None
@@ -98,12 +113,29 @@ def score_job_for_worker(job, profile):
     if not _within_radius(job, distance_km):
         return None
 
+    return _build_score_result(job, profile, float(skill_similarity), distance_km)
+
+
+def _build_score_result(job, profile, skill_similarity, distance_km):
+    """Assemble the score + explainability breakdown shared by
+    score_job_for_worker() and get_recommended_jobs().
+
+    "skill_contribution" and "proximity_contribution" are the two weighted
+    terms that sum to ai_score -- exposing them lets the UI explain *why*
+    a job matched (e.g. "mostly skill fit" vs. "mostly proximity") instead
+    of showing only the combined score.
+    """
     proximity_score = _proximity_score(distance_km)
-    ai_score = (float(skill_similarity) * SKILL_WEIGHT) + (proximity_score * PROXIMITY_WEIGHT)
+    skill_contribution = skill_similarity * SKILL_WEIGHT
+    proximity_contribution = proximity_score * PROXIMITY_WEIGHT
+    ai_score = skill_contribution + proximity_contribution
     return {
         "ai_score": round(ai_score, 4),
-        "skill_similarity": round(float(skill_similarity), 4),
+        "skill_similarity": round(skill_similarity, 4),
         "distance_km": round(distance_km, 2) if distance_km is not None else None,
+        "skill_contribution": round(skill_contribution, 4),
+        "proximity_contribution": round(proximity_contribution, 4),
+        "exact_skill_match": _has_exact_skill_match(profile, job),
     }
 
 
@@ -177,14 +209,9 @@ def get_recommended_jobs(worker: User, limit: int = 20):
         if not _within_radius(job, distance_km):
             continue
 
-        proximity_score = _proximity_score(distance_km)
-        ai_score = (float(skill_similarity) * SKILL_WEIGHT) + (proximity_score * PROXIMITY_WEIGHT)
-
         results.append({
             "job": job,
-            "ai_score": round(ai_score, 4),
-            "skill_similarity": round(float(skill_similarity), 4),
-            "distance_km": round(distance_km, 2) if distance_km is not None else None,
+            **_build_score_result(job, profile, float(skill_similarity), distance_km),
         })
 
     results.sort(key=lambda r: r["ai_score"], reverse=True)
