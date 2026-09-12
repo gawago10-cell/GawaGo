@@ -5559,7 +5559,7 @@ body {
   grid-template-columns: minmax(100px, 0.75fr) minmax(140px, 1fr);
   gap: 1rem;
   align-items: start;
-  border-bottom: 1px dashed #d7deee;
+  border-bottom: 1px dashed var(--gg-tayabas-border);
   padding: 0.45rem 0;
 }
 
@@ -5569,13 +5569,13 @@ body {
 }
 
 .worker-job-detail-list dt {
-  color: #5f6b7b;
+  color: var(--gg-dark-2);
   font-size: 0.78rem;
   font-weight: 700;
 }
 
 .worker-job-detail-list dd {
-  color: #0d1f48;
+  color: var(--gg-dark);
   font-size: 0.82rem;
   font-weight: 800;
   text-align: right;
@@ -5622,7 +5622,7 @@ body {
 .worker-job-actions .btn-success {
   min-width: 140px;
   font-weight: 800;
-  box-shadow: 0 8px 18px rgba(21, 101, 192, 0.18);
+  box-shadow: 0 8px 18px rgba(45, 122, 79, 0.18);
 }
 
 .worker-job-map-card {
