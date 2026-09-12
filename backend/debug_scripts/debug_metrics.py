@@ -7,7 +7,7 @@ from django.test import Client
 from django.contrib.auth import get_user_model
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 django.setup()
 
