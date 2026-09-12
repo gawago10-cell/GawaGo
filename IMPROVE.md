@@ -513,26 +513,25 @@ geographic_boundary = CharField(choices=[...])
 ### 15. AI-Based Job Matching
 **Panelist:** Sir LA  
 **Impact:** Recommendation Quality  
-**Status:** 🔶 IN PROGRESS (content-based recommender done; explainability + learning from history pending)
+**Status:** 🔶 IN PROGRESS (content-based recommender + explainability done; learning from history pending)
 
 **Implementation Details:**
 - ✅ Content-based recommender: TF-IDF skill similarity + road-distance proximity, blended into one `ai_score` (`backend/apps/matching/recommendations.py`)
 - ✅ Pull-based endpoint: `GET /api/matching/recommended-jobs/` ranks open jobs for the logged-in worker
 - ✅ Push-based notifications: `post_save` signal scores every new job against candidate workers and notifies matches above threshold (`backend/apps/matching/signals.py`)
 - ✅ Match confidence score surfaced in the UI (`% match`, distance) in `frontend/src/components/AppViews.jsx`
-- ⏳ Explainability breakdown — show *why* a job matched (skill-overlap vs. distance contribution), not just the final score
+- ✅ Explainability breakdown — each recommendation returns `skill_contribution`, `proximity_contribution`, and `exact_skill_match`; UI shows a two-segment bar plus a "Why this match: X% skill fit, Y% proximity" line
 - ⏳ Collaborative filtering / learning from historical hire outcomes — needs a worker-job interaction dataset that doesn't exist yet (noted as a future enhancement in `recommendations.py`)
 
 **Files implemented:**
-- ✅ `backend/apps/matching/recommendations.py` — Scoring algorithm
+- ✅ `backend/apps/matching/recommendations.py` — Scoring algorithm + explainability breakdown
 - ✅ `backend/apps/matching/signals.py` — Proactive notification hook
 - ✅ `backend/apps/matching/views.py`, `urls.py`, `serializers.py` — `recommended-jobs` endpoint
 - ✅ `backend/apps/notifications/models.py` — `TYPE_JOB_MATCH` notification type
-- ✅ `frontend/src/services/backendDataService.js`, `frontend/src/components/AppViews.jsx` — Fetch + display recommendations
+- ✅ `frontend/src/services/backendDataService.js`, `frontend/src/components/AppViews.jsx`, `frontend/src/styles/main.css` — Fetch + display recommendations with breakdown bar
 
-**Remaining files to touch:**
-- `backend/apps/matching/recommendations.py` — Return a skill-vs-distance contribution breakdown alongside `ai_score`
-- `frontend/src/components/AppViews.jsx` — Display the "why this match" breakdown
+**Remaining work:**
+- Collaborative filtering / learning from historical hire outcomes (needs interaction data that doesn't exist yet)
 
 ---
 
@@ -575,7 +574,7 @@ geographic_boundary = CharField(choices=[...])
 - [ ] UI/UX improvements (bug fixes + clutter reduction done on household/worker views; broader pass still pending)
 
 ### Phase 4 (Later - Advanced)
-- [x] AI matching — content-based recommender (pull + push) done; explainability breakdown still pending
+- [x] AI matching — content-based recommender (pull + push) + explainability breakdown done; learning from history still pending
 - [x] Certification uploads
 - [x] Multiple ID types
 
@@ -596,7 +595,7 @@ geographic_boundary = CharField(choices=[...])
 - Lighter UI/UX design 🔶 IN PROGRESS (bug fixes + clutter reduction on household/worker views; broader pass still pending)
 - Complaint/issue reporting ✅ HIGH
 - Worker portfolio ✅ HIGH
-- AI-based job matching 🔶 IN PROGRESS (recommender done, explainability pending)
+- AI-based job matching 🔶 IN PROGRESS (recommender + explainability done, learning from history pending)
 
 **Sir NJ** (Focus: Geographic & Tracking)
 - Distance boundaries ✅ CRITICAL
@@ -652,4 +651,4 @@ When these improvements are complete:
 ---
 
 **Last Updated:** September 12, 2026  
-**Status:** Portfolio feature complete ✅ | AI job-match recommender (pull + push) complete ✅ | Worker verification before ratings confirmed complete ✅ | Development roadmap active
+**Status:** Portfolio feature complete ✅ | AI job-match recommender (pull + push) + explainability breakdown complete ✅ | Worker verification before ratings confirmed complete ✅ | Development roadmap active
