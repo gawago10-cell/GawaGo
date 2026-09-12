@@ -1,5 +1,18 @@
 from rest_framework import serializers
 
+from apps.jobs.serializers import JobPostingSerializer
+
+
+class RecommendedJobSerializer(serializers.Serializer):
+    """Serializes one ranked recommendation dict from
+    apps.matching.recommendations.get_recommended_jobs().
+    """
+
+    job = JobPostingSerializer()
+    ai_score = serializers.FloatField()
+    skill_similarity = serializers.FloatField()
+    distance_km = serializers.FloatField(allow_null=True)
+
 
 class MatchRequestSerializer(serializers.Serializer):
     job_id = serializers.IntegerField()

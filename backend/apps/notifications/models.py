@@ -23,6 +23,7 @@ class Notification(models.Model):
     TYPE_ANALYTICS = "analytics"
     TYPE_COMPLETION = "completion"
     TYPE_REVIEW_REMINDER = "review_reminder"
+    TYPE_JOB_MATCH = "job_match"
     TYPE_CHOICES = [
         (TYPE_APPLICATION, "Application"),
         (TYPE_ACCOUNT_ACTIVITY, "Account Activity"),
@@ -33,6 +34,7 @@ class Notification(models.Model):
         (TYPE_ANALYTICS, "Analytics"),
         (TYPE_COMPLETION, "Completion"),
         (TYPE_REVIEW_REMINDER, "Review Reminder"),
+        (TYPE_JOB_MATCH, "Job Match"),
     ]
 
     recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")

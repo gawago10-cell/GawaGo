@@ -1,0 +1,57 @@
+"""
+Proactive AI job-match notifications.
+
+When a household posts a new open job, score it against every candidate
+worker using the same content-based algorithm as the pull-based
+get_recommended_jobs() endpoint (see apps.matching.recommendations), and
+notify anyone who scores above JOB_MATCH_NOTIFY_THRESHOLD — instead of
+waiting for the worker to click "Find Jobs for Me".
+
+FUTURE ENHANCEMENT: this loop runs synchronously in the request that
+creates the job. For a job pool much larger than this capstone's, move it
+to a background task (e.g. Celery) so posting a job doesn't wait on
+scoring every candidate worker.
+"""
+
+from django.conf import settings
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+from apps.accounts.models import UserProfile
+from apps.jobs.models import JobPosting
+from apps.matching.recommendations import score_job_for_worker
+from apps.notifications.models import Notification
+from apps.notifications.services import create_notification
+
+
+@receiver(post_save, sender=JobPosting)
+def notify_matching_workers(sender, instance, created, **kwargs):
+    if not getattr(settings, "ENABLE_JOB_MATCH_NOTIFICATIONS", True):
+        return
+    if not created or instance.status != JobPosting.STATUS_OPEN:
+        return
+
+    threshold = getattr(settings, "JOB_MATCH_NOTIFY_THRESHOLD", 0.5)
+    candidates = UserProfile.objects.select_related("user").filter(
+        role=UserProfile.ROLE_WORKER,
+        user__is_staff=False,
+    )
+
+    for profile in candidates:
+        try:
+            result = score_job_for_worker(instance, profile)
+        except Exception:
+            # A single worker's scoring failing (e.g. a distance-service
+            # network error) should never block notifying everyone else.
+            continue
+
+        if result and result["ai_score"] >= threshold:
+            create_notification(
+                recipient=profile.user,
+                notification_type=Notification.TYPE_JOB_MATCH,
+                title="New job matches your profile",
+                message=f"{instance.title} — {round(result['ai_score'] * 100)}% match",
+                related_job_id=instance.id,
+                action_type=Notification.ACTION_JOB_DETAIL,
+                send_email=False,
+            )

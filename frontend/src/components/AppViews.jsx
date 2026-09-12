@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SidebarIcon } from "./DashboardLayout";
 import HomeView from "./HomeView";
 import ComplaintModal from "./ComplaintModal";
@@ -11,12 +11,18 @@ import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import { getApplicationStatusLabel, getHiringProgressLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
-import { deleteBackendNotification } from "../services/backendDataService";
+import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
 import { TAYABAS_MAP_BOUNDS } from "../constants/appConstants";
 import { formatExperience } from "../utils/formatters";
 
 const HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY = "gawago-household-dismissed-notifications";
 const WORKER_DISMISSED_NOTIFICATIONS_KEY = "gawago-worker-dismissed-notifications";
+const AI_SCAN_STATUS_PHASES = [
+  "Scanning open jobs near you…",
+  "Comparing your skills to job requirements…",
+  "Ranking by relevance and distance…",
+];
+const AI_SCAN_MIN_DURATION_MS = 2400;
 
 export default function AppViews({
   SKILLS,
@@ -187,6 +193,14 @@ export default function AppViews({
   const [workerProfilePanel, setWorkerProfilePanel] = useState("profile");
   const [workerJobTypeFilter, setWorkerJobTypeFilter] = useState("All Types");
   const [workerBarangayFilter, setWorkerBarangayFilter] = useState("");
+  const [aiModeActive, setAiModeActive] = useState(false);
+  const [aiRecommendedJobs, setAiRecommendedJobs] = useState(null);
+  const [aiRecommendationsLoading, setAiRecommendationsLoading] = useState(false);
+  const [aiRecommendationsError, setAiRecommendationsError] = useState("");
+  const [scatterTags, setScatterTags] = useState([]);
+  const [scatterStatusIndex, setScatterStatusIndex] = useState(0);
+  const scatterJitterIntervalRef = useRef(null);
+  const scatterStatusIntervalRef = useRef(null);
   const [workerMarketSearch, setWorkerMarketSearch] = useState("");
   const [householdNotificationPreview, setHouseholdNotificationPreview] = useState(null);
   const [householdNotificationMenuId, setHouseholdNotificationMenuId] = useState(null);
@@ -600,6 +614,69 @@ export default function AppViews({
       return matchesJobType && matchesBarangay;
     });
   }, [workerBarangayFilter, workerJobTypeFilter, workerVisibleJobs]);
+  const stopAiScanAnimation = () => {
+    if (scatterJitterIntervalRef.current) {
+      clearInterval(scatterJitterIntervalRef.current);
+      scatterJitterIntervalRef.current = null;
+    }
+    if (scatterStatusIntervalRef.current) {
+      clearInterval(scatterStatusIntervalRef.current);
+      scatterStatusIntervalRef.current = null;
+    }
+    setScatterTags([]);
+    setScatterStatusIndex(0);
+  };
+  const startAiScanAnimation = () => {
+    const skillPool = (currentWorker?.skills || []).filter(Boolean);
+    const labels = skillPool.length > 0 ? skillPool.slice(0, 6) : ["Matching your profile"];
+    const randomTag = (id, label) => ({
+      id,
+      label,
+      left: Math.random() * 70 + 5,
+      top: Math.random() * 55 + 10,
+      rotate: Math.random() * 24 - 12,
+    });
+    setScatterTags(labels.map((label, index) => randomTag(index, label)));
+    setScatterStatusIndex(0);
+    scatterStatusIntervalRef.current = setInterval(() => {
+      setScatterStatusIndex((previous) => (previous + 1) % AI_SCAN_STATUS_PHASES.length);
+    }, 900);
+    scatterJitterIntervalRef.current = setInterval(() => {
+      setScatterTags((previous) =>
+        previous.map((tag) => ({
+          ...tag,
+          left: Math.min(88, Math.max(2, tag.left + (Math.random() * 18 - 9))),
+          top: Math.min(78, Math.max(2, tag.top + (Math.random() * 14 - 7))),
+          rotate: Math.random() * 22 - 11,
+        })),
+      );
+    }, 420);
+  };
+  const runAiJobRecommendations = async () => {
+    setAiModeActive(true);
+    setAiRecommendationsLoading(true);
+    setAiRecommendationsError("");
+    startAiScanAnimation();
+    const minAnimationDelay = new Promise((resolve) => setTimeout(resolve, AI_SCAN_MIN_DURATION_MS));
+    try {
+      const [results] = await Promise.all([fetchRecommendedJobs(), minAnimationDelay]);
+      if (results === null) {
+        setAiRecommendationsError("Unable to load AI recommendations right now. Try again in a moment.");
+        setAiRecommendedJobs([]);
+      } else {
+        setAiRecommendedJobs(results);
+      }
+    } catch (error) {
+      setAiRecommendationsError(error?.message || "Unable to load AI recommendations right now.");
+      setAiRecommendedJobs([]);
+    } finally {
+      stopAiScanAnimation();
+      setAiRecommendationsLoading(false);
+    }
+  };
+  const exitAiJobRecommendations = () => {
+    setAiModeActive(false);
+  };
   const openWorkerFindJobsForCategory = (serviceType) => {
     setWorkerJobTypeFilter(serviceType);
     setWorkerBarangayFilter("");
@@ -1684,47 +1761,115 @@ export default function AppViews({
                 </div>
               </aside>
               <div className="worker-content">
-                <div className="worker-topbar">
-                  <h1 className="h4 mb-0">
-                    {" "}
-                    Available Jobs <span className="badge text-bg-primary">{filteredWorkerVisibleJobs.length}</span>
-                  </h1>
-                </div>
-                <div className="jobs-filter-panel mt-3">
-                  <div className="row g-2 align-items-end">
-                    <div className="col-md-4">
-                      <label className="form-label fw-semibold mb-1">Filter by Job Type</label>
-                      <select
-                        className="form-select"
-                        value={workerJobTypeFilter}
-                        onChange={(event) => setWorkerJobTypeFilter(event.target.value)}
-                      >
-                        <option>All Types</option>
-                        {workerMarketCategories.map((category) => (
-                          <option key={category.serviceType}>{category.serviceType}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label fw-semibold mb-1">Barangay</label>
-                      <input
-                        className="form-control"
-                        placeholder="e.g. Poblacion"
-                        value={workerBarangayFilter}
-                        onChange={(event) => setWorkerBarangayFilter(event.target.value)}
-                      />
-                    </div>
-                    <div className="col-md-2">
-                      <button className="btn btn-primary w-100" type="button">
-                        Filter
-                      </button>
+                {aiModeActive && !aiRecommendationsLoading ? (
+                  <div className="worker-topbar d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h1 className="h4 mb-0">
+                      {" "}
+                      AI Recommended Jobs{" "}
+                      <span className="badge text-bg-primary">{(aiRecommendedJobs || []).length}</span>
+                    </h1>
+                    <button className="btn btn-outline-secondary btn-sm" type="button" onClick={exitAiJobRecommendations}>
+                      Back to Browsing
+                    </button>
+                  </div>
+                ) : (
+                  <div className="worker-ai-hero">
+                    <div className="worker-ai-hero-decor worker-ai-hero-decor-1" />
+                    <div className="worker-ai-hero-decor worker-ai-hero-decor-2" />
+                    <div className="worker-ai-hero-inner">
+                      <div className="worker-ai-hero-top">
+                        <div className="worker-ai-hero-left">
+                          <div className="worker-ai-hero-eyebrow">FIND JOBS</div>
+                          <h1 className="worker-ai-hero-title">Let AI find your next job</h1>
+                          <p className="worker-ai-hero-desc">
+                            We match open jobs near you to your skills, so you spend less time scrolling and more time earning.
+                          </p>
+                        </div>
+                        <div className="worker-ai-hero-stat">
+                          <div className="worker-ai-hero-stat-num">{filteredWorkerVisibleJobs.length}</div>
+                          <div className="worker-ai-hero-stat-label">
+                            {filteredWorkerVisibleJobs.length === 1 ? "open job nearby" : "open jobs nearby"}
+                          </div>
+                        </div>
+                      </div>
+                      {aiRecommendationsLoading ? (
+                        <div className="worker-ai-scan-wrap">
+                          <div className="worker-ai-scan-stage">
+                            {scatterTags.map((tag) => (
+                              <span
+                                key={tag.id}
+                                className="worker-ai-scan-tag"
+                                style={{
+                                  left: `${tag.left}%`,
+                                  top: `${tag.top}%`,
+                                  transform: `rotate(${tag.rotate}deg)`,
+                                }}
+                              >
+                                {tag.label}
+                              </span>
+                            ))}
+                          </div>
+                          <p className="worker-ai-scan-status">{AI_SCAN_STATUS_PHASES[scatterStatusIndex]}</p>
+                        </div>
+                      ) : (
+                        <div className="worker-ai-hero-bottom">
+                          <button className="worker-ai-find-btn" type="button" onClick={runAiJobRecommendations}>
+                            <span className="worker-ai-find-btn-icon">✨</span>
+                            Find Jobs for Me
+                          </button>
+                          <span className="worker-ai-manual-link">or browse manually below</span>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-                <p className="small worker-skill-hint fw-semibold mt-3 mb-2">Green labels match your skills. Neutral labels are other available jobs.</p>
+                )}
+                {!aiModeActive && (
+                  <div className="jobs-filter-panel mt-3">
+                    <div className="row g-2 align-items-end">
+                      <div className="col-md-4">
+                        <label className="form-label fw-semibold mb-1">Filter by Job Type</label>
+                        <select
+                          className="form-select"
+                          value={workerJobTypeFilter}
+                          onChange={(event) => setWorkerJobTypeFilter(event.target.value)}
+                        >
+                          <option>All Types</option>
+                          {workerMarketCategories.map((category) => (
+                            <option key={category.serviceType}>{category.serviceType}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label fw-semibold mb-1">Barangay</label>
+                        <input
+                          className="form-control"
+                          placeholder="e.g. Poblacion"
+                          value={workerBarangayFilter}
+                          onChange={(event) => setWorkerBarangayFilter(event.target.value)}
+                        />
+                      </div>
+                      <div className="col-md-2">
+                        <button className="btn btn-primary w-100" type="button">
+                          Filter
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {aiModeActive && !aiRecommendationsLoading ? (
+                  <p className="small worker-skill-hint fw-semibold mt-3 mb-2">
+                    Ranked for you by skill match and distance. Higher score = better fit.
+                  </p>
+                ) : !aiModeActive ? (
+                  <p className="small worker-skill-hint fw-semibold mt-3 mb-2">Green labels match your skills. Neutral labels are other available jobs.</p>
+                ) : null}
+                {aiModeActive && !aiRecommendationsLoading && aiRecommendationsError && (
+                  <div className="alert alert-warning py-2 small mb-2">{aiRecommendationsError}</div>
+                )}
+                {!aiRecommendationsLoading && (
                 <div className="row g-3">
-                  {filteredWorkerVisibleJobs.length > 0 ? (
-                    filteredWorkerVisibleJobs.map((job) => (
+                  {(aiModeActive ? aiRecommendedJobs || [] : filteredWorkerVisibleJobs).length > 0 ? (
+                    (aiModeActive ? aiRecommendedJobs : filteredWorkerVisibleJobs).map((job) => (
                       <div className="col-lg-6" key={job.id}>
                         <article className="job-card">
                           <div className="d-flex justify-content-between align-items-start">
@@ -1732,9 +1877,15 @@ export default function AppViews({
                               <h2 className="h5 mb-1">{job.jobTitle || job.serviceType}</h2>
                               <p className="text-muted mb-1">{job.description || "No description provided."}</p>
                             </div>
-                            <span className={`badge ${job.matchesSkill ? "worker-skill-match" : "worker-skill-neutral"}`}>
-                              {job.matchesSkill ? "Matches Your Skills" : "Does not match skills"}
-                            </span>
+                            {aiModeActive ? (
+                              <span className="badge worker-skill-match">
+                                {Math.round((job.aiScore || 0) * 100)}% match
+                              </span>
+                            ) : (
+                              <span className={`badge ${job.matchesSkill ? "worker-skill-match" : "worker-skill-neutral"}`}>
+                                {job.matchesSkill ? "Matches Your Skills" : "Does not match skills"}
+                              </span>
+                            )}
                           </div>
                           <dl className="worker-job-card-details">
                             <div>
@@ -1763,7 +1914,11 @@ export default function AppViews({
                             </div>
                           </dl>
                           <p className="mb-3">{job.householdName || "Household"}</p>
-                          <div className="worker-job-distance-badge mb-3">{getWorkerJobDistanceLabel(job)}</div>
+                          <div className="worker-job-distance-badge mb-3">
+                            {aiModeActive && job.aiDistanceKm != null
+                              ? `${job.aiDistanceKm} km away`
+                              : getWorkerJobDistanceLabel(job)}
+                          </div>
                           <div className="d-flex gap-2">
                             <button
                               className="btn btn-outline-secondary btn-sm flex-fill"
@@ -1797,14 +1952,17 @@ export default function AppViews({
                       <div className="profile-card">
                         <div className="p-4 text-center text-muted">
                           {" "}
-                          {workerJobTypeFilter === "All Types"
-                            ? "There are no household job posts available right now."
-                            : `Wala pang household job posts para sa ${workerJobTypeFilter}.`}{" "}
+                          {aiModeActive
+                            ? "No matching jobs found within your job radius right now."
+                            : workerJobTypeFilter === "All Types"
+                              ? "There are no household job posts available right now."
+                              : `Wala pang household job posts para sa ${workerJobTypeFilter}.`}{" "}
                         </div>
                       </div>
                     </div>
                   )}
                 </div>
+                )}
               </div>
             </div>
           </section>

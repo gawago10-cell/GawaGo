@@ -7308,6 +7308,172 @@ body {
   margin: 0 !important;
 }
 
+.worker-ai-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  margin-bottom: 1rem;
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--gg-sidebar-bg) 0%, var(--gg-sidebar-active) 100%);
+}
+
+.worker-ai-hero-decor {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  pointer-events: none;
+}
+
+.worker-ai-hero-decor-1 {
+  width: 220px;
+  height: 220px;
+  top: -80px;
+  right: -60px;
+}
+
+.worker-ai-hero-decor-2 {
+  width: 120px;
+  height: 120px;
+  bottom: -50px;
+  right: 140px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.worker-ai-hero-inner {
+  position: relative;
+  z-index: 2;
+  padding: 1.5rem 1.6rem;
+}
+
+.worker-ai-hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.worker-ai-hero-left {
+  max-width: 460px;
+}
+
+.worker-ai-hero-eyebrow {
+  font-size: 0.78rem;
+  color: #a8cbb6;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.worker-ai-hero .worker-ai-hero-title {
+  font-size: 1.55rem;
+  font-weight: 800;
+  margin: 0 0 8px;
+  color: #ffffff !important;
+}
+
+.worker-ai-hero-desc {
+  font-size: 0.9rem;
+  color: #cfe3d6;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.worker-ai-hero-stat {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.worker-ai-hero-stat-num {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+}
+
+.worker-ai-hero-stat-label {
+  font-size: 0.76rem;
+  color: #a8cbb6;
+  margin-top: 4px;
+}
+
+.worker-ai-hero-bottom {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+
+.worker-ai-find-btn {
+  background: #ffffff;
+  color: var(--gg-sidebar-bg);
+  border: none;
+  font-weight: 700;
+  font-size: 0.92rem;
+  padding: 0.8rem 1.35rem;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+
+.worker-ai-find-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.worker-ai-find-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.worker-ai-find-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.worker-ai-find-btn-icon {
+  font-size: 1rem;
+}
+
+.worker-ai-manual-link {
+  font-size: 0.85rem;
+  color: #cfe3d6;
+}
+
+.worker-ai-scan-wrap {
+  margin-top: 24px;
+}
+
+.worker-ai-scan-stage {
+  position: relative;
+  height: 170px;
+  width: 100%;
+}
+
+.worker-ai-scan-tag {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #eafff0;
+  white-space: nowrap;
+  transition: left 0.9s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.9s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.9s ease;
+}
+
+.worker-ai-scan-status {
+  text-align: center;
+  font-size: 0.85rem;
+  color: #a8cbb6;
+  margin: 4px 0 0;
+}
+
 .worker-profile-edit-fieldset {
   border: 0;
   padding: 0;
@@ -9525,9 +9691,9 @@ a,
 /* ===== Registration pages: balanced theme (green header identity + warm off-white body) ===== */
 .login-section.register-page {
   background:
-    radial-gradient(circle at 15% 10%, rgba(76, 175, 116, 0.12), transparent 30%),
-    radial-gradient(circle at 85% 90%, rgba(76, 175, 116, 0.1), transparent 30%),
-    linear-gradient(180deg, #eef3ec 0%, #f3efe6 100%) !important;
+    radial-gradient(circle at -120px -120px, rgba(26, 74, 46, 0.55) 0%, transparent 42%),
+    radial-gradient(circle at calc(100% + 80px) calc(100% + 80px), rgba(76, 175, 116, 0.1) 0%, transparent 36%),
+    #0b2418 !important;
 }
 
 .register-page .login-shell {

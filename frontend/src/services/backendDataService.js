@@ -120,6 +120,35 @@ export async function fetchRecommendedWorkers(jobId) {
   return Array.isArray(data?.results) ? data.results : [];
 }
 
+export async function fetchRecommendedJobs() {
+  const response = await apiRequest("matching/recommended-jobs/", {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (response.status === 403) {
+    return null;
+  }
+  if (!response.ok) {
+    return null;
+  }
+  const data = await readResponseData(response);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  return results
+    .map((entry) => {
+      const job = normalizeBackendJob(entry.job);
+      if (!job) {
+        return null;
+      }
+      return {
+        ...job,
+        aiScore: entry.ai_score,
+        aiSkillSimilarity: entry.skill_similarity,
+        aiDistanceKm: entry.distance_km,
+      };
+    })
+    .filter(Boolean);
+}
+
 export async function fetchNotifications(username) {
   const response = await apiRequest("notifications/", {
     auth: true,

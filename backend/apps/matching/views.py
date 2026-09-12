@@ -5,8 +5,38 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import UserProfile
 from apps.jobs.models import JobPosting
-from apps.matching.serializers import MatchRequestSerializer, MatchResultSerializer
+from apps.matching.recommendations import get_recommended_jobs
+from apps.matching.serializers import (
+    MatchRequestSerializer,
+    MatchResultSerializer,
+    RecommendedJobSerializer,
+)
 from apps.matching.services import build_match_results
+
+
+class RecommendedJobsView(APIView):
+    """GET /api/matching/recommended-jobs/
+
+    Returns open job postings ranked for the logged-in worker by the
+    content-based AI recommendation engine. See
+    apps.matching.recommendations.get_recommended_jobs for the algorithm.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = getattr(request.user, "profile", None)
+        if profile is None or profile.role != UserProfile.ROLE_WORKER:
+            return Response(
+                {"detail": "Only workers can view job recommendations."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        recommendations = get_recommended_jobs(request.user)
+        serializer = RecommendedJobSerializer(
+            recommendations, many=True, context={"request": request}
+        )
+        return Response({"results": serializer.data})
 
 
 class RecommendedWorkersView(APIView):

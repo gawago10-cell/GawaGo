@@ -83,6 +83,13 @@ ASGI_APPLICATION = "config.asgi.application"
 
 SETTINGS_MODULE = os.environ.get("DJANGO_SETTINGS_MODULE", "")
 USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE_FOR_TESTS", "False") == "True" or "test" in sys.argv
+
+# Proactive AI job-match notifications (apps.matching.signals). Disabled during
+# the test suite: every JobPosting created in tests would otherwise trigger a
+# TF-IDF scoring pass plus a real road-distance network call per candidate
+# worker, which is slow and flaky in CI.
+ENABLE_JOB_MATCH_NOTIFICATIONS = "test" not in sys.argv
+JOB_MATCH_NOTIFY_THRESHOLD = float(os.environ.get("JOB_MATCH_NOTIFY_THRESHOLD", "0.5"))
 USE_SQLITE_FOR_DEV = (
     SETTINGS_MODULE.endswith(".development")
     and os.environ.get("DJANGO_USE_SQLITE_FOR_DEV", "True") == "True"
