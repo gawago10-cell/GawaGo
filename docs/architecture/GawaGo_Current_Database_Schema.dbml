@@ -235,7 +235,7 @@ Table notifications_notification {
   id bigint [pk, increment]
   recipient_id int [not null, ref: > auth_user.id]
   actor_id int [ref: > auth_user.id, note: "Nullable; set to null if the actor user is deleted."]
-  notification_type varchar(30) [not null, note: "application, account_activity, accepted, hiring, rejection, verification, analytics, completion, review_reminder"]
+  notification_type varchar(30) [not null, note: "application, account_activity, accepted, hiring, rejection, verification, analytics, completion, review_reminder, job_match"]
   title varchar(255) [not null]
   message text [not null]
   related_job_id int [note: "Logical reference to jobs_jobposting.id; stored as PositiveIntegerField, not a database FK."]

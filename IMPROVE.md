@@ -544,18 +544,18 @@ geographic_boundary = CharField(choices=[...])
 ## 📋 DOCUMENTATION UPDATES
 
 ### Update AGENTS.md:
-- [ ] Add "Post a New Job" to Functional Requirements (already exists, just needs docs)
-- [ ] Clarify Scope & Limitations (specify worker types, geographic area)
-- [ ] Document AI-based matching approach
-- [ ] Explain proximity range justification
-- [ ] Define reputation scoring criteria
-- [ ] Add portfolio feature details
+- [x] Add "Post a New Job" to Functional Requirements — already covered under I.A
+- [x] Clarify Scope & Limitations (specify worker types, geographic area) — already covered under V
+- [x] Document AI-based matching approach — added new I.C section describing the content-based recommender, pull/push delivery, and explainability breakdown; corrected V's outdated "not implemented" claim; added a Definition of Terms entry
+- [x] Explain proximity range justification — already covered under V
+- [x] Define reputation scoring criteria — already covered under II.A
+- [x] Add portfolio feature details — already covered under II.C
 
 ### Update Architecture Docs:
-- [ ] Database schema changes
-- [ ] API endpoint documentation
-- [ ] Matching algorithm explanation
-- [ ] Reputation calculation logic
+- [x] Database schema changes — added the `job_match` notification type to `GawaGo_Current_Database_Schema.dbml` and the database dictionary (no new tables; AI matching only added a notification type choice)
+- [x] API endpoint documentation — added `GET /api/matching/recommended-jobs/` to `docs/api/README.md`
+- [x] Matching algorithm explanation — covered by the new AGENTS.md I.C section and the API doc entry above
+- [x] Reputation calculation logic — already covered by AGENTS.md II.A and the `accounts_userprofile` dictionary entry; no changes needed
 
 ---
 

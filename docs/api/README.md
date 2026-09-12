@@ -386,6 +386,36 @@ Response:
 
 Matching is advisory. Households still choose the final worker.
 
+## AI-Based Job Recommendations
+
+`GET /api/matching/recommended-jobs/`
+
+Auth: Bearer required, worker role only.
+
+Returns open jobs ranked for the logged-in worker by a content-based algorithm (TF-IDF skill similarity blended with road-route proximity; see `AGENTS.md` I.C for the full explanation). Jobs outside their own configured search radius are excluded, not merely ranked lower.
+
+Response:
+
+```json
+{
+  "results": [
+    {
+      "job": { "...": "job posting fields" },
+      "ai_score": 0.82,
+      "skill_similarity": 0.9,
+      "distance_km": 1.4,
+      "skill_contribution": 0.63,
+      "proximity_contribution": 0.19,
+      "exact_skill_match": true
+    }
+  ]
+}
+```
+
+`ai_score` is `skill_contribution + proximity_contribution` (weighted 0.7/0.3). The frontend uses `skill_contribution`/`proximity_contribution` to show a "why this match" breakdown rather than the score alone.
+
+Recommendations are advisory, same as Smart Matching. When a household posts a new open job, this same scoring also runs in the background against every candidate worker; workers scoring above `JOB_MATCH_NOTIFY_THRESHOLD` (default `0.5`, see `backend/config/settings/base.py`) get a `job_match` notification without needing to call this endpoint themselves.
+
 ## Reviews
 
 ### List Reviews

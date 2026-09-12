@@ -357,7 +357,7 @@ This table stores post-completion reviews and feedback. `rating` is the single o
 | 11 | is_read | BOOLEAN | 1 | FALSE | 0 |
 | 12 | created_at | DATETIME | 1 | NULL | 0 |
 
-This table stores in-system notifications, including recipient, optional actor, action context, read status, and creation date. `notification_type` covers nine types: application, acceptance, rejection, hiring, completion, verification, review reminder, account activity, and analytics/admin alerts; each is also mirrored by an automated email.
+This table stores in-system notifications, including recipient, optional actor, action context, read status, and creation date. `notification_type` covers ten types: application, acceptance, rejection, hiring, completion, verification, review reminder, account activity, analytics/admin alerts, and job match (AI-based job recommendation notifications, see `AGENTS.md` I.C). The first nine are each mirrored by an automated email; job match notifications are in-system only.
 
 ## Table 24: `common_verificationrequest`
 
