@@ -493,7 +493,7 @@ geographic_boundary = CharField(choices=[...])
 ### 14. Lighter UI/UX Design
 **Panelist:** Sir LA  
 **Impact:** User Experience  
-**Status:** 🔶 IN PROGRESS (two fixes shipped; broader audit still pending)
+**Status:** ✅ COMPLETED
 
 **What to do:**
 - Review and simplify current interface
@@ -509,7 +509,8 @@ geographic_boundary = CharField(choices=[...])
 - ✅ Found that the app already has an established cream/green design system (`--gg-*` tokens in `main.css`), but some panels (e.g. the household My Jobs panel) still carried an older, unrelated blue-gradient theme (~140 leftover occurrences of that palette across `main.css`). Migrated the My Jobs panel to the established tokens.
 - ✅ Migrated the household job detail modal (worker panel, job summary, completion steps, review form) off the same leftover blue theme — most visibly, the "current step" indicator used plain blue while "done" steps used green, two competing accents on one screen.
 - ✅ Migrated the worker job detail view's key-value list and button shadow off the same leftover blue theme. Cross-checked all other classes it uses (`.profile-card`, `.household-profile-photo/fallback`, `.worker-completion-request-card`, `.profile-card-head`) against `main.css` — already green/cream via base rules or the existing global card-theme override, so nothing else needed there.
-- ⏳ Same blue-theme leftovers likely remain in the superadmin dashboard — not yet audited.
+- ✅ Superadmin Analytics tab: replaced random Bootstrap-default chart colors (indigo/red/cyan/purple) with the dataviz skill's validated categorical palette (CVD-safety checked via `validate_palette.js`), switched the single-series line chart to the brand green, and migrated the remaining leftover blue theme in `analytics.css` (section/card borders, heatmap panel, verification document cards, barangay ranking list, and the Job Demand/Worker Availability progress-bar meters, which previously used two unrelated gradients).
+- All four views identified with the leftover blue-gradient theme (household My Jobs, household job detail, worker job detail, superadmin analytics) are now migrated to the established `--gg-*` cream/green tokens. No further views flagged.
 - ⏳ Favicon was also missing entirely (index.html linked an empty `data:` icon); added `frontend/public/favicon.svg` from the existing `gawago_icon_mark_combined_v2.svg` icon mark. Not part of #14's original scope but same "polish" bucket.
 
 **Files to review:**
@@ -579,7 +580,7 @@ geographic_boundary = CharField(choices=[...])
 - [x] Enhanced analytics
 - [x] Rating metrics
 - [x] Reputation scoring
-- [ ] UI/UX improvements (bug fixes + clutter reduction done on household/worker views; broader pass still pending)
+- [x] UI/UX improvements (bug fixes + clutter reduction complete across household, worker, and superadmin views)
 
 ### Phase 4 (Later - Advanced)
 - [x] AI matching — content-based recommender (pull + push) + explainability breakdown done; learning from history still pending
@@ -600,7 +601,7 @@ geographic_boundary = CharField(choices=[...])
 - Certification uploads ✅ COMPLETED
 
 **Sir LA** (Focus: UX & Features)
-- Lighter UI/UX design 🔶 IN PROGRESS (bug fixes + clutter reduction on household/worker views; broader pass still pending)
+- Lighter UI/UX design ✅ COMPLETED
 - Complaint/issue reporting ✅ HIGH
 - Worker portfolio ✅ HIGH
 - AI-based job matching 🔶 IN PROGRESS (recommender + explainability done, learning from history pending)
