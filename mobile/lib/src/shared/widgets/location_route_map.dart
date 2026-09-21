@@ -15,6 +15,9 @@ class LocationRouteMap extends StatelessWidget {
     this.routePoints = const [],
     this.roadDistanceKm,
     this.showMapTiles = true,
+    this.embedded = false,
+    this.startLocationLabel = '',
+    this.endLocationLabel = '',
   });
 
   final LatLng? start;
@@ -25,11 +28,45 @@ class LocationRouteMap extends StatelessWidget {
   final double? roadDistanceKm;
   final bool showMapTiles;
 
+  /// Drops the Card wrapper and the "km away" header line so the map can sit
+  /// inside a section that already shows the distance in its own header.
+  final bool embedded;
+
+  /// Place names used when there is no drivable route to draw, so the notice
+  /// can say which two places could not be connected.
+  final String startLocationLabel;
+  final String endLocationLabel;
+
   @override
   Widget build(BuildContext context) {
     final endpoints = [start, end].whereType<LatLng>().toList();
     final routeAvailable = routePoints.length >= 2;
     final mapCoordinates = routeAvailable ? routePoints : endpoints;
+
+    if (embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (mapCoordinates.isEmpty)
+            const _CoordinatesUnavailablePanel()
+          else
+            SizedBox(
+              height: 190,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: _buildMap(mapCoordinates, routeAvailable),
+              ),
+            ),
+          if (!routeAvailable) ...[
+            const SizedBox(height: 12),
+            _RouteUnavailableNotice(
+              startLocationLabel: startLocationLabel,
+              endLocationLabel: endLocationLabel,
+            ),
+          ],
+        ],
+      );
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 12),
@@ -61,49 +98,7 @@ class LocationRouteMap extends StatelessWidget {
                 height: 175,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: FlutterMap(
-                    options: MapOptions(
-                      initialCenter: mapCoordinates.first,
-                      initialZoom: 13,
-                      initialCameraFit: mapCoordinates.length >= 2
-                          ? CameraFit.coordinates(
-                              coordinates: mapCoordinates,
-                              padding: const EdgeInsets.all(32),
-                            )
-                          : null,
-                    ),
-                    children: [
-                      if (showMapTiles && shouldLoadMapTiles) osmTileLayer(),
-                      if (routeAvailable)
-                        PolylineLayer(
-                          polylines: [
-                            Polyline(
-                              points: routePoints,
-                              color: GawaGoColors.primary,
-                              strokeWidth: 5,
-                            ),
-                          ],
-                        ),
-                      MarkerLayer(
-                        markers: [
-                          if (start != null)
-                            _marker(
-                              point: start!,
-                              label: startLabel,
-                              color: Colors.blue,
-                              icon: Icons.person_pin_circle,
-                            ),
-                          if (end != null)
-                            _marker(
-                              point: end!,
-                              label: endLabel,
-                              color: Colors.deepOrange,
-                              icon: Icons.location_on,
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
+                  child: _buildMap(mapCoordinates, routeAvailable),
                 ),
               ),
             ],
@@ -137,6 +132,52 @@ class LocationRouteMap extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMap(List<LatLng> mapCoordinates, bool routeAvailable) {
+    return FlutterMap(
+      options: MapOptions(
+        initialCenter: mapCoordinates.first,
+        initialZoom: 13,
+        initialCameraFit: mapCoordinates.length >= 2
+            ? CameraFit.coordinates(
+                coordinates: mapCoordinates,
+                padding: const EdgeInsets.all(32),
+              )
+            : null,
+      ),
+      children: [
+        if (showMapTiles && shouldLoadMapTiles) osmTileLayer(),
+        if (routeAvailable)
+          PolylineLayer(
+            polylines: [
+              Polyline(
+                points: routePoints,
+                color: GawaGoColors.primary,
+                strokeWidth: 5,
+              ),
+            ],
+          ),
+        MarkerLayer(
+          markers: [
+            if (start != null)
+              _marker(
+                point: start!,
+                label: startLabel,
+                color: Colors.blue,
+                icon: Icons.person_pin_circle,
+              ),
+            if (end != null)
+              _marker(
+                point: end!,
+                label: endLabel,
+                color: Colors.deepOrange,
+                icon: Icons.location_on,
+              ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -182,6 +223,94 @@ class LocationRouteMap extends StatelessWidget {
                 '${point.latitude.toStringAsFixed(6)}, '
                 '${point.longitude.toStringAsFixed(6)}',
       style: const TextStyle(fontSize: 12),
+    );
+  }
+}
+
+/// Shown instead of the map when neither side has registered coordinates --
+/// a flat panel keeps the card's shape rather than collapsing it.
+class _CoordinatesUnavailablePanel extends StatelessWidget {
+  const _CoordinatesUnavailablePanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 190,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDF1F4),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.location_pin,
+            size: 30,
+            color: Colors.black.withValues(alpha: 0.28),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Location coordinates unavailable.',
+            style: TextStyle(
+              color: Colors.black.withValues(alpha: 0.45),
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The routing provider could not connect the two points. Distinct from
+/// missing coordinates: both places are known, there is just no road line.
+class _RouteUnavailableNotice extends StatelessWidget {
+  const _RouteUnavailableNotice({
+    required this.startLocationLabel,
+    required this.endLocationLabel,
+  });
+
+  final String startLocationLabel;
+  final String endLocationLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final from = startLocationLabel.trim();
+    final to = endLocationLabel.trim();
+    final detail = from.isEmpty || to.isEmpty
+        ? 'No road route could be calculated between the two locations.'
+        : 'No road route available: $from to $to';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1EEE6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Driving route unavailable',
+            style: TextStyle(
+              color: GawaGoColors.primary,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            detail,
+            style: const TextStyle(
+              color: GawaGoColors.textMuted,
+              fontSize: 13,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

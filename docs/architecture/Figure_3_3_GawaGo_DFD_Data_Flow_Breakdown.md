@@ -16,7 +16,7 @@ This document supports Figure 3.3, the GawaGo Data Flow Diagram. The diagram is 
 | Process | Name | Description |
 |---|---|---|
 | 1.0 | User Registration and Authentication | Handles account registration, login, signup verification, password reset, and user permission/authentication support. |
-| 2.0 | Profile, Availability, and Verification Setup | Stores household/worker profile data, worker availability, weekly availability, and verification submissions. |
+| 2.0 | Profile, Availability, and Verification Setup | Stores household/worker profile data, date-specific worker availability, and verification submissions. |
 | 3.0 | Job Posting Management | Allows households to create and manage job postings and job images. |
 | 4.0 | Worker Application Management | Allows workers to browse jobs and submit applications. |
 | 5.0 | Smart Matching and Route Distance | Uses worker profile, availability, job location, and route distance cache data to support worker recommendations. |
@@ -39,7 +39,7 @@ This document supports Figure 3.3, the GawaGo Data Flow Diagram. The diagram is 
 | D8 | `django_admin_log` | Stores Django admin action logs. |
 | D9 | `accounts_userprofile` | Stores household and worker profile information, rates, skills, location, verification status, and rating summary. |
 | D10 | `accounts_workeravailability` | Stores worker date-specific availability windows. |
-| D11 | `accounts_workerweeklyavailability` | Stores worker recurring weekly availability windows. |
+| D11 | ~~`accounts_workerweeklyavailability`~~ | **Retired.** The table was dropped in accounts migration 0009; worker availability is date-specific only (D10). The identifier is kept so D12+ and the connection list stay stable. |
 | D12 | `accounts_passwordresetrequest` | Stores password reset request tokens and status. |
 | D13 | `accounts_signupverificationrequest` | Stores signup email verification request tokens and status. |
 | D14 | `jobs_jobposting` | Stores household job postings, schedule, location, rate, and status. |
@@ -58,12 +58,12 @@ This document supports Figure 3.3, the GawaGo Data Flow Diagram. The diagram is 
 | F2 | 1.0 User Registration and Authentication | D5, D12, D13 | User accounts, password reset requests, signup verification requests. |
 | F3 | 1.0 User Registration and Authentication | D1-D7 | Django content type, permission, group, and user permission data used by authentication and authorization. |
 | F4 | Household / Worker | 2.0 Profile, Availability, and Verification Setup | Profile details, skills, rates, location, availability, and verification documents. |
-| F5 | 2.0 Profile, Availability, and Verification Setup | D9-D11, D19 | Profile, availability, weekly availability, and verification request records. |
+| F5 | 2.0 Profile, Availability, and Verification Setup | D9-D10, D19 | Profile, availability, and verification request records. |
 | F6 | Household | 3.0 Job Posting Management | Job type, schedule, location, service rate, description, and images. |
 | F7 | 3.0 Job Posting Management | D14-D15 | Job posting and job image records. |
 | F8 | Worker | 4.0 Worker Application Management | Job browsing request and job application details. |
 | F9 | 4.0 Worker Application Management | D14, D16 | Job listings and application records. |
-| F10 | 5.0 Smart Matching and Route Distance | D9-D11, D14, D20 | Worker profile, availability, job location, and cached route distance data. |
+| F10 | 5.0 Smart Matching and Route Distance | D9-D10, D14, D20 | Worker profile, availability, job location, and cached route distance data. |
 | F11 | 5.0 Smart Matching and Route Distance | Household | Ranked worker suggestions and distance indicators. |
 | F12 | Household / Worker | 6.0 Hiring, Completion, and Job Status | Hiring decision, rejection, completion request, and completion confirmation. |
 | F13 | 6.0 Hiring, Completion, and Job Status | D14, D16 | Updated job and application statuses. |
@@ -80,3 +80,4 @@ This document supports Figure 3.3, the GawaGo Data Flow Diagram. The diagram is 
 - Analytics are computed from operational tables and are not stored in a separate analytics table in the current Django models.
 - `notifications_notification.related_job_id` and `related_application_id` are logical integer references, not enforced foreign keys.
 - The DFD includes Django framework stores because the current database schema and database dictionary include the full 20-table schema.
+- **This diagram models a subset of the current schema.** It was drawn before the worker portfolio, dispute-resolution, and token-revocation features landed, so the following tables have no store on it: `accounts_workerportfolio`, `accounts_workerskill`, `accounts_workercertification`, `accounts_workerportfolioitem`, `accounts_skillrating`, `accounts_verificationdocument`, `complaints_complaint`, `complaints_complaintevidence`, and `common_revokedtoken`. The database dictionary (Figure 3.4) is the authoritative list of tables; this figure should be redrawn if those flows need to be shown.

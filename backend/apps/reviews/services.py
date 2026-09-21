@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import timedelta
 
 from django.db import IntegrityError
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
@@ -33,16 +34,26 @@ def recalculate_user_rating(user) -> None:
     if not profile or profile.role not in {UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD}:
         return
 
+    # A review scored on the four metrics but with no overall star value
+    # still has a real effective_review_rating (their average) -- filtering
+    # on rating__isnull=False alone silently dropped those from the worker's
+    # average entirely.
     ratings = Review.objects.filter(
+        Q(rating__isnull=False)
+        | Q(quality_of_work__isnull=False)
+        | Q(punctuality__isnull=False)
+        | Q(communication__isnull=False)
+        | Q(professionalism__isnull=False),
         target=user,
-        rating__isnull=False,
     )
-    rating_count = ratings.count()
+    effective_ratings = [effective_review_rating(review) for review in ratings]
+    effective_ratings = [rating for rating in effective_ratings if rating is not None]
+    rating_count = len(effective_ratings)
     if rating_count == 0:
         profile.average_rating = None
         profile.rating_count = 0
     else:
-        total_rating = sum((effective_review_rating(review) for review in ratings), Decimal("0.0"))
+        total_rating = sum(effective_ratings, Decimal("0.0"))
         profile.average_rating = total_rating / rating_count
         profile.rating_count = rating_count
     profile.save(update_fields=["average_rating", "rating_count"])
@@ -89,6 +100,7 @@ def assign_default_worker_ratings(after_hours: int = DEFAULT_NO_FEEDBACK_AFTER_H
                 job_title=job.title,
                 rating=DEFAULT_NO_FEEDBACK_RATING,
                 feedback="Default 3.5-star rating assigned because no household feedback was submitted after job completion.",
+                is_system_generated=True,
             )
             created_count += 1
         except IntegrityError:
@@ -136,6 +148,11 @@ def calculate_reputation_tier(user) -> str:
     return UserProfile.TIER_NEW
 
 
+# Below this many reviews in a window, one outlier score swings the window's
+# average enough to flip the trend on essentially no evidence.
+RATING_TREND_MIN_SAMPLES_PER_WINDOW = 2
+
+
 def calculate_rating_trend(user) -> str:
     """
     Calculate rating trend by comparing recent ratings to older ratings.
@@ -158,7 +175,10 @@ def calculate_rating_trend(user) -> str:
         target=user, rating__isnull=False, created_at__lt=thirty_days_ago
     ).order_by("-created_at")[:10]
 
-    if not recent_reviews or not old_reviews:
+    if (
+        len(recent_reviews) < RATING_TREND_MIN_SAMPLES_PER_WINDOW
+        or len(old_reviews) < RATING_TREND_MIN_SAMPLES_PER_WINDOW
+    ):
         return "neutral"
 
     recent_avg = sum(

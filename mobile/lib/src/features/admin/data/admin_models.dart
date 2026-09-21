@@ -100,6 +100,8 @@ class AdminVerificationRequest {
     required this.skills,
     required this.primaryDocument,
     required this.secondaryDocument,
+    required this.primaryDocumentPath,
+    required this.secondaryDocumentPath,
     required this.notes,
     required this.submittedAt,
     required this.reviewNote,
@@ -116,6 +118,12 @@ class AdminVerificationRequest {
   final List<String> skills;
   final String primaryDocument;
   final String secondaryDocument;
+
+  /// Authenticated API paths for the two uploaded files. The documents sit
+  /// behind IsAuthenticated, so they are fetched with the bearer token
+  /// rather than handed straight to Image.network.
+  final String primaryDocumentPath;
+  final String secondaryDocumentPath;
   final String notes;
   final String submittedAt;
   final String reviewNote;
@@ -135,6 +143,10 @@ class AdminVerificationRequest {
       ).map((item) => item.toString()).toList(),
       primaryDocument: _text(json['primary_id_name']),
       secondaryDocument: _text(json['secondary_doc_name']),
+      primaryDocumentPath:
+          'common/verification-requests/${_integer(json['id'])}/documents/primary/',
+      secondaryDocumentPath:
+          'common/verification-requests/${_integer(json['id'])}/documents/secondary/',
       notes: _text(json['notes']),
       submittedAt: _text(json['submitted_at']),
       reviewNote: _text(json['review_note']),

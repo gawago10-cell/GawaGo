@@ -66,6 +66,137 @@ void main() {
     expect(find.text('Poblacion'), findsOneWidget);
   });
 
+  testWidgets('find jobs cards identify the household and the skill fit', (
+    tester,
+  ) async {
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'worker-token', role: 'worker'),
+    );
+    GawaGoApi.setClient(MockClient(_workerResponses));
+
+    await tester.pumpWidget(
+      MaterialApp(home: WorkerHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    await _openWorkerPage(tester, 'Find Jobs');
+    await tester.pumpAndSettle();
+
+    final jobsList = find
+        .ancestor(
+          of: find.widgetWithText(FilledButton, 'Filter'),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('House cleaning'),
+      320,
+      scrollable: jobsList,
+    );
+    await tester.pumpAndSettle();
+
+    // The household panel: monogram, name, and verified standing.
+    expect(find.text('MH'), findsOneWidget);
+    expect(find.text('Maria Household'), findsOneWidget);
+    expect(find.text('Verified'), findsWidgets);
+
+    // The worker's skills include Cleaning, so this job is a match.
+    expect(find.text('Matches Skills'), findsOneWidget);
+    expect(find.text('Other Job'), findsNothing);
+
+    // Rate, schedule and distance as the card lays them out.
+    expect(find.text('Cleaning'), findsWidgets);
+    expect(find.text('One-Time'), findsOneWidget);
+    expect(
+      find.text('2026-06-12 to 2026-06-12 (1 working day)'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('worker job detail matches the website card order and rows', (
+    tester,
+  ) async {
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'worker-token', role: 'worker'),
+    );
+    GawaGoApi.setClient(MockClient(_workerResponses));
+
+    await tester.pumpWidget(
+      MaterialApp(home: WorkerHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    await _openWorkerPage(tester, 'Find Jobs');
+    await tester.pumpAndSettle();
+
+    // The job card sits below the AI hero and the filter card, so it is not
+    // built until the list scrolls down to it. The scrollable is pinned to
+    // the Find Jobs list: the drawer's IndexedStack keeps the dashboard and
+    // its horizontal metric strip alive, so several Scrollables are live.
+    final jobsList = find
+        .ancestor(
+          of: find.widgetWithText(FilledButton, 'Filter'),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('View Details'),
+      320,
+      scrollable: jobsList,
+    );
+    await tester.ensureVisible(find.text('View Details'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'View Details'));
+    await tester.pumpAndSettle();
+
+    // The detail route's own list; the pushed route sits above the Find Jobs
+    // list, which is still in the tree.
+    final detailList = find.byType(Scrollable).last;
+    Future<void> scrollTo(String text) async {
+      await tester.scrollUntilVisible(
+        find.text(text),
+        300,
+        scrollable: detailList,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // The four cards the website renders, in the website's order.
+    expect(find.text('Household Profile'), findsOneWidget);
+    expect(find.text('House cleaning'), findsWidgets);
+
+    // Contact details stay withheld until the worker is actually hired.
+    expect(
+      find.text('Contact details become available after you are hired.'),
+      findsOneWidget,
+    );
+
+    // Rows that only exist once the scheduling fields are read back.
+    expect(find.text('FULL-TIME'), findsOneWidget);
+    expect(find.text('INCLUDED ABOVE'), findsOneWidget);
+    expect(find.text('Job Period'), findsOneWidget);
+    expect(
+      find.text('2026-06-12 TO 2026-06-15 (3 WORKING DAYS)'),
+      findsOneWidget,
+    );
+    expect(find.text('Working Days'), findsOneWidget);
+    expect(find.text('3 DAYS'), findsOneWidget);
+    expect(find.text('0/2 HIRED'), findsOneWidget);
+
+    // A hire request routes the worker back where they came from.
+    await scrollTo('Back to Notifications');
+    expect(find.text('Back to Notifications'), findsOneWidget);
+
+    await scrollTo('Distance & Locations');
+    expect(find.text('Distance & Locations'), findsOneWidget);
+    // A distance must not be title-cased the way a status label is.
+    expect(find.text('Distance unavailable'), findsOneWidget);
+    // No coordinates in the fixture, so the map falls back to its panel.
+    expect(find.text('Location coordinates unavailable.'), findsOneWidget);
+
+    await scrollTo('Photos of Work Area');
+    expect(find.text('Photos of Work Area'), findsOneWidget);
+    expect(find.text('No photos uploaded yet.'), findsOneWidget);
+  });
+
   testWidgets('worker notification menu opens the backend job action', (
     tester,
   ) async {
@@ -150,6 +281,18 @@ void main() {
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
 
+    // The drawer's item list grew (Reports, My Reports), so the Account
+    // section can sit below the initially-built viewport/cache extent --
+    // scroll the sidebar's own ListView to bring it into the element tree.
+    await tester.scrollUntilVisible(
+      find.text('Get Verified'),
+      200,
+      scrollable: find.descendant(
+        of: find.byType(AnimatedPositioned),
+        matching: find.byType(Scrollable),
+      ),
+    );
+
     expect(find.text('My Profile'), findsOneWidget);
     expect(find.text('Get Verified'), findsOneWidget);
     expect(find.text('Reviews & Feedback'), findsNothing);
@@ -181,7 +324,32 @@ void main() {
     );
   });
 
-  testWidgets('household dashboard shows recent completed and cancelled jobs', (
+  testWidgets(
+    'household dashboard has no in-process jobs once everything is finished',
+    (tester) async {
+      // Every job in this fixture is completed or cancelled, so the
+      // Dashboard's "IN PROCESS" section -- which now only shows jobs still
+      // in motion, mirroring web's inProcessHouseholdJobs split -- should be
+      // empty; the finished jobs live on My Jobs instead.
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'household-token', role: 'household'),
+      );
+      GawaGoApi.setClient(MockClient(_householdDashboardResponses));
+
+      await tester.pumpWidget(
+        MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Welcome, juan dela cruz'), findsOneWidget);
+      expect(find.textContaining('IN PROCESS'), findsOneWidget);
+      expect(find.text('No posted jobs yet.'), findsOneWidget);
+      expect(find.text('Driver'), findsNothing);
+      expect(find.text('laundry'), findsNothing);
+    },
+  );
+
+  testWidgets('household My Jobs shows the finished job history', (
     tester,
   ) async {
     await SessionStorage.save(
@@ -194,31 +362,35 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Welcome, juan dela cruz'), findsOneWidget);
-    expect(find.text('Recent Post Jobs'), findsOneWidget);
+    await _openDashboardPage(tester, 'My Jobs');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jobs Completed'), findsOneWidget);
+    expect(find.text('Total Spent'), findsOneWidget);
+    expect(find.text('Avg Rating Given'), findsOneWidget);
+    expect(find.textContaining('All Jobs'), findsOneWidget);
+    expect(find.textContaining('Completed'), findsWidgets);
+    expect(find.textContaining('Cancelled'), findsWidgets);
+
+    expect(find.text('Driver'), findsOneWidget);
 
     await tester.scrollUntilVisible(
-      find.text('Other'),
+      find.text('laundry'),
       250,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-
-    expect(find.text('Other'), findsOneWidget);
-    expect(find.text('Calumpang'), findsOneWidget);
-    expect(find.text('PHP 200.00 / Per Day'), findsOneWidget);
+    expect(find.text('laundry'), findsOneWidget);
+    expect(find.text('Israel Cruz'), findsOneWidget);
 
     await tester.scrollUntilVisible(
-      find.text('House Cleaning'),
+      find.text('cleaner'),
       250,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-
-    expect(find.text('Laundry'), findsOneWidget);
-    expect(find.text('House Cleaning'), findsOneWidget);
-    expect(find.text('Completed'), findsOneWidget);
-    expect(find.text('Cancelled'), findsWidgets);
+    expect(find.text('cleaner'), findsOneWidget);
+    expect(find.text('No worker was hired'), findsWidgets);
   });
 
   testWidgets('household notification tools remain available when empty', (
@@ -277,7 +449,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Open Worker'), findsNothing);
-    expect(find.text('Job type'), findsOneWidget);
+    expect(find.text('FILTER BY JOB TYPE'), findsOneWidget);
   });
 
   testWidgets('household bottom navigation does not pop back to the launcher', (
@@ -339,6 +511,31 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'a completed job reads Completed, not Hired, on My Applications',
+    (tester) async {
+      // Regression test for the mobile/web status-label mismatch: mobile
+      // used to hardcode job_status == 'completed' -> 'Hired' regardless of
+      // the application's real status. The backend now sends status_label
+      // (apps/jobs/statuses.py) and the widget must prefer it.
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'worker-token', role: 'worker'),
+      );
+      GawaGoApi.setClient(MockClient(_completedApplicationResponses));
+
+      await tester.pumpWidget(
+        MaterialApp(home: WorkerHomeScreen(onLogout: () {})),
+      );
+      await tester.pumpAndSettle();
+
+      await _openWorkerPage(tester, 'My Applications');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Hired'), findsNothing);
+    },
+  );
 }
 
 Future<void> _openWorkerPage(WidgetTester tester, String label) async {
@@ -372,7 +569,6 @@ Future<http.Response> _workerResponses(http.Request request) async {
         'location_label': 'Tayabas City',
         'verification_status': 'verified',
         'display_rating': 'No ratings yet',
-        'weekly_availability': [],
       },
     });
   }
@@ -396,13 +592,21 @@ Future<http.Response> _workerResponses(http.Request request) async {
         'title': 'House cleaning',
         'household_username': 'maria',
         'household_name': 'Maria Household',
+        'household_verification_status': 'verified',
         'job_type': 'Cleaning',
         'required_skill': 'Cleaning',
         'schedule': 'June 12, 2026 at 9:00 AM',
+        'schedule_type': 'One-Time',
+        'preferred_date': '2026-06-12',
+        'preferred_time': '09:00:00',
+        'job_start_date': '2026-06-12',
+        'job_end_date': '2026-06-12',
+        'estimated_working_days': 1,
         'description': 'Clean the living room.',
         'location_label': 'Tayabas City',
         'service_rate': '500.00',
         'status': 'open',
+        'route_distance_km': 2.4,
         'route_points': [],
         'can_apply': true,
         'can_accept_hire_request': false,
@@ -438,11 +642,20 @@ Future<http.Response> _workerResponses(http.Request request) async {
       'job_type': 'Cleaning',
       'required_skill': 'Cleaning',
       'schedule': 'June 12, 2026 at 9:00 AM',
+      'schedule_type': 'Full-Time',
+      'preferred_date': '2026-06-12',
+      'preferred_time': '09:00:00',
+      'job_start_date': '2026-06-12',
+      'job_end_date': '2026-06-15',
+      'estimated_working_days': 3,
+      'hired_count': 0,
+      'workers_needed': 2,
       'description': 'Clean the living room.',
       'location_label': 'Tayabas City',
       'service_rate': '500.00',
       'status': 'open',
       'route_points': [],
+      'images': [],
       'can_apply': false,
       'can_accept_hire_request': true,
       'can_request_completion': false,
@@ -507,6 +720,9 @@ Future<http.Response> _householdDashboardResponses(http.Request request) async {
   if (path.endsWith('/notifications/')) {
     return _json([]);
   }
+  if (path.endsWith('/reviews/')) {
+    return _json([]);
+  }
   if (path.endsWith('/accounts/me/')) {
     return _json({
       'user': {
@@ -560,7 +776,12 @@ Future<http.Response> _householdDashboardResponses(http.Request request) async {
         'status': 'completed',
         'can_review': false,
         'applications': [
-          {'id': 31, 'worker_username': 'israel', 'status': 'completed'},
+          {
+            'id': 31,
+            'worker_username': 'israel',
+            'worker_name': 'Israel Cruz',
+            'status': 'completed',
+          },
         ],
         'images': [],
       },
@@ -584,6 +805,56 @@ Future<http.Response> _householdDashboardResponses(http.Request request) async {
         'images': [],
       },
     ]);
+  }
+  return _json({});
+}
+
+Future<http.Response> _completedApplicationResponses(
+  http.Request request,
+) async {
+  final path = request.url.path;
+  if (path.endsWith('/accounts/me/')) {
+    return _json({
+      'user': {
+        'username': 'juan',
+        'email': 'juan@example.com',
+        'first_name': 'Juan',
+        'last_name': 'Worker',
+      },
+      'profile': {
+        'phone': '09123456789',
+        'bio': 'Cleaner',
+        'skills': ['Cleaning'],
+        'hourly_rate': '100.00',
+        'daily_rate': '800.00',
+        'years_experience': 2,
+        'location_label': 'Tayabas City',
+        'verification_status': 'verified',
+        'display_rating': 'No ratings yet',
+      },
+    });
+  }
+  if (path.endsWith('/jobs/applications/')) {
+    // Mirrors what apps/jobs/serializers.py actually returns for a hired
+    // application whose job has been confirmed complete: status_stage/
+    // status_label are the single source of truth the client must render.
+    return _json([
+      {
+        'id': 1,
+        'job_id': 8,
+        'job_title': 'House cleaning',
+        'job_type': 'Cleaning',
+        'job_status': 'completed',
+        'status': 'completed',
+        'status_stage': 'completed',
+        'status_label': 'Completed',
+        'note': '',
+        'applied_at': '2026-06-09T10:00:00+08:00',
+      },
+    ]);
+  }
+  if (path.endsWith('/jobs/') || path.endsWith('/notifications/')) {
+    return _json([]);
   }
   return _json({});
 }

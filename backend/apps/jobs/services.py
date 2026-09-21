@@ -2,7 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
-from apps.jobs.models import JobApplication, JobPosting
+from apps.jobs.models import JobApplication, JobPosting, JobStatusEvent
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification, send_notification_email
 from apps.reviews.models import Review
@@ -32,13 +32,44 @@ def get_user_display_name(user) -> str:
     return user.get_full_name().strip() or user.username
 
 
-def hire_application(application_id: int, expected_status: str) -> JobApplication:
+def record_job_status_event(job, from_status, to_status, actor=None, note=""):
+    if from_status == to_status:
+        return None
+    return JobStatusEvent.objects.create(
+        job=job,
+        entity=JobStatusEvent.ENTITY_JOB,
+        from_status=from_status or "",
+        to_status=to_status,
+        actor=actor,
+        note=note,
+    )
+
+
+def record_application_status_event(application, from_status, to_status, actor=None, note=""):
+    if from_status == to_status:
+        return None
+    return JobStatusEvent.objects.create(
+        job_id=application.job_id,
+        application=application,
+        entity=JobStatusEvent.ENTITY_APPLICATION,
+        from_status=from_status or "",
+        to_status=to_status,
+        actor=actor,
+        note=note,
+    )
+
+
+def hire_application(application_id: int, expected_status: str, actor=None) -> JobApplication:
     with transaction.atomic():
         application_job_id = JobApplication.objects.only("job_id").get(pk=application_id).job_id
         job = JobPosting.objects.select_for_update().get(pk=application_job_id)
+        # worker__profile is a reverse one-to-one, so select_related joins it as
+        # an OUTER JOIN -- and PostgreSQL refuses SELECT ... FOR UPDATE across
+        # the nullable side of one. The profile is only read below, never locked,
+        # so let it load lazily instead of widening the locked query.
         application = (
             JobApplication.objects.select_for_update()
-            .select_related("worker", "worker__profile", "job", "job__household")
+            .select_related("worker", "job", "job__household")
             .get(pk=application_id)
         )
 
@@ -66,15 +97,36 @@ def hire_application(application_id: int, expected_status: str) -> JobApplicatio
         if hired_count >= job.worker_slots:
             raise HiringCapacityReached
 
+        previous_application_status = application.status
+        previous_job_status = job.status
+
         application.status = JobApplication.STATUS_HIRED
         application.save(update_fields=["status", "updated_at"])
         job.status = JobPosting.STATUS_ASSIGNED
         job.save(update_fields=["status"])
 
+        record_application_status_event(
+            application, previous_application_status, application.status, actor=actor
+        )
+        record_job_status_event(job, previous_job_status, job.status, actor=actor)
+
         if hired_count + 1 >= job.worker_slots:
-            job.applications.filter(
-                status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
-            ).exclude(pk=application.pk).update(status=JobApplication.STATUS_CLOSED)
+            crowded_out = list(
+                job.applications.filter(
+                    status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
+                ).exclude(pk=application.pk)
+            )
+            for other in crowded_out:
+                previous_status = other.status
+                other.status = JobApplication.STATUS_CLOSED
+                other.save(update_fields=["status", "updated_at"])
+                record_application_status_event(
+                    other,
+                    previous_status,
+                    other.status,
+                    actor=actor,
+                    note="Closed automatically: job reached its worker limit.",
+                )
 
     return application
 
@@ -110,19 +162,28 @@ def create_household_review_reminder(job: JobPosting, application: JobApplicatio
         send_notification_email(job.household, notification.title, notification.message)
 
 
-def complete_job(job: JobPosting) -> JobPosting:
+def complete_job(job: JobPosting, actor=None, previous_status=None) -> JobPosting:
+    # Callers that persisted `completed` before calling in (the job PATCH
+    # endpoint saves through its serializer) pass the status the job held
+    # beforehand, otherwise the transition would look like a no-op here.
+    previous_job_status = previous_status if previous_status is not None else job.status
     if job.status != JobPosting.STATUS_COMPLETED:
         job.status = JobPosting.STATUS_COMPLETED
     if job.completed_at is None:
         job.completed_at = timezone.now()
     job.save(update_fields=["status", "completed_at"])
+    record_job_status_event(job, previous_job_status, job.status, actor=actor)
 
     hired_applications = list(
         job.applications.select_related("worker").filter(status=JobApplication.STATUS_HIRED)
     )
     for application in hired_applications:
+        previous_application_status = application.status
         application.status = JobApplication.STATUS_COMPLETED
         application.save(update_fields=["status", "updated_at"])
+        record_application_status_event(
+            application, previous_application_status, application.status, actor=actor
+        )
         create_notification(
             recipient=application.worker,
             notification_type=Notification.TYPE_COMPLETION,

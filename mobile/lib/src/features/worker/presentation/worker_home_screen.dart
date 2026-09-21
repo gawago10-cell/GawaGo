@@ -13,10 +13,12 @@ import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
-import '../../../shared/widgets/form_section.dart';
 import '../../../shared/widgets/job_image_gallery.dart';
 import '../../../shared/widgets/location_route_map.dart';
+import '../../../shared/widgets/my_complaints_view.dart';
 import '../../../shared/widgets/notification_badge.dart';
+import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
 import '../../../shared/widgets/status_card.dart';
 import '../data/worker_models.dart';
@@ -26,6 +28,7 @@ enum _WorkerPage {
   dashboard,
   jobs,
   applications,
+  myReports,
   profile,
   reviews,
   notifications,
@@ -51,6 +54,7 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen> {
     _WorkerPage.dashboard,
     _WorkerPage.jobs,
     _WorkerPage.applications,
+    _WorkerPage.myReports,
     _WorkerPage.notifications,
   ];
 
@@ -215,6 +219,7 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen> {
         initialSkill: _initialJobSkill,
       ),
       _WorkerPage.applications => _WorkerApplications(repository: _repository),
+      _WorkerPage.myReports => _WorkerMyReports(repository: _repository),
       _WorkerPage.profile => _WorkerProfile(
         repository: _repository,
         onSaved: _refreshAll,
@@ -339,20 +344,72 @@ class _WorkerWelcomeBand extends StatelessWidget {
       width: double.infinity,
       constraints: const BoxConstraints(minHeight: 86),
       alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
       decoration: BoxDecoration(
         color: GawaGoColors.cardGreen,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'DASHBOARD',
+            style: TextStyle(
+              color: GawaGoColors.mutedText,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.4,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Welcome, ${profile.fullName}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _ReputationBadge(label: profile.reputationLabel),
+              if (profile.ratingTrendLabel.isNotEmpty)
+                _ReputationBadge(label: profile.ratingTrendLabel),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Earned-standing / trend chip shown on the worker's own dashboard.
+class _ReputationBadge extends StatelessWidget {
+  const _ReputationBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        'Welcome, ${profile.fullName}',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
+        label,
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 24,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -373,6 +430,9 @@ class _WebsiteMetric {
   final String? statusValue;
 }
 
+/// The stat row under the welcome band. It scrolls sideways rather than
+/// wrapping into a grid so every tile keeps the same height and the numbers
+/// stay large on a narrow phone.
 class _WebsiteMetricGrid extends StatelessWidget {
   const _WebsiteMetricGrid({required this.metrics});
 
@@ -380,22 +440,17 @@ class _WebsiteMetricGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 320 ? 2 : 1;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: metrics.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            mainAxisExtent: 116,
-          ),
-          itemBuilder: (context, index) => _MetricTile(metrics[index]),
-        );
-      },
+    return SizedBox(
+      height: 112,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        padding: EdgeInsets.zero,
+        itemCount: metrics.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
+        itemBuilder: (context, index) =>
+            SizedBox(width: 158, child: _MetricTile(metrics[index])),
+      ),
     );
   }
 }
@@ -411,11 +466,10 @@ class _MetricTile extends StatelessWidget {
     final hasStatus = metric.statusValue != null;
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 126),
-      padding: const EdgeInsets.fromLTRB(16, 15, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
         color: highlighted ? GawaGoColors.primary : Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: highlighted
             ? null
             : Border.all(color: const Color(0xFFD8D0C3), width: 1.3),
@@ -424,29 +478,36 @@ class _MetricTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            metric.label.toUpperCase(),
-            style: TextStyle(
-              color: highlighted ? Colors.white : const Color(0xFF5D6B61),
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.2,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              metric.label.toUpperCase(),
+              maxLines: 1,
+              style: TextStyle(
+                color: highlighted ? Colors.white : const Color(0xFF5D6B61),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.1,
+              ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           if (hasStatus)
-            _LargeStatusBadge(status: metric.statusValue!)
+            Flexible(child: _LargeStatusBadge(status: metric.statusValue!))
           else
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                metric.value,
-                style: TextStyle(
-                  color: highlighted ? Colors.white : GawaGoColors.ink,
-                  fontSize: highlighted ? 42 : 32,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0,
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  metric.value,
+                  style: TextStyle(
+                    color: highlighted ? Colors.white : GawaGoColors.ink,
+                    fontSize: 36,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
                 ),
               ),
             ),
@@ -509,116 +570,103 @@ class _JobMarketOverviewState extends State<_JobMarketOverview> {
         .toList();
     final workerSkills = widget.profile.skills.map(_normalizeSkill).toSet();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(0, 4, 0, 12),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final useRow = constraints.maxWidth >= 360;
-              final searchField = SizedBox(
-                width: useRow ? 184 : double.infinity,
-                child: TextField(
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Job Market Overview',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: GawaGoColors.ink,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
                   onChanged: (value) => setState(() => _search = value),
-                  style: const TextStyle(fontSize: 14, letterSpacing: 0),
+                  style: const TextStyle(fontSize: 15, letterSpacing: 0),
                   decoration: InputDecoration(
-                    hintText: 'Search category...',
-                    hintStyle: const TextStyle(color: Color(0xFF6C6C6C)),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                    hintText: 'Search work category...',
+                    hintStyle: const TextStyle(color: Color(0xFF7E8A81)),
+                    prefixIcon: const Icon(
+                      Icons.search,
+                      size: 20,
+                      color: Color(0xFF7E8A81),
                     ),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 14),
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: const Color(0xFFF1EEE6),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(6),
-                      borderSide: const BorderSide(
-                        color: GawaGoColors.ink,
-                        width: 1.2,
-                      ),
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
                       borderSide: const BorderSide(
-                        color: GawaGoColors.ink,
-                        width: 1.2,
+                        color: GawaGoColors.primary,
+                        width: 1.4,
                       ),
                     ),
                   ),
                 ),
-              );
-
-              final title = const Text(
-                'Job Market Overview',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: GawaGoColors.ink,
-                  letterSpacing: 0,
-                ),
-              );
-
-              if (!useRow) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [title, const SizedBox(height: 10), searchField],
-                );
-              }
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(child: title),
-                  const SizedBox(width: 10),
-                  searchField,
-                ],
-              );
-            },
+              ],
+            ),
           ),
-        ),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 320 ? 2 : 1;
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: visibleSkills.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 16,
-                mainAxisExtent: 148,
+          if (visibleSkills.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 4, 18, 22),
+              child: Text(
+                'No work category matches that search.',
+                style: TextStyle(color: GawaGoColors.textMuted, fontSize: 14),
               ),
-              itemBuilder: (context, index) {
-                final skill = visibleSkills[index];
-                final count = widget.jobs
-                    .where(
-                      (job) =>
-                          _normalizeSkill(job.jobType) ==
-                              _normalizeSkill(skill) ||
-                          _normalizeSkill(job.requiredSkill) ==
-                              _normalizeSkill(skill),
-                    )
-                    .length;
-                final matches = workerSkills.contains(_normalizeSkill(skill));
-                return _MarketCategoryCard(
-                  skill: skill,
-                  openCount: count,
-                  matches: matches,
-                  onTap: () => widget.onOpenJobs(skill),
-                );
-              },
-            );
-          },
-        ),
-      ],
+            )
+          else
+            ...visibleSkills.map((skill) {
+              final count = widget.jobs
+                  .where(
+                    (job) =>
+                        _normalizeSkill(job.jobType) ==
+                            _normalizeSkill(skill) ||
+                        _normalizeSkill(job.requiredSkill) ==
+                            _normalizeSkill(skill),
+                  )
+                  .length;
+              return _MarketCategoryRow(
+                skill: skill,
+                openCount: count,
+                matches: workerSkills.contains(_normalizeSkill(skill)),
+                onTap: () => widget.onOpenJobs(skill),
+              );
+            }),
+        ],
+      ),
     );
   }
 }
 
-class _MarketCategoryCard extends StatelessWidget {
-  const _MarketCategoryCard({
+/// One work category inside the market panel. A full-width row rather than
+/// a grid cell, so the name, the open-job count and the "View All" action
+/// all stay readable at phone width.
+class _MarketCategoryRow extends StatelessWidget {
+  const _MarketCategoryRow({
     required this.skill,
     required this.openCount,
     required this.matches,
@@ -632,57 +680,64 @@ class _MarketCategoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final borderColor = matches
-        ? GawaGoColors.primary
-        : const Color(0xFFD8D0C3);
-    final surfaceColor = matches
-        ? const Color(0xFFF4FBF6)
-        : const Color(0xFFF9F9F9);
-    return Material(
-      color: surfaceColor,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(minHeight: 148),
-          padding: const EdgeInsets.fromLTRB(18, 16, 12, 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: borderColor, width: 1.1),
+    return Container(
+      decoration: BoxDecoration(
+        color: matches ? const Color(0xFFE8F4EB) : Colors.white,
+        border: const Border(top: BorderSide(color: Color(0xFFE6E0D6))),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            skill,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 4),
+          Text(
+            '$openCount open ${openCount == 1 ? 'job' : 'jobs'}',
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color(0xFF5A6B5F),
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
             children: [
-              Text(
-                skill,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0,
+              Flexible(child: _SkillMatchPill(matches: matches)),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed: onTap,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: GawaGoColors.ink,
+                  side: const BorderSide(color: Color(0xFFD2CBBF)),
+                  backgroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '$openCount open ${openCount == 1 ? 'job' : 'jobs'}',
-                style: const TextStyle(
-                  fontSize: 15,
-                  color: Color(0xFF4D4D4D),
-                  letterSpacing: 0,
-                ),
-              ),
-              const Spacer(),
-              Align(
-                alignment: Alignment.center,
-                child: _SkillMatchPill(matches: matches),
+                child: const Text('View All'),
               ),
             ],
           ),
-        ),
+        ],
       ),
     );
   }
@@ -708,6 +763,14 @@ class _WorkerJobsState extends State<_WorkerJobs> {
   final _location = TextEditingController();
   late Future<(List<WorkerJob>, WorkerProfile)> _future = _load();
 
+  // AI mode swaps the browsable list for recommender-ranked jobs in place,
+  // the way the web "Find Jobs for Me" hero does. Keeping it on this page
+  // means the worker never loses the filters they already set.
+  bool _aiMode = false;
+  bool _aiLoading = false;
+  String? _aiError;
+  List<RecommendedJob> _aiJobs = const [];
+
   Future<(List<WorkerJob>, WorkerProfile)> _load() async {
     final results = await Future.wait([
       widget.repository.getJobs(skill: _skill, location: _location.text.trim()),
@@ -722,6 +785,37 @@ class _WorkerJobsState extends State<_WorkerJobs> {
     });
   }
 
+  Future<void> _runAiMatching() async {
+    setState(() {
+      _aiMode = true;
+      _aiLoading = true;
+      _aiError = null;
+    });
+    try {
+      final matches = await widget.repository.getRecommendedJobs();
+      if (!mounted) return;
+      setState(() {
+        _aiJobs = matches;
+        _aiLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _aiJobs = const [];
+        _aiError = friendlyApiError(error);
+        _aiLoading = false;
+      });
+    }
+  }
+
+  void _exitAiMatching() {
+    setState(() {
+      _aiMode = false;
+      _aiJobs = const [];
+      _aiError = null;
+    });
+  }
+
   Future<void> _openJob(WorkerJob job) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -732,7 +826,61 @@ class _WorkerJobsState extends State<_WorkerJobs> {
         ),
       ),
     );
-    _filter();
+    _refreshCurrentMode();
+  }
+
+  /// Apply straight from the card, so a worker who already knows the job
+  /// does not have to open the detail screen just to reach the button.
+  Future<void> _apply(WorkerJob job) async {
+    final note = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: Text(job.title.isEmpty ? 'Apply to this job' : job.title),
+          content: TextField(
+            controller: controller,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Optional note to the household',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text),
+              child: const Text('Apply Now'),
+            ),
+          ],
+        );
+      },
+    );
+    if (note == null) return;
+    try {
+      await widget.repository.apply(job.id, note);
+      widget.onChanged();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Application sent.')));
+      _refreshCurrentMode();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
+    }
+  }
+
+  void _refreshCurrentMode() {
+    if (_aiMode) {
+      _runAiMatching();
+    } else {
+      _filter();
+    }
   }
 
   @override
@@ -743,93 +891,283 @@ class _WorkerJobsState extends State<_WorkerJobs> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: FutureBuilder<(List<WorkerJob>, WorkerProfile)>(
-            future: _future,
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return AppErrorState(
-                  error: snapshot.error,
-                  onRetry: () => setState(() {}),
-                );
-              }
-              if (!snapshot.hasData) return const AppLoadingState();
-              final jobs = snapshot.data!.$1;
-              final workerSkills = snapshot.data!.$2.skills
-                  .map(_normalizeSkill)
-                  .toSet();
-              final sortedJobs = [...jobs]
-                ..sort((first, second) {
-                  final firstMatches = _jobMatchesWorkerSkills(
-                    first,
-                    workerSkills,
-                  );
-                  final secondMatches = _jobMatchesWorkerSkills(
-                    second,
-                    workerSkills,
-                  );
-                  if (firstMatches == secondMatches) return 0;
-                  return firstMatches ? -1 : 1;
-                });
-              if (jobs.isEmpty) {
-                return const AppEmptyState(
-                  message: 'No matching jobs available.',
-                );
-              }
-              return RefreshIndicator(
-                onRefresh: () async => _filter(),
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
-                  children: [
-                    const Text(
-                      'Available Jobs',
-                      style: TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                      ),
+    return FutureBuilder<(List<WorkerJob>, WorkerProfile)>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return AppErrorState(
+            error: snapshot.error,
+            onRetry: () => setState(() {}),
+          );
+        }
+        if (!snapshot.hasData) return const AppLoadingState();
+        final jobs = snapshot.data!.$1;
+        final workerSkills = snapshot.data!.$2.skills
+            .map(_normalizeSkill)
+            .toSet();
+        final sortedJobs = [...jobs]
+          ..sort((first, second) {
+            final firstMatches = _jobMatchesWorkerSkills(first, workerSkills);
+            final secondMatches = _jobMatchesWorkerSkills(second, workerSkills);
+            if (firstMatches == secondMatches) return 0;
+            return firstMatches ? -1 : 1;
+          });
+
+        return RefreshIndicator(
+          onRefresh: () async => _refreshCurrentMode(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
+            children: [
+              _WorkerAiHero(
+                openJobCount: jobs.length,
+                aiMode: _aiMode,
+                loading: _aiLoading,
+                onFindForMe: _runAiMatching,
+                onBackToBrowsing: _exitAiMatching,
+              ),
+              const SizedBox(height: 16),
+              if (!_aiMode) ...[
+                _WorkerJobsFilterCard(
+                  skill: _skill,
+                  location: _location,
+                  onSkillChanged: (value) => setState(() => _skill = value),
+                  onFilter: _filter,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Green labels match your skills. Neutral labels are other '
+                  'available jobs.',
+                  style: TextStyle(
+                    color: GawaGoColors.textMuted,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (_aiMode) ...[
+                if (_aiLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else ...[
+                  const Text(
+                    'Ranked for you by skill match and distance. Higher score '
+                    '= better fit.',
+                    style: TextStyle(
+                      color: GawaGoColors.textMuted,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
                     ),
-                    const SizedBox(height: 16),
-                    _WorkerJobsFilterCard(
-                      skill: _skill,
-                      location: _location,
-                      onSkillChanged: (value) => _skill = value,
-                      onFilter: _filter,
-                    ),
-                    const SizedBox(height: 28),
-                    const Text(
-                      'Jobs matching your skills appear first',
-                      style: TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    ...sortedJobs.map(
-                      (job) => Padding(
-                        padding: const EdgeInsets.only(bottom: 18),
-                        child: _AvailableJobCard(
-                          job: job,
-                          matchesSkills: _jobMatchesWorkerSkills(
-                            job,
-                            workerSkills,
-                          ),
-                          onViewDetails: () => _openJob(job),
+                  ),
+                  const SizedBox(height: 14),
+                  if (_aiError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: Text(
+                        _aiError!,
+                        style: const TextStyle(
+                          color: Color(0xFF9A6B1C),
+                          fontSize: 13,
                         ),
                       ),
                     ),
-                  ],
+                  if (_aiJobs.isEmpty)
+                    const AppEmptyState(
+                      message:
+                          'No matching jobs found within your job radius right '
+                          'now.',
+                    )
+                  else
+                    ..._aiJobs.map(
+                      (match) => Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _AiJobMatchBreakdown(match: match),
+                            const SizedBox(height: 8),
+                            _AvailableJobCard(
+                              job: match.job,
+                              matchesSkills: match.exactSkillMatch,
+                              matchPercent: match.matchPercent,
+                              onViewDetails: () => _openJob(match.job),
+                              onApply: () => _apply(match.job),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ] else if (sortedJobs.isEmpty)
+                const AppEmptyState(
+                  message:
+                      'There are no household job posts available right now.',
+                )
+              else
+                ...sortedJobs.map(
+                  (job) => Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: _AvailableJobCard(
+                      job: job,
+                      matchesSkills: _jobMatchesWorkerSkills(job, workerSkills),
+                      onViewDetails: () => _openJob(job),
+                      onApply: () => _apply(job),
+                    ),
+                  ),
                 ),
-              );
-            },
+            ],
           ),
-        ),
-      ],
+        );
+      },
+    );
+  }
+}
+
+/// The "Let AI find your next job" panel at the top of Find Jobs. In AI
+/// mode it collapses to the way back to browsing.
+class _WorkerAiHero extends StatelessWidget {
+  const _WorkerAiHero({
+    required this.openJobCount,
+    required this.aiMode,
+    required this.loading,
+    required this.onFindForMe,
+    required this.onBackToBrowsing,
+  });
+
+  final int openJobCount;
+  final bool aiMode;
+  final bool loading;
+  final VoidCallback onFindForMe;
+  final VoidCallback onBackToBrowsing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
+      decoration: BoxDecoration(
+        color: GawaGoColors.cardGreen,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Text(
+                  'FIND JOBS',
+                  style: TextStyle(
+                    color: GawaGoColors.mutedText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.4,
+                  ),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '$openJobCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      height: 1,
+                    ),
+                  ),
+                  Text(
+                    openJobCount == 1 ? 'open job nearby' : 'open jobs nearby',
+                    style: const TextStyle(
+                      color: GawaGoColors.mutedText,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Let AI find your next job',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'We match open jobs near you to your skills, so you spend less '
+            'time scrolling and more time earning.',
+            style: TextStyle(
+              color: GawaGoColors.mutedText,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 18),
+          if (aiMode)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: loading ? null : onBackToBrowsing,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: GawaGoColors.mutedText),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                icon: const Icon(Icons.arrow_back, size: 18),
+                label: const Text('Back to Browsing'),
+              ),
+            )
+          else ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: loading ? null : onFindForMe,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: GawaGoColors.ink,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+                icon: const Text('*', style: TextStyle(fontSize: 15)),
+                label: const Text('Find Jobs for Me'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'or browse manually below',
+              style: TextStyle(color: GawaGoColors.mutedText, fontSize: 13.5),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -850,97 +1188,52 @@ class _WorkerJobsFilterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GawaGoColors.border, width: 1.1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Job type',
-                      style: TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      isExpanded: true,
-                      initialValue: skill,
-                      decoration: const InputDecoration(
-                        hintText: 'All Types',
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 11,
-                        ),
-                        border: OutlineInputBorder(),
-                      ),
-                      items: [
-                        const DropdownMenuItem(
-                          value: null,
-                          child: Text('All Types'),
-                        ),
-                        ...gawagoSkills.map(
-                          (item) =>
-                              DropdownMenuItem(value: item, child: Text(item)),
-                        ),
-                      ],
-                      onChanged: onSkillChanged,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Barangay',
-                      style: TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: location,
-                      decoration: const InputDecoration(
-                        hintText: 'e.g. Poblacion',
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 11,
-                        ),
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                ),
+          const _FieldLabel('Filter by Job Type'),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            isExpanded: true,
+            initialValue: skill,
+            decoration: _filterFieldDecoration(hintText: 'All Types'),
+            items: [
+              const DropdownMenuItem(value: null, child: Text('All Types')),
+              ...gawagoSkills.map(
+                (item) => DropdownMenuItem(value: item, child: Text(item)),
               ),
             ],
+            onChanged: onSkillChanged,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
+          const _FieldLabel('Barangay'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: location,
+            onSubmitted: (_) => onFilter(),
+            decoration: _filterFieldDecoration(hintText: 'e.g. Poblacion'),
+          ),
+          const SizedBox(height: 18),
           SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: FilledButton.tonal(
+            height: 48,
+            child: FilledButton(
               onPressed: onFilter,
               style: FilledButton.styleFrom(
+                backgroundColor: GawaGoColors.primary,
+                foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  side: const BorderSide(color: Color(0xFFB9B9B9)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
                 ),
               ),
               child: const Text('Filter'),
@@ -952,193 +1245,545 @@ class _WorkerJobsFilterCard extends StatelessWidget {
   }
 }
 
+InputDecoration _filterFieldDecoration({required String hintText}) {
+  return InputDecoration(
+    hintText: hintText,
+    hintStyle: const TextStyle(color: Color(0xFF7E8A81)),
+    isDense: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+    filled: true,
+    fillColor: const Color(0xFFF1EEE6),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide.none,
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide.none,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: GawaGoColors.primary, width: 1.4),
+    ),
+  );
+}
+
+/// The small upper-case caption above a field or a card detail row.
+class _FieldLabel extends StatelessWidget {
+  const _FieldLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text.toUpperCase(),
+      style: const TextStyle(
+        color: Color(0xFF6B7A70),
+        fontSize: 11.5,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 1.1,
+      ),
+    );
+  }
+}
+
+/// A job on the worker's Find Jobs list. A dark household panel identifies
+/// who posted it, then the white body carries the facts a worker scans
+/// before deciding: rate, where, when, how far, and what kind of work.
 class _AvailableJobCard extends StatelessWidget {
   const _AvailableJobCard({
     required this.job,
     required this.matchesSkills,
     required this.onViewDetails,
+    required this.onApply,
+    this.matchPercent,
   });
 
   final WorkerJob job;
   final bool matchesSkills;
   final VoidCallback onViewDetails;
+  final VoidCallback onApply;
+
+  /// Set only in AI mode, where the pill shows the score instead of a plain
+  /// matches/does-not-match label.
+  final int? matchPercent;
 
   @override
   Widget build(BuildContext context) {
-    final title = job.jobType.isNotEmpty ? job.jobType : job.title;
-    final borderColor = matchesSkills
-        ? GawaGoColors.primary
-        : const Color(0xFFD8D0C3);
-    return Material(
-      color: const Color(0xFFFAFAFA),
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onViewDetails,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: borderColor, width: 1.1),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x22000000),
-                blurRadius: 7,
-                offset: Offset(0, 4),
-              ),
-            ],
+    final title = job.title.isNotEmpty ? job.title : job.jobType;
+    final householdName = job.householdName.isNotEmpty
+        ? job.householdName
+        : job.householdUsername;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2DCD0)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 10,
+            offset: Offset(0, 4),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _JobCardHouseholdPanel(
+            householdName: householdName,
+            verified:
+                job.householdVerificationStatus.trim().toLowerCase() ==
+                'verified',
+            matchesSkills: matchesSkills,
+            matchPercent: matchPercent,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title.isEmpty ? 'Untitled job' : title,
+                        style: const TextStyle(
+                          color: GawaGoColors.ink,
+                          fontSize: 19,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0,
+                          height: 1.2,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  _SkillMatchPill(matches: matchesSkills),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                job.description.trim().isEmpty
-                    ? 'Descriptions...'
-                    : _shortText(job.description.trim(), 80),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF454545),
-                  fontSize: 14,
-                  height: 1.25,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                job.locationLabel.isEmpty
-                    ? 'Location not set'
-                    : job.locationLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 14,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _scheduleLabel(job.schedule),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF454545),
-                  fontSize: 14,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: 'PHP ${job.serviceRate.toStringAsFixed(2)}',
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const TextSpan(text: ' / Per Day'),
+                    const SizedBox(width: 10),
+                    _JobCardRate(serviceRate: job.serviceRate),
                   ],
                 ),
-                style: const TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 15,
-                  letterSpacing: 0,
+                const SizedBox(height: 4),
+                Text(
+                  job.locationLabel.isEmpty
+                      ? 'Location not set'
+                      : job.locationLabel,
+                  style: const TextStyle(
+                    color: GawaGoColors.textMuted,
+                    fontSize: 14.5,
+                    height: 1.35,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                job.householdName.isEmpty ? 'Household' : job.householdName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF454545),
-                  fontSize: 14,
-                  letterSpacing: 0,
+                const SizedBox(height: 10),
+                _JobCardWhenRow(job: job),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (job.jobType.isNotEmpty)
+                      _JobCardChip(
+                        label: job.jobType,
+                        highlight: matchesSkills,
+                      ),
+                    if (job.scheduleType.isNotEmpty)
+                      _JobCardChip(label: job.scheduleType),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 10),
-              if (job.distanceKm != null)
-                _SoftPill(
-                  label: '${job.distanceKm!.toStringAsFixed(1)} km away',
-                ),
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                height: 44,
-                child: OutlinedButton(
-                  onPressed: onViewDetails,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: GawaGoColors.ink,
-                    side: const BorderSide(color: Color(0xFFB9B9B9)),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    textStyle: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0,
+                if (job.jobStartDate.isNotEmpty ||
+                    job.jobEndDate.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _jobPeriodLabel(job),
+                    style: const TextStyle(
+                      color: Color(0xFF9AA49D),
+                      fontSize: 13.5,
                     ),
                   ),
-                  child: const Text('View Details'),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: OutlinedButton(
+                          onPressed: onViewDetails,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: GawaGoColors.ink,
+                            backgroundColor: Colors.white,
+                            side: const BorderSide(color: Color(0xFFD2CBBF)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                          child: const Text(
+                            'View Details',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: FilledButton(
+                          onPressed: job.canApply ? onApply : null,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: GawaGoColors.deepGreen,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                          child: Text(
+                            job.canApply ? 'Apply Now' : 'Applied',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The dark panel at the top of a job card: who posted, whether they are
+/// verified, and how the job relates to the worker's skills.
+class _JobCardHouseholdPanel extends StatelessWidget {
+  const _JobCardHouseholdPanel({
+    required this.householdName,
+    required this.verified,
+    required this.matchesSkills,
+    required this.matchPercent,
+  });
+
+  final String householdName;
+  final bool verified;
+  final bool matchesSkills;
+  final int? matchPercent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: GawaGoColors.deepGreen,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: verified
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(
+                            Icons.check,
+                            size: 15,
+                            color: GawaGoColors.primaryLight,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Verified',
+                            style: TextStyle(
+                              color: GawaGoColors.primaryLight,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
               ),
+              const SizedBox(width: 8),
+              if (matchPercent != null)
+                _JobCardMatchPill(label: '$matchPercent% match', filled: true)
+              else
+                _JobCardMatchPill(
+                  label: matchesSkills ? 'Matches Skills' : 'Other Job',
+                  filled: matchesSkills,
+                ),
             ],
           ),
+          const SizedBox(height: 10),
+          Text(
+            _householdInitials(householdName),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 42,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            householdName.isEmpty ? 'Household' : householdName,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: GawaGoColors.mutedText, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Filled when the job fits the worker's skills, outlined when it does not --
+/// the two states the list hint line explains.
+class _JobCardMatchPill extends StatelessWidget {
+  const _JobCardMatchPill({required this.label, required this.filled});
+
+  final String label;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: filled ? const Color(0xFF16A34A) : Colors.transparent,
+        borderRadius: BorderRadius.circular(999),
+        border: filled
+            ? null
+            : Border.all(color: Colors.white.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: filled ? Colors.white : Colors.white.withValues(alpha: 0.9),
+          fontSize: 12.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
         ),
       ),
     );
   }
 }
 
-class _SoftPill extends StatelessWidget {
-  const _SoftPill({required this.label});
+class _JobCardRate extends StatelessWidget {
+  const _JobCardRate({required this.serviceRate});
+
+  final double serviceRate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '₱${serviceRate.toStringAsFixed(2)}',
+            style: const TextStyle(
+              color: Color(0xFF16A34A),
+              fontSize: 16.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const TextSpan(
+            text: '/per day',
+            style: TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.right,
+      style: const TextStyle(letterSpacing: 0),
+    );
+  }
+}
+
+/// When the job is, and how far it is. Distance carries its own colour so it
+/// reads as the one number a worker compares across cards.
+class _JobCardWhenRow extends StatelessWidget {
+  const _JobCardWhenRow({required this.job});
+
+  final WorkerJob job;
+
+  @override
+  Widget build(BuildContext context) {
+    final when = job.preferredDate.isEmpty
+        ? _scheduleLabel(job.schedule)
+        : _preferredDateTimeLabel(job);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 1),
+          child: Icon(
+            Icons.calendar_today_outlined,
+            size: 15,
+            color: Color(0xFF8A9690),
+          ),
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: when,
+                  style: const TextStyle(
+                    color: GawaGoColors.text,
+                    fontSize: 14,
+                  ),
+                ),
+                if (job.distanceKm != null)
+                  TextSpan(
+                    text: '  · ${job.distanceKm!.toStringAsFixed(1)} km away',
+                    style: const TextStyle(
+                      color: Color(0xFF2563EB),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+              ],
+            ),
+            style: const TextStyle(letterSpacing: 0, height: 1.35),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _JobCardChip extends StatelessWidget {
+  const _JobCardChip({required this.label, this.highlight = false});
 
   final String label;
+  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFFEDEDED),
+        color: highlight ? const Color(0xFFE8F5EC) : Colors.white,
         borderRadius: BorderRadius.circular(999),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 5,
-            offset: Offset(0, 3),
-          ),
-        ],
+        border: Border.all(
+          color: highlight
+              ? GawaGoColors.primary.withValues(alpha: 0.55)
+              : const Color(0xFFD9D2C4),
+        ),
       ),
       child: Text(
         label,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: GawaGoColors.ink,
-          fontSize: 12,
-          fontWeight: FontWeight.w900,
+        style: TextStyle(
+          color: highlight ? const Color(0xFF15803D) : GawaGoColors.text,
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
+      ),
+    );
+  }
+}
+
+/// "Santos Residence" -> "SR". Falls back to the first two characters when
+/// the name is a single word, so a username still reads as a monogram.
+String _householdInitials(String name) {
+  final parts = name
+      .trim()
+      .split(RegExp(r'[\s_-]+'))
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return 'H';
+  if (parts.length == 1) {
+    final single = parts.first;
+    return (single.length == 1 ? single : single.substring(0, 2)).toUpperCase();
+  }
+  return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+}
+
+String _preferredDateTimeLabel(WorkerJob job) {
+  if (job.preferredDate.isNotEmpty && job.preferredTime.isNotEmpty) {
+    return '${_jobDate(job.preferredDate)} at ${_timeLabel(job.preferredTime)}';
+  }
+  if (job.preferredDate.isNotEmpty) return _jobDate(job.preferredDate);
+  return _scheduleLabel(job.schedule);
+}
+
+String _jobPeriodLabel(WorkerJob job) {
+  final start = job.jobStartDate.isEmpty ? 'Not set' : job.jobStartDate;
+  final end = job.jobEndDate.isEmpty ? '' : ' to ${job.jobEndDate}';
+  final days = job.estimatedWorkingDays == null
+      ? ''
+      : ' (${job.estimatedWorkingDays} working '
+            '${job.estimatedWorkingDays == 1 ? 'day' : 'days'})';
+  return '$start$end$days';
+}
+
+/// Two-segment bar + one-line explanation of why a job was recommended.
+/// Mirrors the household-side _AiMatchBreakdown so both directions of the
+/// recommender explain themselves the same way.
+class _AiJobMatchBreakdown extends StatelessWidget {
+  const _AiJobMatchBreakdown({required this.match});
+
+  final RecommendedJob match;
+
+  @override
+  Widget build(BuildContext context) {
+    final skillShare = match.skillSharePercent;
+    if (skillShare == null) return const SizedBox.shrink();
+    final proximityShare = 100 - skillShare;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: SizedBox(
+              height: 6,
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: skillShare,
+                    child: Container(color: const Color(0xFF2D7A4F)),
+                  ),
+                  Expanded(
+                    flex: proximityShare,
+                    child: Container(color: const Color(0xFFF0C040)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Why this match: $skillShare% skill fit, $proximityShare% proximity'
+            '${match.exactSkillMatch ? ' — exact skill match' : ''}',
+            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 11),
+          ),
+        ],
       ),
     );
   }
@@ -1256,32 +1901,71 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
   Future<void> _review(WorkerJob job) async {
     double rating = 5;
     final feedback = TextEditingController();
+    // Optional 1-5 detail scores mirroring the web review form; null means
+    // "not rated" and is simply omitted from the request.
+    final metrics = <String, int?>{
+      'quality_of_work': null,
+      'punctuality': null,
+      'communication': null,
+      'professionalism': null,
+    };
+    const metricLabels = {
+      'quality_of_work': 'Quality of Work',
+      'punctuality': 'Punctuality',
+      'communication': 'Communication',
+      'professionalism': 'Professionalism',
+    };
     final submit = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Leave Feedback for Household'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<double>(
-                initialValue: rating,
-                items: [1, 2, 3, 4, 5]
-                    .map(
-                      (value) => DropdownMenuItem(
-                        value: value.toDouble(),
-                        child: Text('$value star${value == 1 ? '' : 's'}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<double>(
+                  initialValue: rating,
+                  decoration: const InputDecoration(
+                    labelText: 'Overall rating',
+                  ),
+                  items: [1, 2, 3, 4, 5]
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value.toDouble(),
+                          child: Text('$value star${value == 1 ? '' : 's'}'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => rating = value ?? 5),
+                ),
+                for (final field in metricLabels.keys)
+                  DropdownButtonFormField<int?>(
+                    initialValue: metrics[field],
+                    decoration: InputDecoration(labelText: metricLabels[field]),
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('Not rated'),
                       ),
-                    )
-                    .toList(),
-                onChanged: (value) => setDialogState(() => rating = value ?? 5),
-              ),
-              TextField(
-                controller: feedback,
-                maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Feedback'),
-              ),
-            ],
+                      ...[1, 2, 3, 4, 5].map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => metrics[field] = value),
+                  ),
+                TextField(
+                  controller: feedback,
+                  maxLines: 3,
+                  decoration: const InputDecoration(labelText: 'Feedback'),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -1302,6 +1986,10 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
           job,
           rating: rating,
           feedback: feedback.text.trim(),
+          qualityOfWork: metrics['quality_of_work'],
+          punctuality: metrics['punctuality'],
+          communication: metrics['communication'],
+          professionalism: metrics['professionalism'],
         ),
       );
     }
@@ -1341,7 +2029,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                         }
                       },
                 icon: const Icon(Icons.send_outlined),
-                label: const Text('Apply'),
+                label: const Text('Apply Now'),
               ),
             if (job.canAcceptHireRequest)
               FilledButton.icon(
@@ -1354,7 +2042,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                         ),
                       ),
                 icon: const Icon(Icons.check),
-                label: const Text('Accept Hire Request'),
+                label: const Text('Accept Request'),
               ),
             if (job.canAcceptHireRequest)
               OutlinedButton.icon(
@@ -1367,7 +2055,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                         ),
                       ),
                 icon: const Icon(Icons.close),
-                label: const Text('Reject'),
+                label: const Text('Reject Request'),
               ),
             if (job.canRequestCompletion)
               FilledButton.icon(
@@ -1393,71 +2081,68 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                 icon: const Icon(Icons.star_outline),
                 label: const Text('Leave Feedback for Household'),
               ),
+            if (job.application != null)
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        final submitted = await showReportIssueDialog(
+                          context: context,
+                          jobId: job.id,
+                          jobTitle: job.title,
+                          isHousehold: false,
+                        );
+                        if (submitted && mounted) {
+                          _message(
+                            'Report submitted. Our admin team will review it.',
+                          );
+                        }
+                      },
+                icon: const Icon(Icons.flag_outlined),
+                label: const Text('Report an Issue'),
+              ),
           ];
+          final applied = job.application != null;
+          final notice = job.canAcceptHireRequest
+              ? 'This household sent you a hire request. Review the job '
+                    'details before accepting or rejecting.'
+              : (!job.canApply && !applied)
+              ? 'Applications are unavailable for this job right now.'
+              : null;
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
+            padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
             children: [
-              const Text(
-                'Jobs Details',
-                style: TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'DISTANCE & LOCATIONS',
-                style: TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  height: 284,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: GawaGoColors.ink, width: 1.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: LocationRouteMap(
-                    start: workerPoint,
-                    end: jobPoint,
-                    startLabel: 'Worker',
-                    endLabel: 'Job',
-                    routePoints: job.routePoints
-                        .map((point) => LatLng(point.latitude, point.longitude))
-                        .toList(),
-                    roadDistanceKm: job.distanceKm,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              _WorkerDistanceStrip(job: job),
-              const SizedBox(height: 16),
               _WorkerHouseholdProfileCard(job: job),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               _WorkerJobDetailsCard(
                 job: job,
                 busy: _busy,
                 actions: actions,
+                backLabel: job.canAcceptHireRequest
+                    ? 'Back to Notifications'
+                    : 'Back to Find Jobs',
+                notice: notice,
                 onBack: () => Navigator.pop(context),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
+              _WorkerJobDistanceCard(
+                job: job,
+                workerPoint: workerPoint,
+                jobPoint: jobPoint,
+                workerLocationLabel: profile.locationLabel,
+              ),
+              const SizedBox(height: 14),
               _WorkerPhotosCard(images: job.images),
-              if (job.application != null) ...[
-                const SizedBox(height: 16),
+              if (applied) ...[
+                const SizedBox(height: 14),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: StatusBadge(
                     status: job.application!.status,
                     prefix: 'Application',
-                    label: applicationStatusLabel(job.application!.status),
+                    label: job.application!.statusLabel.isNotEmpty
+                        ? job.application!.statusLabel
+                        : applicationStatusLabel(job.application!.status),
                   ),
                 ),
               ],
@@ -1469,72 +2154,54 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
   }
 }
 
-class _WorkerDistanceStrip extends StatelessWidget {
-  const _WorkerDistanceStrip({required this.job});
+/// One label/value line in the job info table. The value is upper-cased and
+/// right-aligned, matching the definition list the web job detail renders.
+class _WorkerDetailRow extends StatelessWidget {
+  const _WorkerDetailRow({
+    required this.label,
+    required this.value,
+    this.last = false,
+  });
 
-  final WorkerJob job;
+  final String label;
+  final String value;
+  final bool last;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE3E3E3),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFB9B9B9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 6,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: last
+          ? null
+          : const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFE6E0D6))),
+            ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  job.distanceKm == null
-                      ? 'Distance unavailable'
-                      : '${job.distanceKm!.toStringAsFixed(1)} km away',
-                  style: const TextStyle(
-                    color: GawaGoColors.ink,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                const Text(
-                  'From your location',
-                  style: TextStyle(
-                    color: Color(0xFF555555),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
+            flex: 4,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF6B7A70),
+                fontSize: 14.5,
+                letterSpacing: 0,
+              ),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
+            flex: 6,
             child: Text(
-              job.locationLabel.isEmpty
-                  ? 'Location not set'
-                  : job.locationLabel,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              (value.trim().isEmpty ? 'Not set' : value).toUpperCase(),
               textAlign: TextAlign.right,
               style: const TextStyle(
-                color: Color(0xFF868686),
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 2,
+                color: GawaGoColors.ink,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+                letterSpacing: 0,
               ),
             ),
           ),
@@ -1544,6 +2211,9 @@ class _WorkerDistanceStrip extends StatelessWidget {
   }
 }
 
+/// The household behind the posting. Contact details are deliberately absent
+/// until the worker is hired -- the serializer withholds them, so the card
+/// says so rather than rendering blanks.
 class _WorkerHouseholdProfileCard extends StatelessWidget {
   const _WorkerHouseholdProfileCard({required this.job});
 
@@ -1554,68 +2224,69 @@ class _WorkerHouseholdProfileCard extends StatelessWidget {
     final name = job.householdName.isNotEmpty
         ? job.householdName
         : job.householdUsername;
-    return _WorkerOutlinedPanel(
-      padding: EdgeInsets.zero,
-      child: Column(
+    final application = job.application;
+    final phone = application?.householdPhone ?? '';
+    final email = application?.householdEmail ?? '';
+    final hasContact = phone.isNotEmpty || email.isNotEmpty;
+    final contactLine = hasContact
+        ? [
+            if (phone.isNotEmpty) '+63$phone',
+            if (email.isNotEmpty) email,
+          ].join(' | ')
+        : 'Contact details become available after you are hired.';
+
+    return ProfileSection(
+      title: 'Household Profile',
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _WorkerPanelHeader('Household Profile'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 18, 24, 20),
-            child: Row(
+          CircleAvatar(
+            radius: 30,
+            backgroundColor: const Color(0xFFD9D2C4),
+            child: Text(
+              _initial(name),
+              style: const TextStyle(
+                color: Color(0xFF4B6354),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 34,
-                  backgroundColor: const Color(0xFFE1E1E1),
-                  child: Text(
-                    _initial(name),
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                    ),
+                Text(
+                  name.isEmpty ? 'Household' : name,
+                  style: const TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                    height: 1.25,
                   ),
                 ),
-                const SizedBox(width: 22),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name.isEmpty ? 'Household' : name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: GawaGoColors.ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      Text(
-                        job.locationLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF8A8A8A),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                      if (job.householdUsername.isNotEmpty)
-                        Text(
-                          '@${job.householdUsername}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF666666),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                    ],
+                const SizedBox(height: 3),
+                Text(
+                  job.locationLabel.isEmpty
+                      ? 'Location not set'
+                      : job.locationLabel,
+                  style: const TextStyle(
+                    color: GawaGoColors.textMuted,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  contactLine,
+                  style: TextStyle(
+                    color: hasContact
+                        ? GawaGoColors.ink
+                        : const Color(0xFF8A9690),
+                    fontSize: 13.5,
+                    height: 1.35,
+                    fontStyle: hasContact ? FontStyle.normal : FontStyle.italic,
                   ),
                 ),
               ],
@@ -1633,100 +2304,218 @@ class _WorkerJobDetailsCard extends StatelessWidget {
     required this.busy,
     required this.actions,
     required this.onBack,
+    required this.backLabel,
+    required this.notice,
   });
 
   final WorkerJob job;
   final bool busy;
   final List<Widget> actions;
   final VoidCallback onBack;
+  final String backLabel;
+
+  /// The contextual banner the web shows under the actions: a hire-request
+  /// prompt, or why applying is unavailable.
+  final String? notice;
 
   @override
   Widget build(BuildContext context) {
-    final title = job.jobType.isNotEmpty ? job.jobType : job.title;
-    return _WorkerOutlinedPanel(
-      padding: EdgeInsets.zero,
+    final title = job.title.isNotEmpty ? job.title : job.jobType;
+    return ProfileSection(
+      title: title.isEmpty ? 'Job Details' : title,
+      action: _WorkerStatusPill(
+        text: formatStatus(job.status.isEmpty ? 'open' : job.status),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _WorkerPanelHeader(
-            title.toUpperCase(),
-            trailing: const _WorkerOpenPill(),
+          _WorkerDetailRow(
+            label: 'Service',
+            value: job.jobType.isEmpty ? job.requiredSkill : job.jobType,
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(22, 28, 22, 26),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _WorkerDetailRow(label: 'Service', value: job.requiredSkill),
-                _WorkerDetailRow(
-                  label: 'Schedule',
-                  value: _scheduleLabel(job.schedule),
-                ),
-                _WorkerDetailRow(label: 'Date', value: _jobDate(job.schedule)),
-                _WorkerDetailRow(label: 'Time', value: _jobTime(job.schedule)),
-                const _WorkerDetailRow(label: 'Needed', value: 'See posting'),
-                _WorkerDetailRow(
-                  label: 'Rate',
-                  value: 'PHP ${job.serviceRate.toStringAsFixed(2)} / Per day',
-                ),
-                _WorkerDetailRow(
-                  label: 'Location',
-                  value: job.locationLabel.isEmpty
-                      ? 'Location not set'
-                      : job.locationLabel,
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Descriptions',
-                  style: TextStyle(
-                    color: Color(0xFF8A8A8A),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  job.description.trim().isEmpty
-                      ? 'No description.'
-                      : job.description.trim(),
-                  style: const TextStyle(
-                    color: GawaGoColors.ink,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    height: 1.25,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    OutlinedButton(
-                      onPressed: busy ? null : onBack,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: GawaGoColors.ink,
-                        side: const BorderSide(color: Color(0xFFB9B9B9)),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 13,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
-                      child: const Text('Back to Find Jobs'),
-                    ),
-                    ...actions.map(
-                      (action) => SizedBox(width: 188, child: action),
-                    ),
-                  ],
-                ),
-              ],
+          _WorkerDetailRow(
+            label: 'Schedule',
+            value: job.scheduleType.isEmpty
+                ? _scheduleLabel(job.schedule)
+                : job.scheduleType,
+          ),
+          _WorkerDetailRow(
+            label: 'Date',
+            // Deliberately "Not set" rather than echoing the Schedule row:
+            // a job without a preferred date has no date to show.
+            value: job.preferredDate.isEmpty
+                ? 'Not set'
+                : _preferredDateTimeLabel(job),
+          ),
+          _WorkerDetailRow(
+            label: 'Time',
+            // The date row already spells the time out, so the web folds
+            // this row into a pointer rather than repeating it.
+            value: job.preferredTime.isEmpty ? 'Not set' : 'Included above',
+          ),
+          if (job.jobStartDate.isNotEmpty || job.jobEndDate.isNotEmpty)
+            _WorkerDetailRow(label: 'Job Period', value: _jobPeriodLabel(job)),
+          if (job.estimatedWorkingDays != null)
+            _WorkerDetailRow(
+              label: 'Working Days',
+              value:
+                  '${job.estimatedWorkingDays} '
+                  '${job.estimatedWorkingDays == 1 ? 'day' : 'days'}',
+            ),
+          _WorkerDetailRow(
+            label: 'Needed',
+            value: '${job.hiredCount}/${job.workerSlots} hired',
+          ),
+          _WorkerDetailRow(
+            label: 'Rate',
+            value: 'PHP ${job.serviceRate.toStringAsFixed(2)} / Per Day',
+          ),
+          _WorkerDetailRow(
+            label: 'Location',
+            value: job.locationLabel,
+            last: true,
+          ),
+          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          const SizedBox(height: 14),
+          const Text(
+            'Description',
+            style: TextStyle(
+              color: Color(0xFF6B7A70),
+              fontSize: 14,
+              letterSpacing: 0,
             ),
           ),
+          const SizedBox(height: 6),
+          Text(
+            job.description.trim().isEmpty
+                ? 'No description provided.'
+                : job.description.trim(),
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 15.5,
+              height: 1.45,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 50,
+            child: OutlinedButton(
+              onPressed: busy ? null : onBack,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: GawaGoColors.ink,
+                side: const BorderSide(color: Color(0xFFD2CBBF)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+              child: Text(backLabel),
+            ),
+          ),
+          ...actions.map(
+            (action) => Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(height: 50, child: action),
+            ),
+          ),
+          if (notice != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFDF4E3),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFEBD9B4)),
+              ),
+              child: Text(
+                notice!,
+                style: const TextStyle(
+                  color: Color(0xFF7A5B12),
+                  fontSize: 13.5,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// The job's real status in the section header, rather than a hardcoded
+/// "Open" that stayed put after a job was filled or cancelled.
+class _WorkerStatusPill extends StatelessWidget {
+  const _WorkerStatusPill({required this.text});
+
+  /// Already-presentable text. Callers that hold a raw backend status run it
+  /// through formatStatus first; a distance label must not go through it,
+  /// since that would title-case "0.48 km away" into "0.48 Km Away".
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: GawaGoColors.ink,
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+/// Worker's registered location to the job site, with the distance in the
+/// section header the way the web puts it in the card head.
+class _WorkerJobDistanceCard extends StatelessWidget {
+  const _WorkerJobDistanceCard({
+    required this.job,
+    required this.workerPoint,
+    required this.jobPoint,
+    required this.workerLocationLabel,
+  });
+
+  final WorkerJob job;
+  final LatLng? workerPoint;
+  final LatLng? jobPoint;
+  final String workerLocationLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return ProfileSection(
+      title: 'Distance & Locations',
+      action: _WorkerStatusPill(
+        text: job.distanceKm == null
+            ? 'Distance unavailable'
+            : '${job.distanceKm!.toStringAsFixed(2)} km away',
+      ),
+      child: LocationRouteMap(
+        embedded: true,
+        start: workerPoint,
+        end: jobPoint,
+        startLabel: 'Worker',
+        endLabel: 'Job',
+        startLocationLabel: workerLocationLabel,
+        endLocationLabel: job.locationLabel,
+        routePoints: job.routePoints
+            .map((point) => LatLng(point.latitude, point.longitude))
+            .toList(),
+        roadDistanceKm: job.distanceKm,
       ),
     );
   }
@@ -1739,225 +2528,50 @@ class _WorkerPhotosCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _WorkerOutlinedPanel(
-      padding: EdgeInsets.zero,
+    return ProfileSection(
+      title: 'Photos of Work Area',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _WorkerPanelHeader('Photos of Work Area'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
-            child: Column(
-              children: [
-                const Text(
-                  'These photos help workers see the area before applying.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Color(0xFF8A8A8A),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                if (images.isEmpty)
-                  const _WorkerPhotoPlaceholder(label: 'NO IMAGE')
-                else
-                  JobImageGallery(images: images),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkerPhotoPlaceholder extends StatelessWidget {
-  const _WorkerPhotoPlaceholder({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 164,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFFD9D9D9),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 6,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      alignment: Alignment.bottomLeft,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(22, 14, 22, 14),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: GawaGoColors.ink,
-            fontSize: 20,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 3,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _WorkerOutlinedPanel extends StatelessWidget {
-  const _WorkerOutlinedPanel({
-    required this.child,
-    this.padding = const EdgeInsets.all(16),
-  });
-
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: padding,
-      decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GawaGoColors.ink, width: 1.1),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x18000000),
-            blurRadius: 6,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
-}
-
-class _WorkerPanelHeader extends StatelessWidget {
-  const _WorkerPanelHeader(this.title, {this.trailing});
-
-  final String title;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(22, 16, 12, 16),
-      decoration: const BoxDecoration(
-        color: Color(0xFFD9D9D9),
-        border: Border(bottom: BorderSide(color: GawaGoColors.ink, width: 1.1)),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: GawaGoColors.ink,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
+          if (images.isEmpty)
+            const SectionEmptyText('No photos uploaded yet.')
+          else ...[
+            const Text(
+              'These photos help workers see the area before applying.',
+              style: TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 13.5,
+                height: 1.35,
               ),
             ),
-          ),
-          ?trailing,
+            const SizedBox(height: 12),
+            JobImageGallery(images: images),
+          ],
         ],
       ),
     );
   }
 }
 
-class _WorkerOpenPill extends StatelessWidget {
-  const _WorkerOpenPill();
+class _WorkerMyReports extends StatefulWidget {
+  const _WorkerMyReports({required this.repository});
+
+  final WorkerRepository repository;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 5,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      child: const Text(
-        'OPEN',
-        style: TextStyle(
-          color: GawaGoColors.ink,
-          fontSize: 13,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
+  State<_WorkerMyReports> createState() => _WorkerMyReportsState();
 }
 
-class _WorkerDetailRow extends StatelessWidget {
-  const _WorkerDetailRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
+class _WorkerMyReportsState extends State<_WorkerMyReports> {
+  late final Future<WorkerProfile> _future = widget.repository.getProfile();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFD0D0D0))),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 104,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF8A8A8A),
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value.isEmpty ? 'Not Set' : value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: GawaGoColors.ink,
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.1,
-              ),
-            ),
-          ),
-        ],
-      ),
+    return FutureBuilder<WorkerProfile>(
+      future: _future,
+      builder: (context, snapshot) {
+        return MyComplaintsView(currentUsername: snapshot.data?.username);
+      },
     );
   }
 }
@@ -1991,9 +2605,6 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
           return AppErrorState(error: snapshot.error, onRetry: _reload);
         }
         if (!snapshot.hasData) return const AppLoadingState();
-        if (snapshot.data!.isEmpty) {
-          return const AppEmptyState(message: 'You have no job applications.');
-        }
         final applications = snapshot.data!;
         final visible = _statusFilter == null
             ? applications
@@ -2006,102 +2617,320 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
                         _statusFilter!.trim().toLowerCase(),
                   )
                   .toList();
-        return ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String?>(
-                    isExpanded: true,
-                    initialValue: _statusFilter,
-                    decoration: const InputDecoration(labelText: 'Status'),
-                    items: const [
-                      DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('All Status'),
-                      ),
-                      DropdownMenuItem<String?>(
-                        value: 'Pending',
-                        child: Text('Pending'),
-                      ),
-                      DropdownMenuItem<String?>(
-                        value: 'In Progress',
-                        child: Text('In Progress'),
-                      ),
-                      DropdownMenuItem<String?>(
-                        value: 'Waiting for Household Confirmation',
-                        child: Text('Waiting for Household'),
-                      ),
-                      DropdownMenuItem<String?>(
-                        value: 'Completed',
-                        child: Text('Completed'),
-                      ),
-                    ],
-                    onChanged: (value) => setState(() => _statusFilter = value),
+        return RefreshIndicator(
+          onRefresh: () async => _reload(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: const Color(0xFFD8D0C3),
+                    width: 1.2,
                   ),
                 ),
-                const SizedBox(width: 8),
-                FilledButton.tonalIcon(
-                  onPressed: _reload,
-                  icon: const Icon(Icons.filter_alt_outlined),
-                  label: const Text('Filter'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (visible.isEmpty)
-              const AppEmptyState(
-                message: 'No applications found for this status.',
-              )
-            else
-              ...visible.map(
-                (item) => StatusCard(
-                  icon: Icons.assignment_outlined,
-                  title: item.jobTitle.isEmpty ? item.jobType : item.jobTitle,
-                  status: _workerApplicationDisplayStatus(item),
-                  subtitle: _workerApplicationSummary(item),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'My Applications',
+                            style: TextStyle(
+                              color: GawaGoColors.ink,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<String?>(
+                                  isExpanded: true,
+                                  initialValue: _statusFilter,
+                                  decoration: _filterFieldDecoration(
+                                    hintText: 'All Status',
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem<String?>(
+                                      value: null,
+                                      child: Text('All Status'),
+                                    ),
+                                    DropdownMenuItem<String?>(
+                                      value: 'Pending',
+                                      child: Text('Pending'),
+                                    ),
+                                    DropdownMenuItem<String?>(
+                                      value: 'In Progress',
+                                      child: Text('In Progress'),
+                                    ),
+                                    DropdownMenuItem<String?>(
+                                      value: 'Awaiting confirmation',
+                                      child: Text('Awaiting Confirmation'),
+                                    ),
+                                    DropdownMenuItem<String?>(
+                                      value: 'Completed',
+                                      child: Text('Completed'),
+                                    ),
+                                  ],
+                                  onChanged: (value) =>
+                                      setState(() => _statusFilter = value),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              SizedBox(
+                                height: 48,
+                                child: FilledButton(
+                                  onPressed: _reload,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: GawaGoColors.primary,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 22,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0,
+                                    ),
+                                  ),
+                                  child: const Text('Filter'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (visible.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
+                        child: Text(
+                          applications.isEmpty
+                              ? 'You have not applied to any jobs yet.'
+                              : 'No applications found for this status.',
+                          style: const TextStyle(
+                            color: GawaGoColors.textMuted,
+                            fontSize: 14,
+                          ),
+                        ),
+                      )
+                    else
+                      ...visible.map(
+                        (item) => _WorkerApplicationRow(application: item),
+                      ),
+                  ],
                 ),
               ),
-          ],
+            ],
+          ),
         );
       },
     );
   }
 }
 
+/// One application inside the My Applications card: title and live status on
+/// the header line, then the facts a worker checks before following up.
+class _WorkerApplicationRow extends StatelessWidget {
+  const _WorkerApplicationRow({required this.application});
+
+  final WorkerApplication application;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _workerApplicationDisplayStatus(application);
+    final stage = _workerApplicationStage(application);
+    final household = application.householdName.isNotEmpty
+        ? application.householdName
+        : application.householdUsername.isNotEmpty
+        ? application.householdUsername
+        : 'Household';
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE6E0D6))),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  application.jobTitle.isEmpty
+                      ? application.jobType
+                      : application.jobTitle,
+                  style: const TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                    height: 1.25,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                status,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: _applicationStatusColor(stage),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            application.jobType.isEmpty ? 'Not set' : application.jobType,
+            style: const TextStyle(
+              color: GawaGoColors.primary,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _ApplicationFact(label: 'Household', value: household),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ApplicationFact(
+                  label: 'Schedule',
+                  value: _workerApplicationSchedule(application),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _ApplicationFact(
+                  label: 'Location',
+                  value: application.locationLabel.isEmpty
+                      ? 'Not set'
+                      : application.locationLabel,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ApplicationFact(
+                  label: 'Rate',
+                  value:
+                      'PHP ${application.serviceRate.toStringAsFixed(2)} / Per Day',
+                ),
+              ),
+            ],
+          ),
+          if (application.distanceKm != null) ...[
+            const SizedBox(height: 8),
+            _ApplicationFact(
+              label: 'Distance',
+              value: '${application.distanceKm!.toStringAsFixed(1)} km away',
+            ),
+          ],
+          if (application.note.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _ApplicationFact(
+              label: 'Your note',
+              value: application.note.trim(),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Text(
+            'Applied ${formatLocalDateTime(application.appliedAt)}',
+            style: const TextStyle(
+              color: Color(0xFF8A9690),
+              fontSize: 13,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApplicationFact extends StatelessWidget {
+  const _ApplicationFact({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+          TextSpan(text: value),
+        ],
+      ),
+      style: const TextStyle(
+        color: GawaGoColors.ink,
+        fontSize: 13.5,
+        height: 1.35,
+        letterSpacing: 0,
+      ),
+    );
+  }
+}
+
+/// Status wording carries the colour on this screen -- there is no pill --
+/// so the three states a worker acts on stay distinguishable at a glance.
+/// Keyed by the canonical stage (apps/jobs/statuses.py), not the display
+/// label, so it doesn't depend on the exact wording of that label.
+Color _applicationStatusColor(String stage) {
+  return switch (stage.toLowerCase()) {
+    'completed' || 'in_progress' => const Color(0xFF1D7D45),
+    'awaiting_confirmation' => const Color(0xFF1F5FBF),
+    'rejected' || 'cancelled' => const Color(0xFFB3261E),
+    _ => const Color(0xFFB07B12),
+  };
+}
+
+/// Prefers the backend's status_label (apps/jobs/statuses.py), which is
+/// computed from both the application and job status together -- the same
+/// vocabulary the web client renders. Older cached records without that
+/// field fall back to the local mapping.
 String _workerApplicationDisplayStatus(WorkerApplication item) {
+  if (item.statusLabel.isNotEmpty) return item.statusLabel;
   final jobStatus = item.jobStatus.trim().toLowerCase();
   if (jobStatus == 'completion_requested') {
     return 'Waiting for Household Confirmation';
   }
-  if (jobStatus == 'completed') return 'Hired';
   return applicationStatusLabel(item.status.isEmpty ? 'pending' : item.status);
 }
 
-String _workerApplicationSummary(WorkerApplication item) {
-  final household = item.householdName.isNotEmpty
-      ? item.householdName
-      : item.householdUsername.isNotEmpty
-      ? '@${item.householdUsername}'
-      : 'Household';
-  final distance = item.distanceKm == null
-      ? item.locationLabel
-      : '${item.distanceKm!.toStringAsFixed(1)} km away';
-  final rate = 'PHP ${item.serviceRate.toStringAsFixed(2)} / Per Day';
-  final schedule = _workerApplicationSchedule(item);
-  return [
-    'Service: ${item.jobType.isEmpty ? 'Not set' : item.jobType}',
-    household,
-    'Schedule: $schedule',
-    if (distance.trim().isNotEmpty) distance,
-    if (item.locationLabel.trim().isNotEmpty) 'Location: ${item.locationLabel}',
-    rate,
-    'Applied: ${formatLocalDateTime(item.appliedAt)}',
-    if (item.jobDescription.trim().isNotEmpty)
-      'Description: ${_shortText(item.jobDescription.trim(), 120)}',
-    if (item.note.isNotEmpty) 'Note: ${item.note}',
-  ].join('\n');
+String _workerApplicationStage(WorkerApplication item) {
+  if (item.statusStage.isNotEmpty) return item.statusStage;
+  final jobStatus = item.jobStatus.trim().toLowerCase();
+  if (jobStatus == 'completion_requested') return 'awaiting_confirmation';
+  return item.status.trim().toLowerCase();
 }
 
 String _workerApplicationSchedule(WorkerApplication item) {
@@ -2194,14 +3023,25 @@ class _ProfileFormState extends State<_ProfileForm> {
       ? null
       : LatLng(widget.profile.latitude!, widget.profile.longitude!);
   late final Set<String> _skills = widget.profile.skills.toSet();
-  late final List<WeeklyAvailability> _availability = [
-    ...widget.profile.weeklyAvailability,
-  ];
   late final List<AvailabilityWindow> _availabilityWindows = [
     ...widget.profile.availabilityWindows,
   ];
   String? _photoPath;
   bool _saving = false;
+
+  /// The page reads first and edits on request, like the web profile: the
+  /// fields stay visible but locked until "Edit Profile" is pressed.
+  bool _editing = false;
+
+  late Future<WorkerPortfolio> _portfolio = widget.repository.getPortfolio();
+  late final Future<List<WorkerJob>> _history = widget.repository
+      .getEmploymentHistory(widget.profile.userId);
+
+  void _reloadPortfolio() {
+    setState(() {
+      _portfolio = widget.repository.getPortfolio();
+    });
+  }
 
   Future<void> _pickPhoto() async {
     const group = XTypeGroup(
@@ -2222,8 +3062,7 @@ class _ProfileFormState extends State<_ProfileForm> {
       _message('Enter an hourly or daily service rate.');
       return;
     }
-    if (_availability.any((item) => item.startTime == item.endTime) ||
-        _availabilityWindows.any((item) => item.startTime == item.endTime)) {
+    if (_availabilityWindows.any((item) => item.startTime == item.endTime)) {
       _message('Availability start and end time must be different.');
       return;
     }
@@ -2244,88 +3083,15 @@ class _ProfileFormState extends State<_ProfileForm> {
         'skills': _skills.toList(),
       }, profilePhotoPath: _photoPath);
       await widget.repository.saveAvailabilityWindows(_availabilityWindows);
-      await widget.repository.saveWeeklyAvailability(_availability);
-      if (mounted) _message('Profile and availability saved.');
+      if (mounted) {
+        setState(() => _editing = false);
+        _message('Profile and availability saved.');
+      }
       widget.onSaved();
     } catch (error) {
       if (mounted) _message(friendlyApiError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _addAvailability() async {
-    int weekday = 0;
-    TimeOfDay start = const TimeOfDay(hour: 9, minute: 0);
-    TimeOfDay end = const TimeOfDay(hour: 17, minute: 0);
-    final added = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Add availability'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                initialValue: weekday,
-                items: List.generate(
-                  7,
-                  (index) => DropdownMenuItem(
-                    value: index,
-                    child: Text(_weekday(index)),
-                  ),
-                ),
-                onChanged: (value) =>
-                    setDialogState(() => weekday = value ?? 0),
-              ),
-              ListTile(
-                title: const Text('Start time'),
-                trailing: Text(start.format(context)),
-                onTap: () async {
-                  final value = await showTimePicker(
-                    context: context,
-                    initialTime: start,
-                  );
-                  if (value != null) setDialogState(() => start = value);
-                },
-              ),
-              ListTile(
-                title: const Text('End time'),
-                trailing: Text(end.format(context)),
-                onTap: () async {
-                  final value = await showTimePicker(
-                    context: context,
-                    initialTime: end,
-                  );
-                  if (value != null) setDialogState(() => end = value);
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Add'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (added == true) {
-      setState(() {
-        _availability.add(
-          WeeklyAvailability(
-            weekday: weekday,
-            label: _weekday(weekday),
-            startTime: _timeValue(start),
-            endTime: _timeValue(end),
-          ),
-        );
-      });
     }
   }
 
@@ -2404,152 +3170,350 @@ class _ProfileFormState extends State<_ProfileForm> {
     }
   }
 
+  // ---- Portfolio editing ----
+
+  Future<void> _runPortfolioAction(
+    Future<void> Function() action,
+    String successMessage,
+  ) async {
+    try {
+      await action();
+      if (!mounted) return;
+      _message(successMessage);
+      _reloadPortfolio();
+    } catch (error) {
+      if (mounted) _message(friendlyApiError(error));
+    }
+  }
+
+  Future<void> _addPortfolioSkill(List<PortfolioSkill> existing) async {
+    final taken = existing.map((item) => item.skillName).toSet();
+    final available = gawagoSkills
+        .where((skill) => !taken.contains(skill))
+        .toList();
+    if (available.isEmpty) {
+      _message('Every skill category is already on your profile.');
+      return;
+    }
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (dialogContext) {
+        String skill = available.first;
+        String proficiency = PortfolioSkill.proficiencyOptions.first;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Add skill'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: skill,
+                  decoration: const InputDecoration(labelText: 'Skill'),
+                  items: available
+                      .map(
+                        (item) =>
+                            DropdownMenuItem(value: item, child: Text(item)),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => skill = value ?? skill),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: proficiency,
+                  decoration: const InputDecoration(labelText: 'Proficiency'),
+                  items: PortfolioSkill.proficiencyOptions
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item,
+                          child: Text(
+                            '${item[0].toUpperCase()}${item.substring(1)}',
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => proficiency = value ?? proficiency),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.pop(dialogContext, (skill, proficiency)),
+                child: const Text('Add Skill'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (result == null) return;
+    await _runPortfolioAction(
+      () => widget.repository.addPortfolioSkill(
+        skillName: result.$1,
+        proficiency: result.$2,
+      ),
+      'Skill added.',
+    );
+  }
+
+  Future<void> _addCertification() async {
+    final result = await showDialog<_CertificationDraft>(
+      context: context,
+      builder: (dialogContext) => const _CertificationDialog(),
+    );
+    if (result == null) return;
+    await _runPortfolioAction(
+      () => widget.repository.addCertification(
+        certificateName: result.name,
+        certificateType: result.type,
+        issuer: result.issuer,
+        issueDate: result.issueDate,
+        expiryDate: result.expiryDate,
+        filePath: result.filePath,
+      ),
+      'Certificate submitted for review.',
+    );
+  }
+
+  Future<void> _addWorkSample() async {
+    final result = await showDialog<_WorkSampleDraft>(
+      context: context,
+      builder: (dialogContext) => const _WorkSampleDialog(),
+    );
+    if (result == null) return;
+    await _runPortfolioAction(
+      () => widget.repository.addWorkSample(
+        title: result.title,
+        description: result.description,
+        beforePath: result.beforePath!,
+        afterPath: result.afterPath!,
+      ),
+      'Work sample added.',
+    );
+  }
+
+  Future<void> _editWorkSample(WorkSample sample) async {
+    final result = await showDialog<_WorkSampleDraft>(
+      context: context,
+      builder: (dialogContext) => _WorkSampleDialog(existing: sample),
+    );
+    if (result == null) return;
+    await _runPortfolioAction(
+      () => widget.repository.updateWorkSample(
+        sample.id,
+        title: result.title,
+        description: result.description,
+        beforePath: result.beforePath,
+        afterPath: result.afterPath,
+      ),
+      'Work sample updated.',
+    );
+  }
+
+  Future<bool> _confirmDelete(String what) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete $what?'),
+        content: const Text('This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   void _message(String value) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final rates = [
-      if (widget.profile.hourlyRate != null)
-        'Hourly: PHP ${widget.profile.hourlyRate!.toStringAsFixed(2)}',
-      if (widget.profile.dailyRate != null)
-        'Daily: PHP ${widget.profile.dailyRate!.toStringAsFixed(2)}',
-    ].join('\n');
     return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
       children: [
         _WorkerProfileSummary(
           profile: widget.profile,
           localPhotoPath: _photoPath,
-          rates: rates,
-        ),
-        const SizedBox(height: 12),
-        Text(
-          'Edit Profile Information',
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 16),
-        FormSection(
-          number: 1,
-          title: 'Profile photo',
-          subtitle: 'Use a clear photo so households can recognize you.',
-          child: Row(
-            children: [
-              _WorkerProfilePhoto(
-                profile: widget.profile,
-                localPhotoPath: _photoPath,
-                radius: 34,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickPhoto,
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  label: Text(
-                    _photoPath == null ? 'Choose photo' : 'Change photo',
-                  ),
-                ),
-              ),
-            ],
+        ProfileSection(
+          title: 'Personal Information',
+          action: ProfileSectionButton(
+            label: _editing ? 'Done Editing' : 'Edit Profile',
+            onPressed: () => setState(() => _editing = !_editing),
           ),
-        ),
-        FormSection(
-          number: 2,
-          title: 'Account details',
-          subtitle: 'Keep your identity and contact information accurate.',
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _field(_firstName, 'First name'),
-              _field(_lastName, 'Last name'),
-              _field(_email, 'Email'),
-              _field(_phone, 'Phone'),
-            ],
-          ),
-        ),
-        FormSection(
-          number: 3,
-          title: 'Registered location',
-          subtitle: 'Households use this point for distance matching.',
-          child: Column(
-            children: [
-              _field(_location, 'Location'),
-              SizedBox(
-                height: 220,
-                child: FlutterMap(
-                  options: MapOptions(
-                    initialCenter:
-                        _profilePin ?? const LatLng(14.0253, 121.5929),
-                    initialZoom: 14,
-                    onTap: (_, point) => setState(() => _profilePin = point),
-                  ),
+              if (_editing) ...[
+                Row(
                   children: [
-                    if (shouldLoadMapTiles) osmTileLayer(),
-                    if (_profilePin != null)
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: _profilePin!,
-                            child: const Icon(
-                              Icons.location_on,
-                              color: Colors.deepOrange,
-                              size: 38,
-                            ),
-                          ),
-                        ],
+                    _WorkerProfilePhoto(
+                      profile: widget.profile,
+                      localPhotoPath: _photoPath,
+                      radius: 30,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pickPhoto,
+                        icon: const Icon(Icons.photo_camera_outlined),
+                        label: Text(
+                          _photoPath == null ? 'Choose photo' : 'Change photo',
+                        ),
                       ),
+                    ),
                   ],
                 ),
+                const SizedBox(height: 18),
+              ],
+              _ProfileField(
+                label: 'First Name',
+                controller: _firstName,
+                enabled: _editing,
               ),
+              _ProfileField(
+                label: 'Last Name',
+                controller: _lastName,
+                enabled: _editing,
+              ),
+              _ProfileField(
+                label: 'Email',
+                controller: _email,
+                enabled: _editing,
+              ),
+              _ProfileField(
+                label: 'Phone Number',
+                controller: _phone,
+                enabled: _editing,
+              ),
+              _ProfileField(
+                label: 'Street / House No.',
+                controller: _location,
+                enabled: _editing,
+              ),
+              if (_editing) ...[
+                const _FieldLabel('Pin your exact location'),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    height: 220,
+                    child: FlutterMap(
+                      options: MapOptions(
+                        initialCenter:
+                            _profilePin ?? const LatLng(14.0253, 121.5929),
+                        initialZoom: 14,
+                        onTap: (_, point) =>
+                            setState(() => _profilePin = point),
+                      ),
+                      children: [
+                        if (shouldLoadMapTiles) osmTileLayer(),
+                        if (_profilePin != null)
+                          MarkerLayer(
+                            markers: [
+                              Marker(
+                                point: _profilePin!,
+                                child: const Icon(
+                                  Icons.location_on,
+                                  color: Colors.deepOrange,
+                                  size: 38,
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
             ],
           ),
         ),
-        FormSection(
-          number: 4,
-          title: 'Services and rates',
-          subtitle: 'Describe your work and disclose at least one rate.',
+        const SizedBox(height: 16),
+        ProfileSection(
+          title: 'Services & Rates',
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _field(_bio, 'Bio', lines: 3),
+              _ProfileField(
+                label: 'Bio',
+                controller: _bio,
+                enabled: _editing,
+                lines: 3,
+              ),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: _field(_hourly, 'Hourly rate')),
-                  const SizedBox(width: 8),
-                  Expanded(child: _field(_daily, 'Daily rate')),
+                  Expanded(
+                    child: _ProfileField(
+                      label: 'Hourly Rate',
+                      controller: _hourly,
+                      enabled: _editing,
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _ProfileField(
+                      label: 'Daily Rate',
+                      controller: _daily,
+                      enabled: _editing,
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
                 ],
               ),
-              _field(_experience, 'Years of experience'),
-              const Text(
-                'Skills',
-                style: TextStyle(fontWeight: FontWeight.bold),
+              _ProfileField(
+                label: 'Years of Experience',
+                controller: _experience,
+                enabled: _editing,
+                keyboardType: TextInputType.number,
               ),
+              const _FieldLabel('Skill categories used for matching'),
+              const SizedBox(height: 8),
               Wrap(
-                spacing: 6,
+                spacing: 8,
+                runSpacing: 4,
                 children: gawagoSkills
                     .map(
                       (skill) => FilterChip(
                         label: Text(skill),
                         selected: _skills.contains(skill),
-                        onSelected: (selected) {
-                          if (selected && _skills.length >= 4) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'You can select up to 4 skills only.',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          setState(
-                            () => selected
-                                ? _skills.add(skill)
-                                : _skills.remove(skill),
-                          );
-                        },
+                        onSelected: !_editing
+                            ? null
+                            : (selected) {
+                                if (selected && _skills.length >= 3) {
+                                  _message(
+                                    'You can select up to 3 skills only.',
+                                  );
+                                  return;
+                                }
+                                setState(
+                                  () => selected
+                                      ? _skills.add(skill)
+                                      : _skills.remove(skill),
+                                );
+                              },
                       ),
                     )
                     .toList(),
@@ -2557,85 +3521,236 @@ class _ProfileFormState extends State<_ProfileForm> {
             ],
           ),
         ),
-        FormSection(
-          number: 5,
-          title: 'Date-specific availability',
-          subtitle: 'Optional schedule entries for particular dates.',
-          child: Column(
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
+        const SizedBox(height: 16),
+        ProfileSection(
+          title: 'Date-Specific Availability',
+          action: _editing
+              ? ProfileSectionButton(
+                  label: '+ Add Date',
                   onPressed: _addDateAvailability,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Date'),
-                ),
-              ),
-              ..._availabilityWindows.asMap().entries.map(
-                (entry) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(entry.value.date),
-                  subtitle: Text(
-                    '${entry.value.startTime} - ${entry.value.endTime}',
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => setState(
-                      () => _availabilityWindows.removeAt(entry.key),
-                    ),
-                  ),
-                ),
-              ),
-              if (_availabilityWindows.isEmpty)
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('No date-specific availability added yet.'),
-                ),
-            ],
-          ),
-        ),
-        FormSection(
-          number: 6,
-          title: 'Weekly availability',
-          subtitle: 'Save your normal weekly schedule for household reference.',
+                )
+              : null,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _addAvailability,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Schedule'),
-                ),
-              ),
-              ..._availability.asMap().entries.map(
-                (entry) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(entry.value.label),
-                  subtitle: Text(
-                    '${entry.value.startTime} - ${entry.value.endTime}',
+              if (_availabilityWindows.isEmpty)
+                const SectionEmptyText(
+                  'No date-specific availability added yet.',
+                )
+              else
+                ..._availabilityWindows.asMap().entries.map(
+                  (entry) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(entry.value.date),
+                    subtitle: Text(
+                      '${entry.value.startTime} - ${entry.value.endTime}',
+                    ),
+                    trailing: _editing
+                        ? IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => setState(
+                              () => _availabilityWindows.removeAt(entry.key),
+                            ),
+                          )
+                        : null,
                   ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () =>
-                        setState(() => _availability.removeAt(entry.key)),
-                  ),
-                ),
-              ),
-              if (_availability.isEmpty)
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('No availability schedule added yet.'),
                 ),
             ],
           ),
         ),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: const Icon(Icons.save_outlined),
-            label: Text(_saving ? 'Saving...' : 'Save Profile'),
+        if (_editing) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 50,
+            child: FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              style: FilledButton.styleFrom(
+                backgroundColor: GawaGoColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+              icon: const Icon(Icons.save_outlined),
+              label: Text(_saving ? 'Saving...' : 'Save Profile'),
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        FutureBuilder<WorkerPortfolio>(
+          future: _portfolio,
+          builder: (context, snapshot) {
+            final portfolio = snapshot.data ?? WorkerPortfolio.empty;
+            final failed = snapshot.hasError;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ProfileSection(
+                  title: 'Skills & Expertise',
+                  action: _editing
+                      ? ProfileSectionButton(
+                          label: '+ Add Skill',
+                          onPressed: () => _addPortfolioSkill(portfolio.skills),
+                        )
+                      : null,
+                  child: failed
+                      ? const SectionEmptyText(
+                          'Could not load your portfolio right now.',
+                        )
+                      : portfolio.skills.isEmpty
+                      ? const SectionEmptyText('No skills added yet.')
+                      : Column(
+                          children: portfolio.skills
+                              .map(
+                                (skill) => ProfileSkillTile(
+                                  skillName: skill.skillName,
+                                  proficiencyLabel: skill.proficiencyLabel,
+                                  averageRating: skill.averageRating,
+                                  ratingCount: skill.ratingCount,
+                                  trailing: !_editing
+                                      ? null
+                                      : IconButton(
+                                          tooltip: 'Remove skill',
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                          onPressed: () async {
+                                            if (!await _confirmDelete(
+                                              skill.skillName,
+                                            )) {
+                                              return;
+                                            }
+                                            await _runPortfolioAction(
+                                              () => widget.repository
+                                                  .deletePortfolioSkill(
+                                                    skill.id,
+                                                  ),
+                                              'Skill removed.',
+                                            );
+                                          },
+                                        ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
+                const SizedBox(height: 16),
+                ProfileSection(
+                  title: 'Certifications',
+                  action: _editing
+                      ? ProfileSectionButton(
+                          label: '+ Add Certificate',
+                          onPressed: _addCertification,
+                        )
+                      : null,
+                  child: failed
+                      ? const SectionEmptyText(
+                          'Could not load your certificates right now.',
+                        )
+                      : portfolio.certifications.isEmpty
+                      ? const SectionEmptyText('No certifications added yet.')
+                      : Column(
+                          children: portfolio.certifications
+                              .map(
+                                (certificate) => _CertificationTile(
+                                  certificate: certificate,
+                                  editing: _editing,
+                                  onDelete: () async {
+                                    if (!await _confirmDelete(
+                                      certificate.certificateName,
+                                    )) {
+                                      return;
+                                    }
+                                    await _runPortfolioAction(
+                                      () => widget.repository
+                                          .deleteCertification(certificate.id),
+                                      'Certificate removed.',
+                                    );
+                                  },
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
+                const SizedBox(height: 16),
+                ProfileSection(
+                  title: 'Work Samples',
+                  action: _editing
+                      ? ProfileSectionButton(
+                          label: '+ Add Sample',
+                          onPressed: _addWorkSample,
+                        )
+                      : null,
+                  child: failed
+                      ? const SectionEmptyText(
+                          'Could not load your work samples right now.',
+                        )
+                      : portfolio.workSamples.isEmpty
+                      ? const SectionEmptyText('No work samples uploaded yet.')
+                      : Column(
+                          children: portfolio.workSamples
+                              .map(
+                                (sample) => _WorkSampleTile(
+                                  sample: sample,
+                                  editing: _editing,
+                                  onEdit: () => _editWorkSample(sample),
+                                  onDelete: () async {
+                                    if (!await _confirmDelete(
+                                      sample.title.isEmpty
+                                          ? 'this work sample'
+                                          : sample.title,
+                                    )) {
+                                      return;
+                                    }
+                                    await _runPortfolioAction(
+                                      () => widget.repository.deleteWorkSample(
+                                        sample.id,
+                                      ),
+                                      'Work sample removed.',
+                                    );
+                                  },
+                                ),
+                              )
+                              .toList(),
+                        ),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        ProfileSection(
+          title: 'Employment History',
+          child: FutureBuilder<List<WorkerJob>>(
+            future: _history,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const SectionEmptyText(
+                  'Could not load your job history right now.',
+                );
+              }
+              final jobs = snapshot.data;
+              if (jobs == null) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (jobs.isEmpty) {
+                return const SectionEmptyText('No completed jobs yet.');
+              }
+              return Column(
+                children: jobs
+                    .map((job) => _EmploymentHistoryTile(job: job))
+                    .toList(),
+              );
+            },
           ),
         ),
       ],
@@ -2643,58 +3758,821 @@ class _ProfileFormState extends State<_ProfileForm> {
   }
 }
 
+/// A white card with the green title bar the web profile page uses, and an
+/// optional action button on the right of that bar.
+/// A labelled profile input. Locked fields keep the same shape as editable
+/// ones so the page does not jump when editing starts.
+class _ProfileField extends StatelessWidget {
+  const _ProfileField({
+    required this.label,
+    required this.controller,
+    required this.enabled,
+    this.lines = 1,
+    this.keyboardType,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final bool enabled;
+  final int lines;
+  final TextInputType? keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 7),
+          TextField(
+            controller: controller,
+            enabled: enabled,
+            maxLines: lines,
+            keyboardType: keyboardType,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 15,
+              letterSpacing: 0,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 14,
+              ),
+              filled: true,
+              fillColor: enabled ? Colors.white : const Color(0xFFF1EEE6),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(
+                  color: GawaGoColors.primary,
+                  width: 1.4,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CertificationTile extends StatelessWidget {
+  const _CertificationTile({
+    required this.certificate,
+    required this.editing,
+    required this.onDelete,
+  });
+
+  final WorkerCertificate certificate;
+  final bool editing;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1EEE6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (certificate.fileUrl.isNotEmpty && certificate.isImage)
+            Image.network(
+              certificate.fileUrl,
+              height: 170,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        certificate.certificateName,
+                        style: const TextStyle(
+                          color: GawaGoColors.ink,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          if (certificate.certificateTypeLabel.isNotEmpty)
+                            SoftGreenPill(
+                              label: certificate.certificateTypeLabel,
+                            ),
+                          SoftGreenPill(
+                            label: certificate.isVerified
+                                ? 'Verified'
+                                : formatStatus(certificate.verificationStatus),
+                            muted: !certificate.isVerified,
+                          ),
+                        ],
+                      ),
+                      if (certificate.issuer.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Issued by ${certificate.issuer}',
+                          style: const TextStyle(
+                            color: GawaGoColors.textMuted,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (editing)
+                  IconButton(
+                    tooltip: 'Remove certificate',
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkSampleTile extends StatelessWidget {
+  const _WorkSampleTile({
+    required this.sample,
+    required this.editing,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final WorkSample sample;
+  final bool editing;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1EEE6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            sample.title.isEmpty ? 'Untitled sample' : sample.title,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _WorkSamplePhoto(
+                  url: sample.beforeOrFallback,
+                  caption: 'Before',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _WorkSamplePhoto(
+                  url: sample.afterImageUrl,
+                  caption: 'After',
+                ),
+              ),
+            ],
+          ),
+          if (editing) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onEdit,
+                    child: const Text('Edit'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onDelete,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                    ),
+                    child: const Text('Delete'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkSamplePhoto extends StatelessWidget {
+  const _WorkSamplePhoto({required this.url, required this.caption});
+
+  final String url;
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 110,
+            width: double.infinity,
+            child: url.isEmpty
+                ? Container(color: const Color(0xFFE2DCD0))
+                : Image.network(
+                    url,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) =>
+                        Container(color: const Color(0xFFE2DCD0)),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          caption,
+          style: const TextStyle(
+            color: GawaGoColors.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmploymentHistoryTile extends StatelessWidget {
+  const _EmploymentHistoryTile({required this.job});
+
+  final WorkerJob job;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1EEE6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            job.title.isEmpty ? job.jobType : job.title,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            job.householdName.isEmpty ? 'Household' : job.householdName,
+            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
+          ),
+          if (job.locationLabel.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              job.locationLabel,
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 13,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (job.jobType.isNotEmpty) SoftGreenPill(label: job.jobType),
+              SoftGreenPill(
+                label: 'PHP ${job.serviceRate.toStringAsFixed(2)} / Per Day',
+                muted: true,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CertificationDraft {
+  const _CertificationDraft({
+    required this.name,
+    required this.type,
+    required this.issuer,
+    required this.issueDate,
+    required this.expiryDate,
+    required this.filePath,
+  });
+
+  final String name;
+  final String type;
+  final String issuer;
+  final String issueDate;
+  final String expiryDate;
+  final String? filePath;
+}
+
+class _CertificationDialog extends StatefulWidget {
+  const _CertificationDialog();
+
+  @override
+  State<_CertificationDialog> createState() => _CertificationDialogState();
+}
+
+class _CertificationDialogState extends State<_CertificationDialog> {
+  final _name = TextEditingController();
+  final _issuer = TextEditingController();
+  String _type = 'certification';
+  DateTime? _issueDate;
+  DateTime? _expiryDate;
+  String? _filePath;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _issuer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickFile() async {
+    const group = XTypeGroup(
+      label: 'Certificate',
+      extensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
+    );
+    final file = await openFile(acceptedTypeGroups: [group]);
+    if (file != null && mounted) setState(() => _filePath = file.path);
+  }
+
+  Future<void> _pickDate({required bool expiry}) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 40),
+      lastDate: DateTime(now.year + 40),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      if (expiry) {
+        _expiryDate = picked;
+      } else {
+        _issueDate = picked;
+      }
+    });
+  }
+
+  void _submit() {
+    if (_name.text.trim().isEmpty) {
+      setState(() => _error = 'Enter the certificate name.');
+      return;
+    }
+    if (_filePath == null) {
+      setState(() => _error = 'Attach a photo or PDF of the certificate.');
+      return;
+    }
+    Navigator.pop(
+      context,
+      _CertificationDraft(
+        name: _name.text.trim(),
+        type: _type,
+        issuer: _issuer.text.trim(),
+        issueDate: _issueDate == null ? '' : _dateValue(_issueDate!),
+        expiryDate: _expiryDate == null ? '' : _dateValue(_expiryDate!),
+        filePath: _filePath,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add certificate'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Certificate name'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: _type,
+              decoration: const InputDecoration(labelText: 'Type'),
+              items: WorkerCertificate.typeOptions.entries
+                  .map(
+                    (entry) => DropdownMenuItem(
+                      value: entry.key,
+                      child: Text(entry.value),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => _type = value ?? _type),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _issuer,
+              decoration: const InputDecoration(
+                labelText: 'Issued by (optional)',
+              ),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('Issue date (optional)'),
+              trailing: Text(
+                _issueDate == null ? 'Not set' : _dateValue(_issueDate!),
+              ),
+              onTap: () => _pickDate(expiry: false),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('Expiry date (optional)'),
+              trailing: Text(
+                _expiryDate == null ? 'Not set' : _dateValue(_expiryDate!),
+              ),
+              onTap: () => _pickDate(expiry: true),
+            ),
+            const SizedBox(height: 4),
+            OutlinedButton.icon(
+              onPressed: _pickFile,
+              icon: const Icon(Icons.attach_file),
+              label: Text(
+                _filePath == null
+                    ? 'Attach certificate'
+                    : _filePath!.split(RegExp(r'[/\\]')).last,
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _error!,
+                style: const TextStyle(color: Colors.red, fontSize: 13),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Add')),
+      ],
+    );
+  }
+}
+
+class _WorkSampleDraft {
+  const _WorkSampleDraft({
+    required this.title,
+    required this.description,
+    required this.beforePath,
+    required this.afterPath,
+  });
+
+  final String title;
+  final String description;
+  final String? beforePath;
+  final String? afterPath;
+}
+
+class _WorkSampleDialog extends StatefulWidget {
+  const _WorkSampleDialog({this.existing});
+
+  final WorkSample? existing;
+
+  @override
+  State<_WorkSampleDialog> createState() => _WorkSampleDialogState();
+}
+
+class _WorkSampleDialogState extends State<_WorkSampleDialog> {
+  late final _title = TextEditingController(text: widget.existing?.title ?? '');
+  late final _description = TextEditingController(
+    text: widget.existing?.description ?? '',
+  );
+  String? _beforePath;
+  String? _afterPath;
+  String? _error;
+
+  bool get _isEdit => widget.existing != null;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pick({required bool after}) async {
+    const group = XTypeGroup(
+      label: 'Photo',
+      extensions: ['jpg', 'jpeg', 'png', 'webp'],
+    );
+    final file = await openFile(acceptedTypeGroups: [group]);
+    if (file == null || !mounted) return;
+    setState(() {
+      if (after) {
+        _afterPath = file.path;
+      } else {
+        _beforePath = file.path;
+      }
+    });
+  }
+
+  void _submit() {
+    if (_title.text.trim().isEmpty) {
+      setState(() => _error = 'Enter a title for this sample.');
+      return;
+    }
+    // On a new sample both photos are the point of the record; on an edit
+    // they are optional, because leaving them out keeps the ones already
+    // uploaded.
+    if (!_isEdit && (_beforePath == null || _afterPath == null)) {
+      setState(() => _error = 'Choose both a before and an after photo.');
+      return;
+    }
+    Navigator.pop(
+      context,
+      _WorkSampleDraft(
+        title: _title.text.trim(),
+        description: _description.text.trim(),
+        beforePath: _beforePath,
+        afterPath: _afterPath,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(_isEdit ? 'Edit work sample' : 'Add work sample'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _title,
+              decoration: const InputDecoration(labelText: 'Title'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _description,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => _pick(after: false),
+              icon: const Icon(Icons.image_outlined),
+              label: Text(
+                _beforePath == null
+                    ? (_isEdit ? 'Replace before photo' : 'Before photo')
+                    : _beforePath!.split(RegExp(r'[/\\]')).last,
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => _pick(after: true),
+              icon: const Icon(Icons.image_outlined),
+              label: Text(
+                _afterPath == null
+                    ? (_isEdit ? 'Replace after photo' : 'After photo')
+                    : _afterPath!.split(RegExp(r'[/\\]')).last,
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _error!,
+                style: const TextStyle(color: Colors.red, fontSize: 13),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: Text(_isEdit ? 'Save' : 'Add')),
+      ],
+    );
+  }
+}
+
+/// The read-first identity card at the top of My Profile.
 class _WorkerProfileSummary extends StatelessWidget {
   const _WorkerProfileSummary({
     required this.profile,
     required this.localPhotoPath,
-    required this.rates,
   });
 
   final WorkerProfile profile;
   final String? localPhotoPath;
-  final String rates;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _WorkerProfilePhoto(
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: _WorkerProfilePhoto(
               profile: profile,
               localPhotoPath: localPhotoPath,
-              radius: 30,
+              radius: 48,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    profile.fullName,
-                    style: const TextStyle(
-                      color: GawaGoColors.ink,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  StatusBadge(status: profile.verificationStatus),
-                  const SizedBox(height: 8),
-                  Text(
-                    '@${profile.username}\n'
-                    'Rating: ${profile.displayRating}\n'
-                    'Experience: ${profile.yearsExperience} year(s)\n'
-                    '${rates.isEmpty ? 'Rates not disclosed yet' : rates}\n'
-                    'Skills: ${profile.skills.isEmpty ? 'No skills selected' : profile.skills.join(', ')}',
-                    style: const TextStyle(color: GawaGoColors.textMuted),
-                  ),
-                ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            profile.fullName,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '@${profile.username}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 15),
+          ),
+          const SizedBox(height: 10),
+          const Center(child: SoftGreenPill(label: 'Worker')),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Divider(height: 1, color: Color(0xFFE6E0D6)),
+          ),
+          _SummaryFact(
+            label: 'Barangay',
+            value: profile.locationLabel.isEmpty
+                ? 'Not set'
+                : profile.locationLabel,
+          ),
+          _SummaryFact(
+            label: 'Phone',
+            value: profile.phone.isEmpty ? 'Not set' : profile.phone,
+          ),
+          _SummaryFact(
+            label: 'Email',
+            value: profile.email.isEmpty ? 'Not set' : profile.email,
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Divider(height: 1, color: Color(0xFFE6E0D6)),
+          ),
+          Row(
+            children: [
+              const Text(
+                'Verification: ',
+                style: TextStyle(
+                  color: GawaGoColors.ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
               ),
+              StatusBadge(status: profile.verificationStatus),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _SummaryFact(label: 'Rating', value: profile.displayRating),
+          _SummaryFact(label: 'Jobs Done', value: '${profile.ratingCount}'),
+          _SummaryFact(
+            label: 'Hourly Rate',
+            value: profile.hourlyRate == null
+                ? 'Not disclosed'
+                : 'PHP ${profile.hourlyRate!.toStringAsFixed(2)}',
+          ),
+          _SummaryFact(
+            label: 'Daily Rate',
+            value: profile.dailyRate == null
+                ? 'Not disclosed'
+                : 'PHP ${profile.dailyRate!.toStringAsFixed(2)}',
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: profile.skills.isEmpty
+                ? const [
+                    SoftGreenPill(label: 'No skills selected', muted: true),
+                  ]
+                : profile.skills
+                      .map((skill) => SoftGreenPill(label: skill))
+                      .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryFact extends StatelessWidget {
+  const _SummaryFact({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(color: GawaGoColors.textMuted),
             ),
           ],
+        ),
+        style: const TextStyle(
+          color: GawaGoColors.ink,
+          fontSize: 15,
+          height: 1.35,
+          letterSpacing: 0,
         ),
       ),
     );
@@ -3555,25 +5433,6 @@ class _HireRequestReviewBox extends StatelessWidget {
   }
 }
 
-Widget _field(TextEditingController controller, String label, {int lines = 1}) {
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: TextField(
-      controller: controller,
-      maxLines: lines,
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-      ),
-    ),
-  );
-}
-
-String _shortText(String value, int maxLength) {
-  if (value.length <= maxLength) return value;
-  return '${value.substring(0, maxLength).trimRight()}...';
-}
-
 String _scheduleLabel(String value) {
   final parsed = DateTime.tryParse(value);
   if (parsed == null) return value.trim().isEmpty ? 'Schedule not set' : value;
@@ -3586,12 +5445,6 @@ String _jobDate(String value) {
   if (parsed == null) return value.trim().isEmpty ? 'Not Set' : value;
   final local = parsed.toLocal();
   return '${_month(local.month)} ${local.day}, ${local.year}';
-}
-
-String _jobTime(String value) {
-  final parsed = DateTime.tryParse(value);
-  if (parsed == null) return value.trim().isEmpty ? 'Not Set' : value;
-  return _clockLabel(parsed.toLocal());
 }
 
 String _timeLabel(String value) {
@@ -3642,6 +5495,7 @@ String _title(_WorkerPage page) => switch (page) {
   _WorkerPage.dashboard => 'Dashboard',
   _WorkerPage.jobs => 'Find Jobs',
   _WorkerPage.applications => 'My Applications',
+  _WorkerPage.myReports => 'My Reports',
   _WorkerPage.profile => 'My Profile',
   _WorkerPage.reviews => 'Reviews & Feedback',
   _WorkerPage.notifications => 'Notifications',
@@ -3652,21 +5506,12 @@ IconData _icon(_WorkerPage page) => switch (page) {
   _WorkerPage.dashboard => Icons.dashboard_outlined,
   _WorkerPage.jobs => Icons.search,
   _WorkerPage.applications => Icons.description_outlined,
+  _WorkerPage.myReports => Icons.flag_outlined,
   _WorkerPage.profile => Icons.person_outline,
   _WorkerPage.reviews => Icons.star_outline,
   _WorkerPage.notifications => Icons.notifications_none,
   _WorkerPage.verification => Icons.verified_outlined,
 };
-
-String _weekday(int value) => const [
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-  'Sunday',
-][value];
 
 String _timeValue(TimeOfDay value) =>
     '${value.hour.toString().padLeft(2, '0')}:'

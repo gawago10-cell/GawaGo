@@ -16,7 +16,7 @@ Build a centralized, responsive web and mobile application platform that helps h
   - Service rate
   - A geographic search radius for matching (`1 km`, `2 km`, `5 km`, `10 km`, or `unlimited`; defaults to `1 km`)
 - Workers can apply to available jobs based on:
-  - Skills (a worker may list at most 4 skills on their profile)
+  - Skills (a worker may list at most 3 skills on their profile)
   - Availability
 - Households can review applicant profiles before confirming a worker.
 - Application status uses three plain terms to avoid confusion with job completion: `Pending` (awaiting a decision), `Hired` (accepted), and `Rejected`. A job itself separately becomes `Completed` once both parties confirm the work is done.
@@ -35,6 +35,7 @@ Build a centralized, responsive web and mobile application platform that helps h
 - Scoring: each worker-skill list and each job's required skill are compared with TF-IDF cosine similarity to produce a skill-similarity score; a road-route proximity score (`1 / (1 + distance_km)`) is computed the same way Smart Matching computes distance. The final score blends the two as `0.7 × skill similarity + 0.3 × proximity`, so a skill mismatch outweighs being nearby. Jobs outside their own configured search radius are excluded before scoring, the same hard-boundary rule Smart Matching applies.
 - Pull delivery: a worker can request "Find Jobs for Me" to see their open jobs ranked by this score, each shown with a `% match` badge and distance.
 - Push delivery: when a household posts a new open job, the system scores it against every candidate worker in the background and sends a job-match notification to any worker scoring above a configurable threshold, instead of waiting for the worker to check manually.
+- Household delivery: the same content-based score also runs in the opposite direction, ranking *workers for a job*. Immediately after a household posts a job they land on a recommended-workers screen showing each candidate's `% match` and the same skill-versus-proximity breakdown a worker sees. This does not replace Smart Matching: the job detail screen still lists candidates in Smart Matching's rule order (which prioritises verification), and both scores are returned on every result so the two remain complementary rather than competing.
 - Explainability: each recommendation also reports how much of the score came from skill fit versus proximity (and whether the match was an exact skill match, not just a related one), shown to the worker as a breakdown (for example, "70% skill fit, 30% proximity") rather than a single opaque number.
 - Future enhancement: once enough completed-job/hire outcome data exists, this can be extended with a collaborative-filtering signal ("workers with similar hire histories were chosen for jobs like this") layered on top of the content-based score. That requires a worker-job interaction dataset that does not yet exist, so it is out of scope for now.
 
@@ -65,8 +66,10 @@ Build a centralized, responsive web and mobile application platform that helps h
 - Identity verification supports multiple government ID types (national ID, passport, driver's license, voter ID, TIN, UMID, postal ID, or other); administrators review and approve or reject each submission.
 
 ### D. Dispute Resolution
-- Households and workers can file a complaint after a job (payment issue, quality of work, no-show, safety concern, inappropriate behavior, or other).
-- Administrators track each complaint through `Submitted` &rarr; `Under Review` &rarr; `Resolved`/`Closed`, with resolution notes visible to the filer.
+- Households and workers can file a complaint tied to a specific job, at any job status (payment issue, quality of work, no-show, safety concern, inappropriate behavior, or other) &mdash; a live safety concern does not have to wait for the job to finish. A household names which of the job's applicants the report is about; a worker's report always targets that job's household. Every report is traceable to a specific job/household/worker relationship the filer actually has, rather than an unverifiable free-floating accusation.
+- A report may carry up to five photos as evidence, so an administrator can see what happened rather than judging from the written description alone.
+- Administrators track each complaint through `Submitted` &rarr; `Under Review` &rarr; `Resolved`/`Closed`, with resolution notes visible to the filer. The person reported is not notified that a report exists &mdash; only the filer is notified when its status changes, keeping the case confidential while under review.
+- Having reviewed a report, an administrator can act on the account it names: a timed suspension of 3 or 7 days that lifts itself automatically, or an indefinite block. Either is reversible, applies equally to a worker or a household, cannot be used against another administrator, and takes effect immediately on any session already signed in. The suspended user is notified with the administrator's stated reason and, for a timed suspension, the date it ends.
 
 ## III. Communication and Notification System
 
@@ -102,9 +105,15 @@ Build a centralized, responsive web and mobile application platform that helps h
   - Average pricing trends
   - Purpose: support fair pricing and protect both workers and households from underpricing or overpricing
 
+### B. Admin Reports
+
+- Separate from the admin dashboard above, administrators can pull a date-bounded, platform-wide activity report (accounts, employment, verification, and reputation totals, plus breakdowns by service type, barangay, month, and reputation tier), exportable as CSV. This is admin-only — households and workers do not have an activity-report screen; `GET /api/reports/me/` exists on the backend but nothing in either client calls it.
+- Money figures are the sum of the offered service rate across completed jobs. GawaGo does not process payments, so these represent agreed rates for work that reached `Completed`, not a payment ledger.
+- Dashboard versus reports: the dashboard answers "what is happening right now" with live counts and hiring performance; reports answer "what happened over this period" for one role, and are exportable. Metrics that are point-in-time counts belong on the dashboard, not the analytics charts.
+
 ## V. Scope and Limitations
 
-- Worker types: registered workers fall into two categories — domestic helpers (cleaning, cooking, laundry, childcare, elder care, and similar home-based tasks) and skilled workers (electrical, plumbing, carpentry, painting, aircon repair, welding, and similar trade services). A worker profile lists at most 4 skills to keep listings scannable and matching meaningful.
+- Worker types: registered workers fall into two categories — domestic helpers (cleaning, cooking, laundry, childcare, elder care, and similar home-based tasks) and skilled workers (electrical, plumbing, carpentry, painting, aircon repair, welding, and similar trade services). A worker profile lists at most 3 skills to keep listings scannable and matching meaningful.
 - Geographic area: the platform targets households and workers within Tayabas City and its barangays; job locations and worker registrations are expected to fall within this area, and the smart matching distance boundary (1-10 km, or unlimited) is calibrated for a single-city service area rather than nationwide reach.
 - Matching approach: the platform uses two complementary matching features. Smart Matching (household-facing) is a deterministic, rule-based ranking of workers for a job (skill match, verification, road-route distance, rating, and rate). AI-Based Job Recommendations (worker-facing, see I.C) is a content-based model that scores open jobs for a worker from TF-IDF skill similarity and road-route proximity, with an explainability breakdown shown to the worker. Neither model currently learns from historical hiring outcomes; a collaborative-filtering layer that does has been identified as a future enhancement once enough completed-job/hire data has accumulated to train and validate one.
 - Proximity range justification: domestic and skilled-trade work in this study is assumed to be commuted to on foot, by bicycle, or by short tricycle/jeepney rides rather than long-distance travel, so a 1 km default radius (configurable up to unlimited per job) keeps recommended workers realistically reachable for same-day or recurring work.
@@ -115,6 +124,8 @@ Build a centralized, responsive web and mobile application platform that helps h
 - UX requirement: responsive on desktop and mobile.
 - Matching assistance is advisory; user autonomy in final selection must remain intact.
 - Trust mechanisms (verification + reviews + pricing disclosure) are core, not optional.
+- Identity verification currently has **two** backend implementations: the `common/verification-requests/` flow (primary ID plus a supporting document), which is what both shipped clients actually use, and a separate multi-ID-type system (`accounts/*/verification-documents/`) that matches the eight ID types described in II.C but has no worker-facing upload screen. These should be consolidated onto one before the system is presented as final; documenting it here so the duplication is not mistaken for a single coherent flow.
+- Collection endpoints are paginated at 20 records per page, and clients must follow the `next` link. Reading only the first page silently loses data rather than failing loudly.
 
 ## Required Technology Stack
 - Frontend structure and markup: `HTML5`

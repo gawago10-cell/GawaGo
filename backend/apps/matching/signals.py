@@ -14,8 +14,10 @@ scoring every candidate worker.
 """
 
 from django.conf import settings
+from django.db.models import Q
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
 
 from apps.accounts.models import UserProfile
 from apps.jobs.models import JobPosting
@@ -32,9 +34,16 @@ def notify_matching_workers(sender, instance, created, **kwargs):
         return
 
     threshold = getattr(settings, "JOB_MATCH_NOTIFY_THRESHOLD", 0.5)
+    # Excludes a currently suspended worker (permanent, or a timed suspension
+    # that hasn't lifted yet) -- a plain is_blocked=True filter would also
+    # skip a worker whose timed block already expired but hasn't been lazily
+    # cleared by refresh_block_status() yet.
     candidates = UserProfile.objects.select_related("user").filter(
         role=UserProfile.ROLE_WORKER,
         user__is_staff=False,
+        user__is_active=True,
+    ).exclude(
+        Q(is_blocked=True) & (Q(blocked_until__isnull=True) | Q(blocked_until__gt=timezone.now()))
     )
 
     for profile in candidates:
@@ -45,7 +54,13 @@ def notify_matching_workers(sender, instance, created, **kwargs):
             # network error) should never block notifying everyone else.
             continue
 
-        if result and result["ai_score"] >= threshold:
+        # An exact skill match always clears the bar, regardless of how the
+        # cosine-similarity score got diluted by the worker's *other* listed
+        # skills (a worker with 3 skills scores lower on any one of them
+        # than a worker with just 1) -- score_job_for_worker() has already
+        # enforced the job's hard radius filter by this point, so this
+        # isn't bypassing distance, only the skill-dilution artifact.
+        if result and (result["ai_score"] >= threshold or result["exact_skill_match"]):
             create_notification(
                 recipient=profile.user,
                 notification_type=Notification.TYPE_JOB_MATCH,

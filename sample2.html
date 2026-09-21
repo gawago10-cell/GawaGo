@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GawaGo — Proactive AI Notifications (Concept Demo)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0f1512;
+    color: #dfe8e2;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { color: #fff; font-size: 26px; margin-bottom: 4px; }
+  .subtitle { color: #8fae9a; font-size: 14px; margin-bottom: 32px; }
+  h2 {
+    color: #4caf74;
+    font-size: 18px;
+    margin-top: 44px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #22332a;
+  }
+  p { color: #c3d2cb; font-size: 14.5px; }
+  code { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; }
+  .file-label {
+    display: inline-block;
+    background: #17231b;
+    color: #7fd4a0;
+    font-family: Consolas, monospace;
+    font-size: 12.5px;
+    padding: 4px 10px;
+    border-radius: 6px 6px 0 0;
+    border: 1px solid #26392c;
+    border-bottom: none;
+  }
+  pre {
+    background: #131c16;
+    border: 1px solid #26392c;
+    border-radius: 0 8px 8px 8px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-size: 13px;
+    margin: 0 0 20px 0;
+  }
+  pre code { color: #d9e6df; white-space: pre; }
+  .kw { color: #ff8fab; }
+  .str { color: #ffd280; }
+  .com { color: #6f8a78; font-style: italic; }
+  .fn { color: #8fd6ff; }
+  .num { color: #c9a4ff; }
+  ul { color: #c3d2cb; font-size: 14.5px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  .note {
+    background: #1c2317;
+    border: 1px solid #3a3222;
+    color: #e8d9a8;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    margin: 16px 0;
+  }
+
+  /* ---- Live demo ---- */
+  .demo-panel {
+    background: #10201a;
+    border: 1px solid #274232;
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin: 20px 0 36px;
+  }
+  .demo-job-card {
+    background: #17231b;
+    border: 1px solid #2d4235;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+  .demo-job-card .title { font-weight: 700; color: #fff; font-size: 15px; }
+  .demo-job-card .meta { color: #8fae9a; font-size: 12.5px; margin-top: 2px; }
+  #post-job-btn {
+    background: #4caf74;
+    color: #06170e;
+    border: none;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  #post-job-btn:hover { background: #5fc789; }
+  #post-job-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .worker-row {
+    display: grid;
+    grid-template-columns: 160px 1fr 90px 140px;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 4px;
+    border-bottom: 1px solid #1e2c22;
+    font-size: 13.5px;
+  }
+  .worker-row.head {
+    color: #7fa08c;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #2d4235;
+  }
+  .worker-name { color: #eafff0; font-weight: 600; }
+  .score-bar-track {
+    background: #1e2c22;
+    border-radius: 6px;
+    height: 10px;
+    overflow: hidden;
+  }
+  .score-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2d7a4f, #4caf74);
+    width: 0%;
+    transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .score-val { font-family: Consolas, monospace; color: #cfe3d6; text-align: right; }
+  .notify-tag {
+    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 10px;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  .notify-tag.show { opacity: 1; }
+  .notify-tag.sent { background: #1a4a2e; color: #a5c9b0; }
+  .notify-tag.skipped { background: #2a231a; color: #a89a7f; }
+
+  .toast-stack {
+    position: relative;
+    min-height: 10px;
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .toast {
+    background: #17231b;
+    border: 1px solid #4caf74;
+    border-left: 4px solid #4caf74;
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    transform: translateX(-12px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  .toast.show { opacity: 1; transform: translateX(0); }
+  .toast .bell { font-size: 18px; }
+  .toast .toast-title { color: #fff; font-weight: 700; font-size: 13.5px; }
+  .toast .toast-body { color: #a8cbb6; font-size: 12.5px; margin-top: 2px; }
+
+  .status-line {
+    color: #7fa08c;
+    font-size: 13px;
+    margin: 14px 0 6px;
+    min-height: 18px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Proactive AI Job Notifications</h1>
+  <div class="subtitle">Concept demo — not wired into the real backend yet. Review here first.</div>
+
+  <h2>1. Design overview</h2>
+  <p>Right now, <code>get_recommended_jobs(worker)</code> only runs when a worker clicks "Find Jobs for Me" (pull). This turns the same scoring logic into a push: the moment a household posts a new open job, the backend scores that one job against every candidate worker and creates a <code>Notification</code> for anyone above a match threshold — before the worker ever opens the app.</p>
+  <ul>
+    <li><b>Trigger:</b> a Django <code>post_save</code> signal on <code>JobPosting</code>, firing only when a new row is created with <code>status="open"</code>.</li>
+    <li><b>Reused logic:</b> the per-job/per-worker scoring math is extracted out of <code>get_recommended_jobs()</code> into a shared <code>score_job_for_worker(job, profile)</code> function, so the pull endpoint and the new push signal always agree on what counts as a good match.</li>
+    <li><b>Threshold:</b> only workers scoring above <code>NOTIFY_THRESHOLD</code> (e.g. 0.5) get notified — otherwise every new job would spam every worker.</li>
+    <li><b>Radius still hard-filters first</b> — exactly like the pull endpoint, a job outside a worker's reach never reaches the scoring step at all.</li>
+  </ul>
+
+  <h2>2. Live demo — simulate a household posting a job</h2>
+  <p>Click the button below. It scores the new job against 4 sample workers (real TF-IDF + proximity math, same formula as the live feature), then shows exactly which workers would get a push notification and which would not.</p>
+
+  <div class="demo-panel">
+    <div class="demo-job-card">
+      <div class="title">🏠 marga12 just posted: "General Cleaning"</div>
+      <div class="meta">Required skill: House Cleaning · Radius: 2km</div>
+    </div>
+
+    <button id="post-job-btn" type="button">Post Job &amp; Run Background Match</button>
+    <div class="status-line" id="status-line"></div>
+
+    <div id="worker-table" style="margin-top:16px;"></div>
+    <div class="toast-stack" id="toast-stack"></div>
+  </div>
+
+  <h2>3. Backend sketch</h2>
+  <div class="file-label">backend/apps/matching/recommendations.py (refactor)</div>
+<pre><code><span class="com"># Extracted from get_recommended_jobs() so both the pull endpoint and the
+# new push signal use the exact same scoring math.</span>
+<span class="kw">def</span> <span class="fn">score_job_for_worker</span>(job, profile):
+    worker_document = _worker_skill_document(profile)
+    job_document = _job_skill_document(job)
+    <span class="kw">if</span> <span class="kw">not</span> worker_document.strip():
+        <span class="kw">return</span> <span class="kw">None</span>
+
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform([worker_document, job_document])
+    skill_similarity = cosine_similarity(tfidf_matrix[<span class="num">0</span>:<span class="num">1</span>], tfidf_matrix[<span class="num">1</span>:<span class="num">2</span>])[<span class="num">0</span>][<span class="num">0</span>]
+
+    route = get_road_route_for_match(job, profile)
+    distance_km = route[<span class="str">"distance_km"</span>]
+    <span class="kw">if</span> <span class="kw">not</span> _within_radius(job, distance_km):
+        <span class="kw">return</span> <span class="kw">None</span>
+
+    proximity_score = _proximity_score(distance_km)
+    ai_score = (float(skill_similarity) * SKILL_WEIGHT) + (proximity_score * PROXIMITY_WEIGHT)
+    <span class="kw">return</span> {<span class="str">"ai_score"</span>: round(ai_score, <span class="num">4</span>), <span class="str">"distance_km"</span>: distance_km}
+</code></pre>
+
+  <div class="file-label">backend/apps/matching/signals.py (new)</div>
+<pre><code>NOTIFY_THRESHOLD = <span class="num">0.5</span>
+
+<span class="kw">@receiver</span>(post_save, sender=JobPosting)
+<span class="kw">def</span> <span class="fn">notify_matching_workers</span>(sender, instance, created, **kwargs):
+    <span class="kw">if</span> <span class="kw">not</span> created <span class="kw">or</span> instance.status != JobPosting.STATUS_OPEN:
+        <span class="kw">return</span>
+    candidates = UserProfile.objects.filter(role=UserProfile.ROLE_WORKER)
+    <span class="kw">for</span> profile <span class="kw">in</span> candidates:
+        result = score_job_for_worker(instance, profile)
+        <span class="kw">if</span> result <span class="kw">and</span> result[<span class="str">"ai_score"</span>] >= NOTIFY_THRESHOLD:
+            Notification.objects.create(
+                user=profile.user,
+                notification_type=<span class="str">"job_match"</span>,
+                title=<span class="str">"New job matches your profile"</span>,
+                body=<span class="kw">f</span><span class="str">"{instance.title} — {round(result['ai_score'] * 100)}% match"</span>,
+                related_job=instance,
+            )
+</code></pre>
+
+  <div class="note">Runs synchronously inside the request that creates the job for this sketch. In production this loop should move to a Celery task (or similar) so posting a job doesn't wait on scoring every candidate worker.</div>
+
+  <script>
+    const WORKERS = [
+      { name: "marga",  skills: ["House Cleaning", "Laundry", "Cooking"], distanceKm: 0.16, radiusKm: 2 },
+      { name: "quert",  skills: ["House Cleaning", "Childcare", "Electrical Work"], distanceKm: 1.4, radiusKm: 2 },
+      { name: "ely",    skills: ["Elder Care", "Plumbing", "Painting"], distanceKm: 0.6, radiusKm: 2 },
+      { name: "coedy",  skills: ["House Cleaning", "Childcare", "Cooking"], distanceKm: 3.1, radiusKm: 2 },
+    ];
+    const JOB_SKILL = "House Cleaning";
+    const SKILL_WEIGHT = 0.7;
+    const PROXIMITY_WEIGHT = 0.3;
+    const NOTIFY_THRESHOLD = 0.5;
+
+    function tfidfCosine(workerTokens, jobTokens) {
+      const docs = [workerTokens, jobTokens];
+      const vocab = [...new Set(docs.flat())];
+      const N = docs.length;
+      const idf = {};
+      vocab.forEach((term) => {
+        const df = docs.filter((doc) => doc.includes(term)).length;
+        idf[term] = Math.log((1 + N) / (1 + df)) + 1;
+      });
+      const vectors = docs.map((doc) => {
+        const raw = vocab.map((term) => doc.filter((t) => t === term).length * idf[term]);
+        const norm = Math.sqrt(raw.reduce((s, v) => s + v * v, 0)) || 1;
+        return raw.map((v) => v / norm);
+      });
+      return vectors[0].reduce((sum, v, i) => sum + v * vectors[1][i], 0);
+    }
+
+    function scoreWorker(worker) {
+      if (worker.distanceKm > worker.radiusKm) {
+        return { withinRadius: false };
+      }
+      const skillSimilarity = tfidfCosine(worker.skills, [JOB_SKILL]);
+      const proximityScore = 1 / (1 + worker.distanceKm);
+      const aiScore = skillSimilarity * SKILL_WEIGHT + proximityScore * PROXIMITY_WEIGHT;
+      return { withinRadius: true, skillSimilarity, aiScore };
+    }
+
+    function renderTableSkeleton() {
+      const wrap = document.getElementById("worker-table");
+      wrap.innerHTML = `
+        <div class="worker-row head">
+          <div>Worker</div>
+          <div>AI Score</div>
+          <div>Score</div>
+          <div>Notification</div>
+        </div>
+        ${WORKERS.map((w, i) => `
+          <div class="worker-row" id="row-${i}">
+            <div class="worker-name">${w.name}</div>
+            <div class="score-bar-track"><div class="score-bar-fill" id="bar-${i}"></div></div>
+            <div class="score-val" id="val-${i}">—</div>
+            <div class="notify-tag" id="tag-${i}"></div>
+          </div>
+        `).join("")}
+      `;
+    }
+
+    function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+    async function runDemo() {
+      const btn = document.getElementById("post-job-btn");
+      const statusLine = document.getElementById("status-line");
+      const toastStack = document.getElementById("toast-stack");
+      btn.disabled = true;
+      toastStack.innerHTML = "";
+      renderTableSkeleton();
+
+      statusLine.textContent = "New JobPosting row saved (status=open) → post_save signal fired…";
+      await sleep(700);
+
+      statusLine.textContent = "Scoring job against candidate workers (score_job_for_worker)…";
+      await sleep(500);
+
+      for (let i = 0; i < WORKERS.length; i++) {
+        const worker = WORKERS[i];
+        const result = scoreWorker(worker);
+        const bar = document.getElementById(`bar-${i}`);
+        const val = document.getElementById(`val-${i}`);
+        const tag = document.getElementById(`tag-${i}`);
+
+        if (!result.withinRadius) {
+          val.textContent = "excluded";
+          val.style.color = "#8a7a6a";
+          tag.textContent = "outside radius";
+          tag.className = "notify-tag skipped show";
+          await sleep(350);
+          continue;
+        }
+
+        const pct = Math.round(result.aiScore * 100);
+        bar.style.width = pct + "%";
+        val.textContent = result.aiScore.toFixed(4);
+        await sleep(500);
+
+        if (result.aiScore >= NOTIFY_THRESHOLD) {
+          tag.textContent = "🔔 notified";
+          tag.className = "notify-tag sent show";
+          const toast = document.createElement("div");
+          toast.className = "toast";
+          toast.innerHTML = `
+            <span class="bell">🔔</span>
+            <div>
+              <div class="toast-title">${worker.name} — New job matches your profile</div>
+              <div class="toast-body">General Cleaning — ${pct}% match</div>
+            </div>
+          `;
+          toastStack.appendChild(toast);
+          requestAnimationFrame(() => toast.classList.add("show"));
+        } else {
+          tag.textContent = `below ${Math.round(NOTIFY_THRESHOLD * 100)}% threshold`;
+          tag.className = "notify-tag skipped show";
+        }
+        await sleep(300);
+      }
+
+      statusLine.textContent = "Done — no manual \"Find Jobs for Me\" click was needed for these workers.";
+      btn.disabled = false;
+    }
+
+    renderTableSkeleton();
+    document.getElementById("post-job-btn").addEventListener("click", runDemo);
+  </script>
+
+</div>
+</body>
+</html>

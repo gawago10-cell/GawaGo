@@ -5,15 +5,15 @@ import ComplaintModal from "./ComplaintModal";
 import HouseholdJobMapPanel from "./HouseholdJobMapPanel";
 import JobImageUpload from "./JobImageUpload";
 import LocationDistanceMap from "./LocationDistanceMap";
-import SkillRatingForm from "./SkillRatingForm";
 import WorkerLocationPicker from "./WorkerLocationPicker";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
-import { getApplicationStatusLabel, getHiringProgressLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
+import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
+import { getHouseholdInitials } from "../utils/formatters";
 import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
-import { TAYABAS_MAP_BOUNDS } from "../constants/appConstants";
-import { formatExperience } from "../utils/formatters";
+import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, MAX_WORKER_SKILLS, TAYABAS_MAP_BOUNDS } from "../constants/appConstants";
+import { formatExperience, formatTimeAgo, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
 
 const HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY = "gawago-household-dismissed-notifications";
 const WORKER_DISMISSED_NOTIFICATIONS_KEY = "gawago-worker-dismissed-notifications";
@@ -23,6 +23,12 @@ const AI_SCAN_STATUS_PHASES = [
   "Ranking by relevance and distance…",
 ];
 const AI_SCAN_MIN_DURATION_MS = 2400;
+const HOUSEHOLD_SCAN_MAX_DURATION_MS = 25000;
+const HOUSEHOLD_SCAN_STATUS_PHASES = [
+  "Scanning available workers nearby…",
+  "Comparing worker skills to your job…",
+  "Ranking by skill fit and travel distance…",
+];
 
 export default function AppViews({
   SKILLS,
@@ -41,7 +47,6 @@ export default function AppViews({
   formatRate,
   formatScheduleLabel,
   getDisplayName,
-  getJobStatusBadgeClass,
   goBack,
   handleAdminApproveVerification,
   handleAdminRejectVerification,
@@ -53,12 +58,14 @@ export default function AppViews({
   handleHouseholdChange,
   handleHouseholdJobChange,
   handleHouseholdJobSubmit,
+  isSubmittingJob,
   handleHouseholdProfileChange,
   handleHouseholdProfileSave,
   handleHouseholdRegisterSubmit,
   handleHouseholdReviewSubmit,
   handleLoginChange,
   handleLoginSubmit,
+  recommendedWorkersLoading,
   handleLogout,
   handleRejectApplication,
   handleVerificationChange,
@@ -92,9 +99,9 @@ export default function AppViews({
   openHouseholdDashboard,
   openHouseholdFeedbackAll,
   openHouseholdGetVerified,
-  openHouseholdJobDetail,
+  openHouseholdJobMatches,
   openHouseholdMyJobs,
-  openHouseholdNotificationWorker,
+  openMyComplaints,
   openHouseholdNotifications,
   openHouseholdPostJob,
   openHouseholdProfile,
@@ -108,6 +115,7 @@ export default function AppViews({
   openWorkerFindJobs,
   openWorkerGetVerified,
   openWorkerJobDetail,
+  openWorkerMyJobs,
   openWorkerNotifications,
   openWorkerProfile,
   openWorkerRegister,
@@ -135,6 +143,8 @@ export default function AppViews({
   toggleWorkerProfileSkill,
   showCertificationModal,
   setShowCertificationModal,
+  showSkillModal,
+  setShowSkillModal,
   showWorkSampleModal,
   setShowWorkSampleModal,
   certificationForm,
@@ -160,15 +170,16 @@ export default function AppViews({
   setRatingModalOpen,
   ratingJobId,
   ratingWorker,
+  ratingWorkerSkills,
+  ratingSkillsLoading,
+  ratingExtraSkills,
+  addRatingExtraSkill,
+  removeRatingExtraSkill,
   skillRatings,
   setSkillRatings,
   openRatingModal,
   handleSubmitRatings,
-  showComplaintModal,
-  setShowComplaintModal,
-  complaintForm,
-  setComplaintForm,
-  handleSubmitComplaint,
+  addToast,
   verificationForm,
   verificationRequests,
   view,
@@ -182,8 +193,8 @@ export default function AppViews({
   workerUnreadCount,
   workerVisibleJobs,
 }) {
+  const [showComplaintModal, setShowComplaintModal] = useState(false);
   const [householdFeedbackDateFilter, setHouseholdFeedbackDateFilter] = useState("");
-  const [householdJobStatusFilter, setHouseholdJobStatusFilter] = useState("All");
   const [householdNotificationDateFilter, setHouseholdNotificationDateFilter] = useState("");
   const [householdReviewDateFilter, setHouseholdReviewDateFilter] = useState("");
   const [householdReviewRatingFilter, setHouseholdReviewRatingFilter] = useState("");
@@ -193,6 +204,7 @@ export default function AppViews({
   const [workerProfilePanel, setWorkerProfilePanel] = useState("profile");
   const [workerJobTypeFilter, setWorkerJobTypeFilter] = useState("All Types");
   const [workerBarangayFilter, setWorkerBarangayFilter] = useState("");
+  const [matchedSkillFilter, setMatchedSkillFilter] = useState("All");
   const [aiModeActive, setAiModeActive] = useState(false);
   const [aiRecommendedJobs, setAiRecommendedJobs] = useState(null);
   const [aiRecommendationsLoading, setAiRecommendationsLoading] = useState(false);
@@ -201,8 +213,13 @@ export default function AppViews({
   const [scatterStatusIndex, setScatterStatusIndex] = useState(0);
   const scatterJitterIntervalRef = useRef(null);
   const scatterStatusIntervalRef = useRef(null);
+  const [householdScanActive, setHouseholdScanActive] = useState(false);
+  const [householdScatterTags, setHouseholdScatterTags] = useState([]);
+  const [householdScanStatusIndex, setHouseholdScanStatusIndex] = useState(0);
+  const householdScanLoadingRef = useRef(false);
+  householdScanLoadingRef.current = Boolean(recommendedWorkersLoading);
+  const [ratingExtraSkillChoice, setRatingExtraSkillChoice] = useState("");
   const [workerMarketSearch, setWorkerMarketSearch] = useState("");
-  const [householdNotificationPreview, setHouseholdNotificationPreview] = useState(null);
   const [householdNotificationMenuId, setHouseholdNotificationMenuId] = useState(null);
   const [householdNotificationDeletingId, setHouseholdNotificationDeletingId] = useState(null);
   const [workerNotificationPreview, setWorkerNotificationPreview] = useState(null);
@@ -262,11 +279,13 @@ export default function AppViews({
   };
   const [workerProfileEditing, setWorkerProfileEditing] = useState(false);
   const [workerPhotoModalOpen, setWorkerPhotoModalOpen] = useState(false);
-  const [householdDashboardDetailJobId, setHouseholdDashboardDetailJobId] = useState(null);
-  const [householdDashboardReviewOpen, setHouseholdDashboardReviewOpen] = useState(false);
+  const [dashboardModal, setDashboardModal] = useState(null);
+  const [myJobsFilter, setMyJobsFilter] = useState("all");
+  const [pendingHireWorkerId, setPendingHireWorkerId] = useState(null);
   const [householdProfileEditing, setHouseholdProfileEditing] = useState(false);
   const [selectedWorkerRouteDistanceKm, setSelectedWorkerRouteDistanceKm] = useState(null);
   const [workerHireRequestPreview, setWorkerHireRequestPreview] = useState(null);
+  const [workerCompletionConfirmJob, setWorkerCompletionConfirmJob] = useState(null);
   const verificationAccount = currentUser?.role === "household" ? currentHousehold : currentWorker;
   const isHouseholdVerification = currentUser?.role === "household";
   const verificationNavLabel =
@@ -405,14 +424,39 @@ export default function AppViews({
       username: existingWorker?.username || application.workerUsername,
       firstName: existingWorker?.firstName || application.workerName || "",
       lastName: existingWorker?.lastName || "",
-      skills: existingWorker?.skills || [],
-      verification: existingWorker?.verification || "Not Yet Verified",
-      dailyRate: existingWorker?.dailyRate || "0.00",
+      // The application now carries the worker's profile details, so an
+      // applicant card renders fully even when registeredWorkers hasn't
+      // loaded (or never included this worker).
+      displayName: application.workerName || existingWorker?.displayName || "",
+      profilePhotoPreview: application.workerPhotoUrl || existingWorker?.profilePhotoPreview || "",
+      barangay: existingWorker?.barangay || application.workerLocationLabel || "",
+      bio: application.workerBio || existingWorker?.bio || "",
+      skills: application.workerSkills?.length ? application.workerSkills : existingWorker?.skills || [],
+      verification: application.workerVerification || existingWorker?.verification || "Not Yet Verified",
+      rating: application.workerRatingLabel || existingWorker?.rating || "No ratings yet",
+      reviewsDone: application.workerRatingCount ?? existingWorker?.reviewsDone ?? 0,
+      completedJobs: application.workerCompletedJobs ?? 0,
+      aiScore: application.workerMatchScore ?? null,
+      distanceKm: application.routeDistanceKm ?? null,
+      dailyRate: application.workerDailyRate || existingWorker?.dailyRate || "0.00",
       avatar: existingWorker?.avatar || (application.workerName || application.workerUsername || "W").slice(0, 1).toUpperCase(),
       applicationStatus: application.status,
+      applicationStatusLabel: application.statusLabel || "",
       appliedAt: application.appliedAt,
     };
   });
+  // Only badge a "Top match" when there is something to compare: a single
+  // applicant, or applicants the scorer couldn't rank, shouldn't get one.
+  const topApplicantKey = (() => {
+    const scored = selectedJobApplicantWorkers.filter((applicant) => Number(applicant.aiScore) > 0);
+    if (scored.length < 2) {
+      return null;
+    }
+    const best = scored.reduce((leader, applicant) =>
+      Number(applicant.aiScore) > Number(leader.aiScore) ? applicant : leader,
+    );
+    return String(best.id || best.username);
+  })();
   const selectedJobApplicantKeys = new Set(
     selectedJobVisibleApplications.flatMap((application) =>
       [application.workerId, application.workerUsername]
@@ -426,6 +470,24 @@ export default function AppViews({
       !selectedJobApplicantKeys.has(String(worker.workerId)) &&
       !selectedJobApplicantKeys.has(String(worker.username)),
   );
+  // Sorted here rather than trusting the response order: background polling
+  // re-fetches this list in Smart Matching order, which would otherwise
+  // silently reshuffle the AI ranking under the user.
+  const aiMatchedWorkersForSelectedJob = [...selectedSuggestedWorkers].sort(
+    (first, second) => (second.aiScore || 0) - (first.aiScore || 0),
+  );
+  // Chips are built from the skills the matched workers actually have, so the
+  // row never offers a category that would filter the list down to nothing.
+  const matchedSkillOptions = [
+    "All",
+    ...Array.from(
+      new Set(aiMatchedWorkersForSelectedJob.flatMap((worker) => worker.skills || []).filter(Boolean)),
+    ),
+  ];
+  const visibleMatchedWorkers =
+    matchedSkillFilter === "All"
+      ? aiMatchedWorkersForSelectedJob
+      : aiMatchedWorkersForSelectedJob.filter((worker) => (worker.skills || []).includes(matchedSkillFilter));
   const canRejectSelectedWorkerApplication =
     selectedWorkerApplication && !["Hire Request", "Hired", "Rejected"].includes(selectedWorkerApplication.status);
   const selectedWorkerHireButtonLabel =
@@ -451,6 +513,18 @@ export default function AppViews({
   const workerHouseholdReviews = currentWorker?.receivedReviews || [];
   const workerHouseholdFeedback = workerHouseholdReviews.filter((review) => review.feedback || review.comment);
   const workerHouseholdRatings = workerHouseholdReviews.filter((review) => review.rating != null);
+  // "My Jobs" splits the worker's hired work from their finished history. The
+  // application stays Hired while the job runs, including once completion has
+  // been requested, so the job status is what separates the two lists.
+  const workerInProgressJobs = workerApplications.filter(
+    (job) =>
+      job.applicationStatus === "Hired" && job.status !== "Completed" && job.status !== "Cancelled",
+  );
+  const workerCompletedJobs = workerApplications.filter(
+    (job) => job.applicationStatus === "Completed" || job.status === "Completed",
+  );
+  const getWorkerReviewForJob = (jobId) =>
+    workerHouseholdRatings.find((review) => String(review.jobId) === String(jobId)) || null;
   const workerRatingCounts = [5, 4, 3, 2, 1].map((rating) => ({
     rating,
     count: workerHouseholdRatings.filter((review) => Number(review.rating) === rating).length,
@@ -473,11 +547,6 @@ export default function AppViews({
     }
   }, [view, workerProfilePanel]);
   useEffect(() => {
-    if (householdJobStatusFilter === "Cancelled") {
-      setHouseholdJobStatusFilter("All");
-    }
-  }, [householdJobStatusFilter]);
-  useEffect(() => {
     if (view !== "household-profile" && householdProfileEditing) {
       setHouseholdProfileEditing(false);
     }
@@ -497,11 +566,6 @@ export default function AppViews({
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [view]);
-  useEffect(() => {
-    if (view !== "household-notifications" && householdNotificationPreview) {
-      setHouseholdNotificationPreview(null);
-    }
-  }, [householdNotificationPreview, view]);
   useEffect(() => {
     if (view !== "worker-notifications") {
       setWorkerNotificationPreview(null);
@@ -677,6 +741,78 @@ export default function AppViews({
   const exitAiJobRecommendations = () => {
     setAiModeActive(false);
   };
+  useEffect(() => {
+    if (view !== "household-job-matches") {
+      return undefined;
+    }
+    const labelPool = [
+      selectedJob?.serviceType,
+      selectedJob?.barangay,
+      selectedJob?.scheduleType,
+      selectedJob?.offeredRate ? `${formatCurrency(selectedJob.offeredRate)}/day` : "",
+      "Nearby workers",
+    ].filter(Boolean);
+    const labels = labelPool.length > 0 ? labelPool.slice(0, 6) : ["Matching your job"];
+    // Lay tags out in bands so they jitter in place instead of piling onto each other.
+    const bandFor = (index) => ({
+      baseLeft: (index % 3) * 30 + 4,
+      baseTop: Math.floor(index / 3) * 34 + 8,
+    });
+    const makeTag = (id, label) => {
+      const { baseLeft, baseTop } = bandFor(id);
+      return {
+        id,
+        label,
+        baseLeft,
+        baseTop,
+        left: baseLeft + Math.random() * 8,
+        top: baseTop + Math.random() * 10,
+        rotate: Math.random() * 16 - 8,
+      };
+    };
+    setHouseholdScanActive(true);
+    setHouseholdScatterTags(labels.map((label, index) => makeTag(index, label)));
+    setHouseholdScanStatusIndex(0);
+    const statusInterval = setInterval(() => {
+      setHouseholdScanStatusIndex((previous) => (previous + 1) % HOUSEHOLD_SCAN_STATUS_PHASES.length);
+    }, 900);
+    const jitterInterval = setInterval(() => {
+      setHouseholdScatterTags((previous) =>
+        previous.map((tag) => ({
+          ...tag,
+          left: tag.baseLeft + Math.random() * 8,
+          top: tag.baseTop + Math.random() * 10,
+          rotate: Math.random() * 16 - 8,
+        })),
+      );
+    }, 620);
+    const startedAt = Date.now();
+    const stop = () => {
+      clearInterval(statusInterval);
+      clearInterval(jitterInterval);
+      clearInterval(doneCheck);
+      setHouseholdScanActive(false);
+      setHouseholdScatterTags([]);
+    };
+    const doneCheck = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < AI_SCAN_MIN_DURATION_MS) {
+        return;
+      }
+      if (householdScanLoadingRef.current && elapsed < HOUSEHOLD_SCAN_MAX_DURATION_MS) {
+        return;
+      }
+      stop();
+    }, 200);
+    return () => {
+      clearInterval(statusInterval);
+      clearInterval(jitterInterval);
+      clearInterval(doneCheck);
+      setHouseholdScanActive(false);
+      setHouseholdScatterTags([]);
+      setHouseholdScanStatusIndex(0);
+    };
+  }, [view]);
   const openWorkerFindJobsForCategory = (serviceType) => {
     setWorkerJobTypeFilter(serviceType);
     setWorkerBarangayFilter("");
@@ -728,6 +864,74 @@ export default function AppViews({
       </div>
     );
   };
+  // Shared by the AI match cards and the applicant cards so a worker reads
+  // the same way in both places: one ring, one star row, one photo/initials
+  // fallback.
+  const renderMatchRing = (score, size = 52) => {
+    const percent = Math.max(0, Math.min(100, Math.round((Number(score) || 0) * 100)));
+    const radius = size / 2 - 4;
+    const circumference = 2 * Math.PI * radius;
+    const strong = percent >= 85;
+    return (
+      <span className={`gg-match-ring ${strong ? "strong" : ""}`} style={{ width: size, height: size }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+          <circle className="gg-match-ring-track" cx={size / 2} cy={size / 2} r={radius} strokeWidth="4" fill="none" />
+          <circle
+            className="gg-match-ring-value"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth="4"
+            fill="none"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - percent / 100)}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        </svg>
+        <span className="gg-match-ring-label">{percent}%</span>
+      </span>
+    );
+  };
+  const renderStarRow = (ratingLabel, reviewCount) => {
+    const value = parseRatingValue(ratingLabel);
+    const rounded = Math.round(value || 0);
+    return (
+      <span className="gg-star-row">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <svg
+            key={star}
+            className={star <= rounded ? "filled" : ""}
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
+          </svg>
+        ))}
+        {value ? (
+          <>
+            <strong>{value}</strong>
+            {reviewCount ? <span className="gg-star-count">({reviewCount})</span> : null}
+          </>
+        ) : (
+          <span className="gg-star-count">No ratings yet</span>
+        )}
+      </span>
+    );
+  };
+  const renderWorkerPhoto = (worker, name, className) => {
+    const photo = getWorkerPhoto(worker);
+    if (photo) {
+      return <img className={className} src={photo} alt={name} loading="lazy" />;
+    }
+    return (
+      <span className={`${className} is-initials`} aria-hidden="true">
+        {String(name || "W").slice(0, 2).toUpperCase()}
+      </span>
+    );
+  };
   const filteredHouseholdNotifications = useMemo(() => {
     const visibleNotifications = householdNotificationsWithReadState.filter(
       (notification) => !householdDismissedNotificationIds.includes(notification.id),
@@ -747,23 +951,6 @@ export default function AppViews({
     householdNotificationDateFilter,
     householdNotificationsWithReadState,
   ]);
-  const getHouseholdNotificationWorker = (notification) => {
-    if (!notification?.workerId) {
-      return null;
-    }
-    return registeredWorkers.find((worker) => String(worker.id) === String(notification.workerId)) || null;
-  };
-  const getHouseholdNotificationJob = (notification) => {
-    if (!notification?.jobId) {
-      return null;
-    }
-    return householdJobs.find((job) => String(job.id) === String(notification.jobId)) || null;
-  };
-  const openHouseholdNotificationPreview = (notification) => {
-    setHouseholdNotificationMenuId(null);
-    markNotificationRead(notification.id);
-    setHouseholdNotificationPreview(notification);
-  };
   const rememberDismissedHouseholdNotification = (notificationId) => {
     setHouseholdDismissedNotificationIds((previousIds) => {
       if (previousIds.includes(notificationId)) {
@@ -798,9 +985,6 @@ export default function AppViews({
         await deleteBackendNotification(notification.backendId);
       }
       rememberDismissedHouseholdNotification(notification.id);
-      if (householdNotificationPreview?.id === notification.id) {
-        setHouseholdNotificationPreview(null);
-      }
     } catch (error) {
       window.alert(error.message || "Unable to delete notification.");
     } finally {
@@ -876,31 +1060,10 @@ export default function AppViews({
       return true;
     }
     if (currentUser?.role === "household" && notification.jobId) {
-      openHouseholdJobDetail(notification.jobId);
+      openHouseholdDashboard();
       return true;
     }
     return false;
-  };
-  const closeHouseholdNotificationPreview = () => {
-    setHouseholdNotificationPreview(null);
-  };
-  const openHouseholdNotificationPreviewDetails = () => {
-    if (!householdNotificationPreview) {
-      return;
-    }
-    if (openStructuredNotificationAction(householdNotificationPreview)) {
-      closeHouseholdNotificationPreview();
-      return;
-    }
-    const worker = getHouseholdNotificationWorker(householdNotificationPreview);
-    closeHouseholdNotificationPreview();
-    if (worker) {
-      openMatchedWorkerProfile(worker, householdNotificationPreview.jobId);
-      return;
-    }
-    if (householdNotificationPreview.jobId) {
-      openHouseholdJobDetail(householdNotificationPreview.jobId);
-    }
   };
   const filteredHouseholdWorkerFeedback = useMemo(() => {
     if (!householdFeedbackDateFilter) {
@@ -972,17 +1135,26 @@ export default function AppViews({
       [draftKey]: { feedback: "", rating: "5" },
     }));
   };
+  // The backend computes this from both the application and the job status
+  // (apps/jobs/statuses.py) so web and mobile show the same words. The
+  // branches below only cover records not yet refreshed from the API.
   const getWorkerApplicationDisplayStatus = (job) => {
+    if (job.applicationStatusLabel) {
+      return job.applicationStatusLabel;
+    }
     if (job.status === "Completed" || job.applicationStatus === "Completed") {
       return "Completed";
     }
     if (job.status === "Waiting for Household Confirmation") {
-      return "Waiting for Household Confirmation";
+      return "Awaiting confirmation";
     }
     if (job.applicationStatus === "Hired") {
-      return "In Progress";
+      return "In progress";
     }
-    return job.applicationStatus || "Pending";
+    if (job.applicationStatus === "Hire Request") {
+      return "Awaiting worker response";
+    }
+    return "Pending";
   };
   const selectedWorkerJobPoint = getDistancePoint({
     barangay: selectedJob?.barangay || currentHousehold?.barangay,
@@ -1035,8 +1207,6 @@ export default function AppViews({
             100,
         )
       : 0;
-  const householdDashboardDetailJob =
-    householdJobs.find((job) => String(job.id) === String(householdDashboardDetailJobId)) || null;
   function getAssignedWorkerForJob(job) {
     if (!job) {
       return null;
@@ -1057,8 +1227,6 @@ export default function AppViews({
     const matchedWorkerId = (job.matchedWorkerIds || [])[0];
     return registeredWorkers.find((worker) => String(worker.id) === String(matchedWorkerId)) || null;
   }
-  const householdDashboardDetailWorker = getAssignedWorkerForJob(householdDashboardDetailJob);
-  const selectedJobAssignedWorker = getAssignedWorkerForJob(selectedJob);
   function getHouseholdReviewForJobWorker(job, worker) {
     if (!job || !worker) {
       return null;
@@ -1086,37 +1254,47 @@ export default function AppViews({
       }) || null
     );
   }
-  const activeHouseholdJobs = useMemo(
-    () =>
-      householdJobs.filter((job) => {
-        if (job.status === "Cancelled") {
-          return false;
-        }
-        return job.status !== "Completed" || job.canReview;
-      }),
+  // Dashboard = jobs still in motion; My Jobs = finished history. A job
+  // moves from one to the other the moment it's Completed or Cancelled --
+  // nothing lives in both places.
+  const inProcessHouseholdJobs = useMemo(
+    () => householdJobs.filter((job) => job.status !== "Completed" && job.status !== "Cancelled"),
     [householdJobs],
   );
+  const needsConfirmationHouseholdJobs = useMemo(
+    () => inProcessHouseholdJobs.filter((job) => job.status === "Waiting for Household Confirmation"),
+    [inProcessHouseholdJobs],
+  );
+  // A completed job still owes a review, so it also surfaces on the Dashboard
+  // under "Completed" as a reminder until it's rated -- it doesn't leave My
+  // Jobs though: that page is the complete record, rated or not.
   const pendingHouseholdReviewJobs = useMemo(
-    () => householdJobs.filter((job) => job.canReview),
+    () => householdJobs.filter((job) => job.status === "Completed" && job.canReview),
     [householdJobs],
   );
-  const filteredHouseholdJobs = useMemo(() => {
-    if (householdJobStatusFilter === "All") {
-      return activeHouseholdJobs;
-    }
-    return activeHouseholdJobs.filter(
-      (job) => String(job.status || "").toLowerCase() === householdJobStatusFilter.toLowerCase(),
-    );
-  }, [activeHouseholdJobs, householdJobStatusFilter]);
-  const selectedJobWorkerReview = getHouseholdReviewForJobWorker(selectedJob, selectedJobAssignedWorker);
-  const householdDashboardWorkerReview = getHouseholdReviewForJobWorker(
-    householdDashboardDetailJob,
-    householdDashboardDetailWorker,
+  const historyHouseholdJobs = useMemo(
+    () => householdJobs.filter((job) => job.status === "Completed" || job.status === "Cancelled"),
+    [householdJobs],
   );
-  const shouldShowSelectedJobReviewForm =
-    Boolean(selectedJob?.canReview) && selectedJobAssignedWorker && !selectedJobWorkerReview;
-  const shouldShowDashboardReviewForm =
-    Boolean(householdDashboardDetailJob?.canReview) && householdDashboardDetailWorker && !householdDashboardWorkerReview;
+  const historyCompletedJobs = useMemo(
+    () => historyHouseholdJobs.filter((job) => job.status === "Completed"),
+    [historyHouseholdJobs],
+  );
+  const historyCancelledJobs = useMemo(
+    () => historyHouseholdJobs.filter((job) => job.status === "Cancelled"),
+    [historyHouseholdJobs],
+  );
+  const householdTotalSpent = useMemo(
+    () => historyCompletedJobs.reduce((sum, job) => sum + (Number(job.offeredRate) || 0), 0),
+    [historyCompletedJobs],
+  );
+  const householdRatingsGiven = useMemo(
+    () => householdSubmittedReviews.filter((review) => review.rating != null).map((review) => Number(review.rating)),
+    [householdSubmittedReviews],
+  );
+  const householdAvgRatingGiven = householdRatingsGiven.length
+    ? householdRatingsGiven.reduce((sum, value) => sum + value, 0) / householdRatingsGiven.length
+    : 0;
   const renderHouseholdStarRatingInput = (labelId) => {
     const selectedRating = Number(householdReviewForm.rating || 0);
 
@@ -1137,49 +1315,79 @@ export default function AppViews({
       </div>
     );
   };
-  const openHouseholdDashboardJobPanel = (job) => {
-    const worker = getAssignedWorkerForJob(job);
-    setHouseholdDashboardDetailJobId(job.id);
-    setHouseholdDashboardReviewOpen(false);
+  // Shared by both places a household reviews a worker (My Jobs job detail and
+  // the dashboard job panel) so the same metrics are collected either way.
+  const renderHouseholdReviewMetricInputs = () => (
+    <div className="mt-4 pt-3 border-top household-metric-ratings">
+      <p className="small text-muted mb-3">Rate worker on specific metrics (optional):</p>
+      {[
+        ["quality_of_work", "Quality of Work"],
+        ["punctuality", "Punctuality"],
+        ["communication", "Communication"],
+        ["professionalism", "Professionalism"],
+      ].map(([field, label]) => {
+        const selectedValue = Number(householdReviewForm[field] || 0);
+        return (
+          <div className="household-metric-row" key={field}>
+            <label className="form-label mb-0">{label}</label>
+            <div className="household-metric-stars" role="radiogroup" aria-label={label}>
+              {[1, 2, 3, 4, 5].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  aria-checked={selectedValue === val}
+                  aria-label={`${val} star${val > 1 ? "s" : ""}`}
+                  role="radio"
+                  className={`household-metric-star-button ${selectedValue >= val ? "selected" : ""}`}
+                  onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, [field]: val }))}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+  // Dashboard modals. Both act on whichever job the card belongs to, so the
+  // job is put into selectedJobId first and the modal reads from selectedJob.
+  const openDashboardApplicantsModal = (job) => {
     setSelectedJobId(job.id);
-    setSelectedWorkerId(
-      worker
-        ? worker.id
-        : {
-            workerId: (job.applications || [])[0]?.workerId,
-            workerUsername: (job.applications || [])[0]?.workerUsername,
-            workerName: (job.applications || [])[0]?.workerName,
-          },
-    );
+    setSelectedWorkerId(null);
+    setDashboardModal({ type: "applicants", jobId: job.id });
   };
-  const closeHouseholdDashboardJobPanel = () => {
-    setHouseholdDashboardDetailJobId(null);
-    setHouseholdDashboardReviewOpen(false);
-  };
-  const openHouseholdDashboardReviewsFromJob = () => {
-    closeHouseholdDashboardJobPanel();
-    openHouseholdProfile();
-  };
-  const openReviewFormForWorker = (worker) => {
+  const openDashboardRateModal = (job, worker) => {
+    setSelectedJobId(job.id);
     if (worker) {
       setSelectedWorkerId(worker);
     }
-    setHouseholdDashboardReviewOpen(true);
+    // Start clean so a previous job's half-filled rating never carries over.
+    setHouseholdReviewForm(EMPTY_HOUSEHOLD_REVIEW_FORM);
+    setDashboardModal({ type: "rate", jobId: job.id });
   };
-  const confirmSelectedJobCompleted = () => {
-    if (!selectedJob) {
+  const openDashboardReportModal = (job) => {
+    setSelectedJobId(job.id);
+    setShowComplaintModal(true);
+  };
+  const closeDashboardModal = () => setDashboardModal(null);
+  // handleHireWorker reads selectedWorker from the render it was created in, so
+  // firing it in the same tick as setSelectedWorkerId would hire the previously
+  // selected worker. Park the id instead and let the effect below run it once
+  // selectedWorker has actually caught up.
+  const requestDashboardHire = (worker) => {
+    setSelectedWorkerId(worker);
+    setPendingHireWorkerId(worker?.id ?? null);
+  };
+  useEffect(() => {
+    if (pendingHireWorkerId == null) {
       return;
     }
-    openReviewFormForWorker(selectedJobAssignedWorker);
-    handleConfirmJobCompleted(selectedJob.id);
-  };
-  const confirmDashboardJobCompleted = () => {
-    if (!householdDashboardDetailJob) {
+    if (String(selectedWorker?.id ?? "") !== String(pendingHireWorkerId)) {
       return;
     }
-    openReviewFormForWorker(householdDashboardDetailWorker);
-    handleConfirmJobCompleted(householdDashboardDetailJob.id);
-  };
+    setPendingHireWorkerId(null);
+    setDashboardModal(null);
+    handleHireWorker();
+  }, [pendingHireWorkerId, selectedWorker?.id]);
   const handleHouseholdProfileEditSubmit = (event) => {
     if (!householdProfileEditing) {
       event.preventDefault();
@@ -1651,6 +1859,14 @@ export default function AppViews({
                       <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
                     )}
                   </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
                     {navIcon("verified")}
@@ -1769,6 +1985,14 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerApplications}>
                     {navIcon("applications")}
                     <span>My Applications</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -1899,80 +2123,100 @@ export default function AppViews({
                   {(aiModeActive ? aiRecommendedJobs || [] : filteredWorkerVisibleJobs).length > 0 ? (
                     (aiModeActive ? aiRecommendedJobs : filteredWorkerVisibleJobs).map((job) => (
                       <div className="col-lg-6" key={job.id}>
-                        <article className="job-card">
-                          <div className="d-flex justify-content-between align-items-start">
-                            <div>
-                              <h2 className="h5 mb-1">{job.jobTitle || job.serviceType}</h2>
-                              <p className="text-muted mb-1">{job.description || "No description provided."}</p>
+                        <article className="worker-jobcard">
+                          <div className="worker-jobcard-head">
+                            <div className="worker-jobcard-head-top">
+                              {job.householdVerificationStatus === "verified" ? (
+                                <span className="worker-jobcard-verified">✓ Verified</span>
+                              ) : (
+                                <span />
+                              )}
+                              {aiModeActive ? (
+                                <span className="worker-jobcard-pill is-match">
+                                  {Math.round((job.aiScore || 0) * 100)}% match
+                                </span>
+                              ) : (
+                                <span
+                                  className={`worker-jobcard-pill ${job.matchesSkill ? "is-match" : "is-other"}`}
+                                >
+                                  {job.matchesSkill ? "Matches Skills" : "Other Job"}
+                                </span>
+                              )}
                             </div>
-                            {aiModeActive ? (
-                              <span className="badge worker-skill-match">
-                                {Math.round((job.aiScore || 0) * 100)}% match
-                              </span>
-                            ) : (
-                              <span className={`badge ${job.matchesSkill ? "worker-skill-match" : "worker-skill-neutral"}`}>
-                                {job.matchesSkill ? "Matches Your Skills" : "Does not match skills"}
-                              </span>
+                            <div className="worker-jobcard-monogram">
+                              {getHouseholdInitials(job.householdName)}
+                            </div>
+                            <div className="worker-jobcard-household">{job.householdName}</div>
+                          </div>
+                          <div className="worker-jobcard-body">
+                            <div className="worker-jobcard-title-row">
+                              <h2 className="worker-jobcard-title">{job.jobTitle || job.serviceType}</h2>
+                              <p className="worker-jobcard-rate">
+                                <strong>{formatCurrency(job.offeredRate)}</strong>
+                                <span>/{(job.rateType || "Per Day").toLowerCase()}</span>
+                              </p>
+                            </div>
+                            <p className="worker-jobcard-location">
+                              {formatLocation(job.barangay, job.streetAddress)}
+                            </p>
+                            <p className="worker-jobcard-when">
+                              <span aria-hidden="true">🗓</span>
+                              <span>{formatDateTime(job.preferredDate, job.preferredTime)}</span>
+                              {getWorkerJobDistanceLabel(job) && (
+                                <span className="worker-jobcard-distance">
+                                  · {getWorkerJobDistanceLabel(job)}
+                                </span>
+                              )}
+                            </p>
+                            {aiModeActive && renderAiMatchBreakdown(job)}
+                            <div className="worker-jobcard-chips">
+                              {job.serviceType && (
+                                <span
+                                  className={`worker-jobcard-chip ${
+                                    job.matchesSkill || job.aiExactSkillMatch ? "is-match" : ""
+                                  }`}
+                                >
+                                  {job.serviceType}
+                                </span>
+                              )}
+                              {job.scheduleType && (
+                                <span className="worker-jobcard-chip">
+                                  {formatScheduleLabel(job.scheduleType)}
+                                </span>
+                              )}
+                            </div>
+                            {(job.jobStartDate || job.jobEndDate) && (
+                              <p className="worker-jobcard-period">
+                                {job.jobStartDate || "Not set"}
+                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
+                                {job.estimatedWorkingDays
+                                  ? ` (${job.estimatedWorkingDays} working day${Number(job.estimatedWorkingDays) === 1 ? "" : "s"})`
+                                  : ""}
+                              </p>
                             )}
-                          </div>
-                          {aiModeActive && renderAiMatchBreakdown(job)}
-                          <dl className="worker-job-card-details">
-                            <div>
-                              <dt>Service Type</dt>
-                              <dd>{job.serviceType || "Not set"}</dd>
-                            </div>
-                            <div>
-                              <dt>Schedule Type</dt>
-                              <dd>{formatScheduleLabel(job.scheduleType) || "Not set"}</dd>
-                            </div>
-                            <div>
-                              <dt>Preferred Date & Time</dt>
-                              <dd>{formatDateTime(job.preferredDate, job.preferredTime)}</dd>
-                            </div>
-                            <div>
-                              <dt>Offered Rate</dt>
-                              <dd className="text-primary">{formatWorkerJobPesoRate(job)}</dd>
-                            </div>
-                            <div>
-                              <dt>Location</dt>
-                              <dd>{formatLocation(job.barangay, job.streetAddress)}</dd>
-                            </div>
-                            <div>
-                              <dt>Reference Images</dt>
-                              <dd>{renderWorkerJobImages(job)}</dd>
-                            </div>
-                          </dl>
-                          <p className="mb-3">{job.householdName || "Household"}</p>
-                          <div className="worker-job-distance-badge mb-3">
-                            {aiModeActive && job.aiDistanceKm != null
-                              ? `${job.aiDistanceKm} km away`
-                              : getWorkerJobDistanceLabel(job)}
-                          </div>
-                          <div className="d-flex gap-2">
-                            <button
-                              className="btn btn-outline-secondary btn-sm flex-fill"
-                              type="button"
-                              onClick={() => openWorkerJobDetail(job.id)}
-                            >
-                              {" "}
-                              View Details{" "}
-                            </button>
-                            {job.canApply && (
+                            <div className="worker-jobcard-actions">
                               <button
-                                className="btn btn-primary btn-sm flex-fill"
+                                className="worker-jobcard-btn is-ghost"
                                 type="button"
+                                onClick={() => openWorkerJobDetail(job.id)}
+                              >
+                                View Details
+                              </button>
+                              <button
+                                className="worker-jobcard-btn is-primary"
+                                type="button"
+                                disabled={!job.canApply}
                                 onClick={() => handleApplyToJob(job.id)}
                               >
-                                {" "}
-                                Apply Now{" "}
+                                {job.canApply ? "Apply Now" : "Applied"}
                               </button>
+                            </div>
+                            {!job.canApply && !job.applicationStatus && (
+                              <p className="worker-jobcard-note">
+                                Applications are unavailable for this job right now.
+                              </p>
                             )}
                           </div>
-                          {!job.canApply && !job.applicationStatus && (
-                            <div className="alert alert-warning mt-3 mb-0 py-2 small">
-                              Applications are unavailable for this job right now.
-                            </div>
-                          )}
                         </article>
                       </div>
                     ))
@@ -2021,6 +2265,14 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerApplications}>
                     {navIcon("applications")}
                     <span>My Applications</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2091,13 +2343,13 @@ export default function AppViews({
                               <div className="household-feedback-copy">
                                 <div className="household-review-title-row">
                                   <h2>{authorName}</h2>
-                                  {review.overall_rating != null && <strong>{Number(review.overall_rating).toFixed(1)}/5</strong>}
-                                  {review.rating != null && !review.overall_rating && <strong>{review.rating}/5</strong>}
+                                  {review.overallRating != null && <strong>{Number(review.overallRating).toFixed(1)}/5</strong>}
+                                  {review.rating != null && review.overallRating == null && <strong>{Number(review.rating).toFixed(1)}/5</strong>}
                                 </div>
-                                {(review.quality_of_work || review.punctuality || review.communication || review.professionalism) && (
+                                {(review.qualityOfWork || review.punctuality || review.communication || review.professionalism) && (
                                   <div style={{ fontSize: "0.9em", marginBottom: "0.5rem" }}>
                                     <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "0.25rem" }}>
-                                      {review.quality_of_work && <span>Quality: <strong>{review.quality_of_work}⭐</strong></span>}
+                                      {review.qualityOfWork && <span>Quality: <strong>{review.qualityOfWork}⭐</strong></span>}
                                       {review.punctuality && <span>Punctuality: <strong>{review.punctuality}⭐</strong></span>}
                                     </div>
                                     <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
@@ -2215,6 +2467,14 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerApplications}>
                     {navIcon("applications")}
                     <span>My Applications</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2334,6 +2594,14 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerApplications}>
                     {navIcon("applications")}
                     <span>My Applications</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2537,18 +2805,46 @@ export default function AppViews({
                 <div className="row g-3 mt-2">
                   <div className="col-12">
                     <div className="card border-0 shadow-sm">
-                      <div className="card-header bg-success text-white fw-bold">Skills & Expertise</div>
+                      <div className="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                        <span>Skills & Expertise</span>
+                        {workerProfileEditing && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-light"
+                            style={{ color: '#4CAF50' }}
+                            onClick={() => setShowSkillModal(true)}
+                          >
+                            + Add Skill
+                          </button>
+                        )}
+                      </div>
                       <div className="card-body">
                         <div className="skills-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
                           {(workerProfileForm.skills || []).length > 0 ? (
                             workerProfileForm.skills.map((skill) => (
-                              <div key={skill} className="p-3 rounded" style={{ backgroundColor: '#f8f9fa', borderLeft: '4px solid #4CAF50' }}>
+                              <div
+                                key={skill}
+                                className="p-3 rounded position-relative"
+                                style={{ backgroundColor: '#f8f9fa', borderLeft: '4px solid #4CAF50' }}
+                              >
+                                {workerProfileEditing && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-danger position-absolute top-0 end-0 m-1 py-0 px-2"
+                                    aria-label={`Remove ${skill}`}
+                                    onClick={() => toggleWorkerProfileSkill(skill)}
+                                  >
+                                    ×
+                                  </button>
+                                )}
                                 <div className="fw-600">{skill}</div>
                                 <span className="badge bg-success mt-2">Proficient</span>
                               </div>
                             ))
                           ) : (
-                            <p className="text-muted">No skills added yet. Click Edit to add your skills.</p>
+                            <p className="text-muted">
+                              No skills added yet. {workerProfileEditing && "Click Add Skill to add one."}
+                            </p>
                           )}
                         </div>
                       </div>
@@ -2721,6 +3017,41 @@ export default function AppViews({
                       className="profile-photo-modal-image"
                       onClick={(event) => event.stopPropagation()}
                     />
+                  </div>
+                )}
+                {showSkillModal && (
+                  <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={() => setShowSkillModal(false)}>
+                    <div className="modal-dialog modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
+                      <div className="modal-content">
+                        <div className="modal-header bg-success text-white">
+                          <h5 className="modal-title">Add Skills</h5>
+                          <button type="button" className="btn-close btn-close-white" onClick={() => setShowSkillModal(false)}></button>
+                        </div>
+                        <div className="modal-body">
+                          <p className="text-muted small mb-3">
+                            Select up to {MAX_WORKER_SKILLS} skills that best describe your expertise.
+                          </p>
+                          <div className="skills-grid">
+                            {SKILLS.map((skill) => (
+                              <label key={skill} className="form-check">
+                                <input
+                                  type="checkbox"
+                                  className="form-check-input"
+                                  checked={(workerProfileForm.skills || []).includes(skill)}
+                                  onChange={() => toggleWorkerProfileSkill(skill)}
+                                />
+                                <span className="form-check-label">{skill}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="modal-footer">
+                          <button type="button" className="btn btn-success" onClick={() => setShowSkillModal(false)}>
+                            Done
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
                 {showCertificationModal && (
@@ -2978,6 +3309,230 @@ export default function AppViews({
             </div>
           </section>
         )}
+        {view === "worker-my-jobs" && (
+          <section className="worker-dashboard">
+            <div className="worker-layout">
+              <aside className="worker-sidebar">
+                <div className="worker-sidebar-head">
+                  <div className="worker-logo">GG</div>
+                  <p className="worker-brand mb-0">GawaGo Community Platform</p>
+                </div>
+                <nav className="worker-nav">
+                  <button className="worker-nav-item" onClick={openWorkerDashboard}>
+                    {navIcon("dashboard")}
+                    <span>Dashboard</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openAllWorkerFindJobs}>
+                    {navIcon("search")}
+                    <span>Find Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerProfile}>
+                    {navIcon("profile")}
+                    <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerApplications}>
+                    {navIcon("applications")}
+                    <span>My Applications</span>
+                    {workerApplicationUnreadCount > 0 && (
+                      <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
+                    )}
+                  </button>
+                  <button className="worker-nav-item active">
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
+                  <span className="worker-nav-section">Account</span>
+                  <button className="worker-nav-item" onClick={openWorkerGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerNotifications}>
+                    {navIcon("notifications")}
+                    <span>Notifications</span>
+                  </button>
+                </nav>
+                <div className="worker-sidebar-footer">
+                  <button className="worker-sidebar-logout" type="button" onClick={handleLogout}>
+                    {navIcon("logout")}
+                    <span>Log Out</span>
+                  </button>
+                </div>
+              </aside>
+              <div className="worker-content">
+                <div className="profile-card p-3 p-md-4">
+                  <h1 className="h4 mb-1">My Jobs</h1>
+                  <p className="text-muted mb-0">
+                    The work you were hired for, and everything you have finished.
+                  </p>
+                </div>
+
+                <p className="household-process-section-label">
+                  In progress &middot; {workerInProgressJobs.length}
+                </p>
+                {workerInProgressJobs.length === 0 ? (
+                  <div className="profile-card p-4 text-center text-muted">
+                    No active jobs right now.{" "}
+                    <button type="button" className="btn btn-link p-0 align-baseline" onClick={openAllWorkerFindJobs}>
+                      Find work
+                    </button>{" "}
+                    to get started.
+                  </div>
+                ) : (
+                  <div className="household-process-grid">
+                    {workerInProgressJobs.map((job) => {
+                      const awaitingConfirmation = job.status === "Waiting for Household Confirmation";
+                      return (
+                        <article
+                          className={`household-process-card ${awaitingConfirmation ? "needs-action" : ""}`}
+                          key={`worker-job-${job.id}`}
+                        >
+                          <div className="household-process-card-top">
+                            <div
+                              className={`household-process-status-icon ${awaitingConfirmation ? "review" : "assigned"}`}
+                            >
+                              {navIcon("jobs")}
+                            </div>
+                            <div className="household-process-card-top-text">
+                              <h3>{job.jobTitle || job.serviceType}</h3>
+                              <span
+                                className={`household-process-status-line ${awaitingConfirmation ? "review" : "assigned"}`}
+                              >
+                                <i aria-hidden="true" />
+                                {getWorkerApplicationDisplayStatus(job)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="household-process-worker-row">
+                            <div className="household-process-mini-avatar">
+                              {String(job.householdName || job.householdUsername || "H").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <span>{job.householdName || job.householdUsername || "Household"}</span>
+                              <small>{formatLocation(job.barangay, job.streetAddress)}</small>
+                            </div>
+                          </div>
+                          <p className="household-process-meta">
+                            {formatRate(job.offeredRate, job.rateType)}
+                            {job.jobStartDate ? ` · Started ${job.jobStartDate}` : ""}
+                          </p>
+                          {awaitingConfirmation ? (
+                            <div className="household-process-note">
+                              Marked complete &mdash; waiting for{" "}
+                              {job.householdName || job.householdUsername || "the household"} to confirm.
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-success household-process-cta"
+                              onClick={() => setWorkerCompletionConfirmJob(job)}
+                            >
+                              Mark job as complete
+                            </button>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <p className="household-process-section-label">
+                  Completed &middot; {workerCompletedJobs.length}
+                </p>
+                {workerCompletedJobs.length === 0 ? (
+                  <div className="profile-card p-4 text-center text-muted">
+                    Your finished jobs will appear here.
+                  </div>
+                ) : (
+                  <div className="household-process-grid">
+                    {workerCompletedJobs.map((job) => {
+                      const review = getWorkerReviewForJob(job.id);
+                      return (
+                        <article className="household-process-card" key={`worker-done-${job.id}`}>
+                          <div className="household-process-card-top">
+                            <div className="household-process-status-icon review">{navIcon("jobs")}</div>
+                            <div className="household-process-card-top-text">
+                              <h3>{job.jobTitle || job.serviceType}</h3>
+                              <span className="household-process-status-line review">
+                                <i aria-hidden="true" />
+                                {job.completedAt ? `Completed ${formatDateTime(job.completedAt)}` : "Completed"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="household-process-worker-row">
+                            <div className="household-process-mini-avatar">
+                              {String(job.householdName || job.householdUsername || "H").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <span>{job.householdName || job.householdUsername || "Household"}</span>
+                              <small>{formatRate(job.offeredRate, job.rateType)}</small>
+                            </div>
+                          </div>
+                          <p className="household-process-meta">
+                            {review
+                              ? `Rating received: ${Number(review.rating).toFixed(1)} / 5`
+                              : "No rating yet"}
+                          </p>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            {workerCompletionConfirmJob && (
+              <div
+                className="gg-modal-backdrop"
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setWorkerCompletionConfirmJob(null)}
+              >
+                <div className="gg-modal-panel" onClick={(event) => event.stopPropagation()}>
+                  <div className="gg-modal-head">
+                    <div>
+                      <p className="gg-modal-kicker">Mark as complete</p>
+                      <h2>
+                        {workerCompletionConfirmJob.jobTitle || workerCompletionConfirmJob.serviceType}
+                      </h2>
+                    </div>
+                  </div>
+                  <div className="gg-modal-body">
+                    <p className="mb-0">
+                      This lets{" "}
+                      {workerCompletionConfirmJob.householdName ||
+                        workerCompletionConfirmJob.householdUsername ||
+                        "the household"}{" "}
+                      know the job is finished, so they can review and confirm.
+                    </p>
+                  </div>
+                  <div className="gg-modal-foot">
+                    <button
+                      type="button"
+                      className="gg-modal-foot-btn"
+                      onClick={() => setWorkerCompletionConfirmJob(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-success"
+                      onClick={() => {
+                        const job = workerCompletionConfirmJob;
+                        setWorkerCompletionConfirmJob(null);
+                        handleWorkerRequestCompletion(job.id, "I have completed the service today.");
+                      }}
+                    >
+                      Confirm complete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
         {view === "worker-applications" && (
           <section className="worker-dashboard">
             <div className="worker-layout">
@@ -3005,6 +3560,14 @@ export default function AppViews({
                     {workerApplicationUnreadCount > 0 && (
                       <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
                     )}
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -3134,13 +3697,19 @@ export default function AppViews({
                       <span>My Jobs</span>
                     </button>
                   ) : (
-                    <button className="worker-nav-item" onClick={openWorkerApplications}>
-                      {navIcon("applications")}
-                      <span>My Applications</span>
-                      {workerApplicationUnreadCount > 0 && (
-                        <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
-                      )}
-                    </button>
+                    <>
+                      <button className="worker-nav-item" onClick={openWorkerApplications}>
+                        {navIcon("applications")}
+                        <span>My Applications</span>
+                        {workerApplicationUnreadCount > 0 && (
+                          <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
+                        )}
+                      </button>
+                      <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                        {navIcon("jobs")}
+                        <span>My Jobs</span>
+                      </button>
+                    </>
                   )}
                   <button className="worker-nav-item active">{navIcon("verified")}
                     <span>{verificationNavLabel}</span></button>
@@ -3362,6 +3931,14 @@ export default function AppViews({
                     {workerApplicationUnreadCount > 0 && (
                       <span className="nav-count-badge">{workerApplicationUnreadCount}</span>
                     )}
+                  </button>
+                  <button className="worker-nav-item" onClick={openWorkerMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -3744,6 +4321,10 @@ export default function AppViews({
                     {navIcon("verification")}
                     <span>Verification Queue</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button
                     className={`worker-nav-item ${adminSection === "history" ? "active" : ""}`}
@@ -4019,6 +4600,10 @@ export default function AppViews({
                     {navIcon("jobs")}
                     <span>My Jobs</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
@@ -4261,10 +4846,15 @@ export default function AppViews({
                       <JobImageUpload maxImages={5} maxFileSize={5 * 1024 * 1024} onImagesChange={householdJobImages.onChange} />
                     </div>
                     <div className="household-post-actions">
-                      <button type="submit" className="btn btn-primary">
-                        Post Job
+                      <button type="submit" className="btn btn-primary" disabled={isSubmittingJob}>
+                        {isSubmittingJob ? "Posting..." : "Post Job"}
                       </button>
-                      <button type="button" className="btn btn-outline-secondary" onClick={openHouseholdDashboard}>
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary"
+                        onClick={openHouseholdDashboard}
+                        disabled={isSubmittingJob}
+                      >
                         Cancel
                       </button>
                     </div>
@@ -4294,6 +4884,10 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
                     {navIcon("jobs")}
                     <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active">{navIcon("profile")}
@@ -4575,6 +5169,10 @@ export default function AppViews({
                     {navIcon("jobs")}
                     <span>My Jobs</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
@@ -4697,6 +5295,10 @@ export default function AppViews({
                     {navIcon("jobs")}
                     <span>My Jobs</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
@@ -4816,6 +5418,211 @@ export default function AppViews({
             </div>
           </section>
         )}
+        {view === "household-job-matches" && (
+          <section className="worker-dashboard household-job-matches-page">
+            <div className="worker-layout">
+              <aside className="worker-sidebar">
+                <div className="worker-sidebar-head">
+                  <div className="worker-logo">GG</div>
+                  <p className="worker-brand mb-0">GawaGo Community Platform</p>
+                </div>
+                <nav className="worker-nav">
+                  <button className="worker-nav-item active" onClick={openHouseholdDashboard}>
+                    {navIcon("dashboard")}
+                    <span>Dashboard</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdPostJob}>
+                    {navIcon("post-job")}
+                    <span>Post a Job</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
+                    {navIcon("jobs")}
+                    <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
+                  <span className="worker-nav-section">Account</span>
+                  <button className="worker-nav-item" onClick={openHouseholdProfile}>
+                    {navIcon("profile")}
+                    <span>My Profile</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
+                    {navIcon("verified")}
+                    <span>{verificationNavLabel}</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openHouseholdNotifications}>
+                    {navIcon("notifications")}
+                    <span>Notifications</span>
+                  </button>
+                </nav>
+                <div className="worker-sidebar-footer">
+                  <button className="worker-sidebar-logout" type="button" onClick={handleLogout}>
+                    {navIcon("logout")}
+                    <span>Log Out</span>
+                  </button>
+                </div>
+              </aside>
+              <div className="worker-content">
+                {householdScanActive ? (
+                  <div className="worker-ai-hero">
+                    <div className="worker-ai-hero-decor worker-ai-hero-decor-1" />
+                    <div className="worker-ai-hero-decor worker-ai-hero-decor-2" />
+                    <div className="worker-ai-hero-inner">
+                      <div className="worker-ai-hero-top">
+                        <div className="worker-ai-hero-left">
+                          <div className="worker-ai-hero-eyebrow">JOB POSTED</div>
+                          <h1 className="worker-ai-hero-title">Finding workers for your job</h1>
+                          <p className="worker-ai-hero-desc">
+                            {selectedJob?.jobTitle || "Your job"} is live. We&apos;re matching it to available
+                            workers nearby by skill fit and travel distance.
+                          </p>
+                        </div>
+                        <div className="worker-ai-hero-stat">
+                          <div className="worker-ai-hero-stat-num">{selectedJob?.workersNeeded || 1}</div>
+                          <div className="worker-ai-hero-stat-label">
+                            {(selectedJob?.workersNeeded || 1) === 1 ? "worker needed" : "workers needed"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="worker-ai-scan-wrap">
+                        <div className="worker-ai-scan-stage">
+                          {householdScatterTags.map((tag) => (
+                            <span
+                              key={tag.id}
+                              className="worker-ai-scan-tag"
+                              style={{
+                                left: `${tag.left}%`,
+                                top: `${tag.top}%`,
+                                transform: `rotate(${tag.rotate}deg)`,
+                              }}
+                            >
+                              {tag.label}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="worker-ai-scan-status">
+                          {HOUSEHOLD_SCAN_STATUS_PHASES[householdScanStatusIndex]}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                <div className="gg-matches-topbar">
+                  <button type="button" className="gg-matches-back" onClick={openHouseholdDashboard}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    Back to Dashboard
+                  </button>
+                  <div className="gg-matches-heading">
+                    <div>
+                      <p className="gg-matches-eyebrow">AI Matched Workers</p>
+                      <h1>{selectedJob?.jobTitle || "Your job is live"}</h1>
+                      <p className="gg-matches-sub">
+                        Ranked by skill fit ({Math.round(AI_SKILL_WEIGHT * 100)}%) and travel distance (
+                        {Math.round((1 - AI_SKILL_WEIGHT) * 100)}%).
+                      </p>
+                    </div>
+                    <span className="gg-matches-live">
+                      <i aria-hidden="true" />
+                      Live matches
+                    </span>
+                  </div>
+                  <div className="gg-matches-filters" role="group" aria-label="Filter matches by skill">
+                    {matchedSkillOptions.map((skill) => (
+                      <button
+                        type="button"
+                        key={skill}
+                        className={`gg-matches-chip ${matchedSkillFilter === skill ? "active" : ""}`}
+                        aria-pressed={matchedSkillFilter === skill}
+                        onClick={() => setMatchedSkillFilter(skill)}
+                      >
+                        {skill}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <section className="gg-matches-body">
+                  {visibleMatchedWorkers.length > 0 ? (
+                    <div className="gg-match-grid">
+                      {visibleMatchedWorkers.map((worker) => {
+                        const workerName = getDisplayName(worker.firstName, worker.lastName, worker.username);
+                        const extraSkills = Math.max(0, (worker.skills || []).length - 2);
+                        return (
+                          <article className="gg-match-card" key={worker.username || worker.id}>
+                            <div className="gg-match-photo">
+                              {renderWorkerPhoto(worker, workerName, "gg-match-photo-img")}
+                              <span className="gg-match-photo-shade" aria-hidden="true" />
+                              {worker.verification === "Verified" && (
+                                <span className="gg-match-verified">&#10003; Verified</span>
+                              )}
+                              <span className="gg-match-ring-slot">{renderMatchRing(worker.aiScore)}</span>
+                              <div className="gg-match-photo-ident">
+                                <h3>{workerName}</h3>
+                                <p>{worker.barangay || "Location not set"}</p>
+                              </div>
+                              <span className="gg-match-rate">{formatCurrency(worker.dailyRate)}/day</span>
+                            </div>
+                            <div className="gg-match-info">
+                              <div className="gg-match-meta">
+                                {renderStarRow(worker.rating, worker.reviewsDone)}
+                                <span>&middot; {formatDistance(worker.distanceKm, worker.distanceLabel)}</span>
+                                <span>
+                                  &middot; {worker.completedJobs || 0}{" "}
+                                  {(worker.completedJobs || 0) === 1 ? "job" : "jobs"}
+                                </span>
+                              </div>
+                              <div className="gg-match-skills">
+                                {(worker.skills || []).slice(0, 2).map((skill) => (
+                                  <span key={`${worker.id}-${skill}`}>{skill}</span>
+                                ))}
+                                {extraSkills > 0 && <span className="muted">+{extraSkills}</span>}
+                              </div>
+                              {worker.bio && <p className="gg-match-bio">{worker.bio}</p>}
+                              <div className="gg-match-actions">
+                                <button
+                                  type="button"
+                                  className="gg-match-profile"
+                                  onClick={() => openMatchedWorkerProfile(worker, selectedJob.id)}
+                                >
+                                  View Profile
+                                </button>
+                                <button
+                                  type="button"
+                                  className="gg-match-hire"
+                                  onClick={() => requestDashboardHire(worker)}
+                                >
+                                  Send a Request to Worker
+                                </button>
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="household-applicant-empty">
+                      {aiMatchedWorkersForSelectedJob.length > 0
+                        ? `No matched worker lists ${matchedSkillFilter} yet. Pick another category to see the rest.`
+                        : "No workers matched this job yet. Workers need listed skills, a saved location, and must fall inside the job's search radius. Widen the radius on the job to reach further."}
+                    </div>
+                  )}
+                  <div className="d-flex gap-2 flex-wrap mt-3">
+                    <button type="button" className="btn btn-outline-secondary" onClick={openHouseholdMyJobs}>
+                      Go to My Jobs
+                    </button>
+                  </div>
+                </section>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
         {view === "household-my-jobs" && (
           <section className="worker-dashboard household-my-jobs-page">
             <div className="worker-layout">
@@ -4835,6 +5642,10 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item active">{navIcon("jobs")}
                     <span>My Jobs</span></button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
@@ -4857,508 +5668,207 @@ export default function AppViews({
                 </div>
               </aside>
               <div className="worker-content">
-                <h1 className="household-my-jobs-title">My Jobs</h1>
-                {!activeHouseholdJobs.length && (
-                  <div className="profile-card mt-3">
-                    <div className="p-4 text-center">
-                      <h2 className="h5 mb-2">No active jobs</h2>
-                      <p className="text-muted mb-3">
-                        {" "}
-                        Completed and cancelled jobs are available in your dashboard recent jobs.{" "}
-                      </p>
-                      <button className="btn btn-primary" onClick={openHouseholdPostJob}>
-                        {" "}
-                        Post a New Job{" "}
-                      </button>
+                <div className="household-history-topline">
+                  <h1 className="household-my-jobs-title">My Jobs</h1>
+                  <p>Your complete job history &mdash; every completed and cancelled job in one place.</p>
+                </div>
+
+                <div className="household-history-stats">
+                  <div className="household-history-stat completed">
+                    <div className="household-history-stat-icon">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </div>
+                    <div>
+                      <strong>{historyCompletedJobs.length}</strong>
+                      <span>Jobs Completed</span>
                     </div>
                   </div>
-                )}
-                {activeHouseholdJobs.length > 0 && (
-                  <div className="household-my-jobs-panel mt-3">
-                    <div className="household-my-jobs-filters">
+                  <div className="household-history-stat spent">
+                    <div className="household-history-stat-icon">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <line x1="12" y1="1" x2="12" y2="23"></line>
+                        <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path>
+                      </svg>
+                    </div>
+                    <div>
+                      <strong>{formatCurrency(householdTotalSpent)}</strong>
+                      <span>Total Spent</span>
+                    </div>
+                  </div>
+                  <div className="household-history-stat rating">
+                    <div className="household-history-stat-icon">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
+                      </svg>
+                    </div>
+                    <div>
+                      <strong>{householdRatingsGiven.length ? householdAvgRatingGiven.toFixed(1) : "—"}</strong>
+                      <span>Avg Rating Given</span>
+                    </div>
+                  </div>
+                </div>
+
+                {historyHouseholdJobs.length === 0 ? (
+                  <div className="profile-card p-4 text-center text-muted mt-3">
+                    No finished jobs yet. Once a job is completed or cancelled, it&rsquo;ll show up here. Still-active
+                    jobs live on your{" "}
+                    <button type="button" className="btn btn-link p-0 align-baseline" onClick={openHouseholdDashboard}>
+                      Dashboard
+                    </button>
+                    .
+                  </div>
+                ) : (
+                  <>
+                    <div className="household-history-tabs">
                       {[
-                        ["All", "All Jobs"],
-                        ["Open", "Open"],
-                        ["Completed", "Completed"],
-                      ].map(([status, label]) => (
+                        ["all", "All Jobs", historyHouseholdJobs.length],
+                        ["completed", "Completed", historyCompletedJobs.length],
+                        ["cancelled", "Cancelled", historyCancelledJobs.length],
+                      ].map(([key, label, count]) => (
                         <button
                           type="button"
-                          className={`household-job-filter ${householdJobStatusFilter === status ? "active" : ""}`}
-                          key={status}
-                          onClick={() => setHouseholdJobStatusFilter(status)}
+                          key={key}
+                          className={`household-history-tab ${myJobsFilter === key ? "active" : ""}`}
+                          onClick={() => setMyJobsFilter(key)}
                         >
                           {label}
+                          {count > 0 && <span className="household-history-tab-count">{count}</span>}
                         </button>
                       ))}
                     </div>
-                    <div className="my-jobs-list">
-                      {filteredHouseholdJobs.length > 0 ? (
-                        filteredHouseholdJobs.map((job) => {
-                          return (
-                            <article
-                              key={job.id}
-                              className={`job-summary-card ${selectedJob?.id === job.id ? "active" : ""}`}
-                            >
-                              <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{job.status}</span>
-                              <h2 className="job-summary-title">{job.jobTitle || job.serviceType}</h2>
-                              <dl className="job-summary-meta">
+
+                    <div className="household-history-list">
+                      {(myJobsFilter === "completed"
+                        ? historyCompletedJobs
+                        : myJobsFilter === "cancelled"
+                          ? historyCancelledJobs
+                          : historyHouseholdJobs
+                      ).map((job) => {
+                        const worker = getAssignedWorkerForJob(job);
+                        const workerName = worker
+                          ? getDisplayName(worker.firstName, worker.lastName, worker.username)
+                          : null;
+                        const review = getHouseholdReviewForJobWorker(job, worker);
+                        const isCancelled = job.status === "Cancelled";
+                        const starRating = Math.round(Number(review?.rating) || 0);
+                        return (
+                          <article key={job.id} className={`household-history-card ${isCancelled ? "cancelled" : ""}`}>
+                            <div className="household-history-top">
+                              <h3>{job.jobTitle || job.serviceType}</h3>
+                              <span className={`household-history-pill ${isCancelled ? "cancelled" : "completed"}`}>
+                                {job.status}
+                              </span>
+                            </div>
+                            <p className="household-history-meta">
+                              {job.serviceType} &middot; {formatDateTime(job.preferredDate, job.preferredTime) || "Date not set"}
+                              {" "}&middot;{" "}
+                              {job.barangay || "Location not set"}
+                            </p>
+
+                            {isCancelled ? (
+                              <div className="household-history-cancelled-note">
+                                <span className="household-history-x">&times;</span>
                                 <div>
-                                  <dt>Offer Rate:</dt>
-                                  <dd>{formatRate(job.offeredRate, job.rateType)}</dd>
+                                  <strong>No worker was hired</strong>
+                                  <p>Job was cancelled before a worker was assigned.</p>
                                 </div>
-                                <div>
-                                  <dt>Schedule:</dt>
-                                  <dd>{formatDateTime(job.preferredDate, job.preferredTime)}</dd>
+                              </div>
+                            ) : (
+                              <div className="household-history-body">
+                                <div className="household-history-worker">
+                                  <div className="household-history-worker-avatar">
+                                    {worker ? String(workerName).slice(0, 2).toUpperCase() : "?"}
+                                  </div>
+                                  <div className="household-history-worker-info">
+                                    <p className="household-history-worker-name">
+                                      {worker ? workerName : "Worker record unavailable"}
+                                      {worker?.verification === "Verified" && <span className="household-history-check">&#10003;</span>}
+                                    </p>
+                                    {worker && (
+                                      <p className="household-history-worker-rating">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                          <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
+                                        </svg>
+                                        {Number.parseFloat(worker.rating) ? Number.parseFloat(worker.rating).toFixed(1) : "New"}
+                                        {" · "}
+                                        {worker.reviewsDone || 0} reviews
+                                      </p>
+                                    )}
+                                    {worker && (
+                                      <div className="household-history-worker-tags">
+                                        {(worker.skills || []).slice(0, 1).map((skill) => (
+                                          <span key={skill}>{skill}</span>
+                                        ))}
+                                        <span className="verified">{worker.verification || "Not Yet Verified"}</span>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                                <div>
-                                  <dt>Applicants:</dt>
-                                  <dd>{(job.applications || []).length}</dd>
+
+                                <div className="household-history-side">
+                                  <div className="household-history-rate-block">
+                                    <span className="household-history-rate">{formatRate(job.offeredRate, job.rateType)}</span>
+                                  </div>
+                                  {review ? (
+                                    <div className="household-history-review">
+                                      <p className="household-history-review-label">Your Rating</p>
+                                      <div className="household-history-stars">
+                                        {[1, 2, 3, 4, 5].map((starValue) => (
+                                          <svg
+                                            key={starValue}
+                                            width="13"
+                                            height="13"
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                            className={starValue > starRating ? "empty" : ""}
+                                            aria-hidden="true"
+                                          >
+                                            <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
+                                          </svg>
+                                        ))}
+                                        <strong>{Number(review.rating || 0).toFixed(1)}/5</strong>
+                                      </div>
+                                      {review.feedback && (
+                                        <p className="household-history-quote">&ldquo;{review.feedback}&rdquo;</p>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="household-history-actions">
+                                      <button
+                                        type="button"
+                                        className="household-history-rate-btn"
+                                        disabled={!worker}
+                                        onClick={() => openDashboardRateModal(job, worker)}
+                                      >
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                          <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
+                                        </svg>
+                                        Rate Worker
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="household-history-report-link"
+                                        onClick={() => openDashboardReportModal(job)}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
+                                          <line x1="4" y1="22" x2="4" y2="15"></line>
+                                        </svg>
+                                        Report an Issue
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
-                              </dl>
-                              <button
-                                type="button"
-                                className="btn btn-primary job-summary-action"
-                                onClick={() => openHouseholdJobDetail(job.id)}
-                              >
-                                View Details
-                              </button>
-                              {selectedJob?.id === job.id && (
-                                <div className="alert alert-info mt-3 mb-0 py-2">
-                                  Hiring progress: {getHiringProgressLabel(job)} worker(s) hired. Pending applications:{" "}
-                                  {getPendingApplicationCount(job)}.
-                                </div>
-                              )}
-                            </article>
-                          );
-                        })
-                      ) : (
-                        <article className="household-my-jobs-empty">
-                          <h2>No {householdJobStatusFilter.toLowerCase()} jobs found</h2>
-                          <p className="mb-0">There are no active jobs under this status.</p>
-                        </article>
-                      )}
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
                     </div>
-                  </div>
+                  </>
                 )}
-              </div>
-            </div>
-          </section>
-        )}
-        {view === "household-job-detail" && selectedJob && (
-          <section className="worker-dashboard household-job-detail-page">
-            <div className="worker-layout">
-              <aside className="worker-sidebar">
-                <div className="worker-sidebar-head">
-                  <div className="worker-logo">GG</div>
-                  <p className="worker-brand mb-0">GawaGo Community Platform</p>
-                </div>
-                <nav className="worker-nav">
-                  <button className="worker-nav-item" onClick={openHouseholdDashboard}>
-                    {navIcon("dashboard")}
-                    <span>Dashboard</span>
-                  </button>
-                  <button className="worker-nav-item" onClick={openHouseholdPostJob}>
-                    {navIcon("post-job")}
-                    <span>Post a Job</span>
-                  </button>
-                  <button className="worker-nav-item active" onClick={openHouseholdMyJobs}>
-                    {navIcon("jobs")}
-                    <span>My Jobs</span>
-                  </button>
-                  <span className="worker-nav-section">Account</span>
-                  <button className="worker-nav-item" onClick={openHouseholdProfile}>
-                    {navIcon("profile")}
-                    <span>My Profile</span>
-                  </button>
-                  <button className="worker-nav-item" onClick={openHouseholdGetVerified}>
-                    {navIcon("verified")}
-                    <span>{verificationNavLabel}</span>
-                  </button>
-                  <button className="worker-nav-item" onClick={openHouseholdNotifications}>
-                    {navIcon("notifications")}
-                    <span>Notifications</span>
-                  </button>
-                </nav>
-                <div className="worker-sidebar-footer">
-                  <button className="worker-sidebar-logout" type="button" onClick={handleLogout}>
-                    {navIcon("logout")}
-                    <span>Log Out</span>
-                  </button>
-                </div>
-              </aside>
-              <div className="worker-content">
-                <h1 className="household-detail-page-title mb-3">Job Details</h1>
-
-                <section className="household-detail-panel profile-card p-3 p-md-4">
-                  <div className="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                    <h2 className="household-detail-job-title">{selectedJob.jobTitle || selectedJob.serviceType}</h2>
-                    <span className={`badge ${getJobStatusBadgeClass(selectedJob.status)}`}>{selectedJob.status}</span>
-                  </div>
-                  <div className="household-detail-grid row g-3 mt-1">
-                    <div className="col-md-4">
-                    <div className="household-detail-info-card h-100">
-                      <p>Service Type</p>
-                      <strong>{selectedJob.serviceType}</strong>
-                    </div>
-                    </div>
-                    <div className="col-md-4">
-                    <div className="household-detail-info-card h-100">
-                      <p>Location</p>
-                      <strong>{formatLocation(selectedJob.barangay, selectedJob.streetAddress)}</strong>
-                    </div>
-                    </div>
-                    <div className="col-md-4">
-                    <div className="household-detail-info-card h-100">
-                      <p>Offered Rate</p>
-                      <strong>{formatRate(selectedJob.offeredRate, selectedJob.rateType)}</strong>
-                    </div>
-                    </div>
-                    <div className="col-md-4">
-                    <div className="household-detail-info-card h-100">
-                      <p>Schedule</p>
-                      <strong>{formatDateTime(selectedJob.preferredDate, selectedJob.preferredTime)}</strong>
-                    </div>
-                    </div>
-                    <div className="col-md-4">
-                    <div className="household-detail-info-card h-100">
-                      <p>Workers Needed</p>
-                      <strong>{selectedJob.workersNeeded || selectedJob.workerSlots || 1} worker(s)</strong>
-                    </div>
-                    </div>
-                    <div className="col-md-4">
-                    <div className="household-detail-info-card h-100">
-                      <p>Hiring Status</p>
-                      <strong>{getHiringProgressLabel(selectedJob)} Hired</strong>
-                    </div>
-                    </div>
-                  </div>
-                  {selectedJob.status !== "Cancelled" && (
-                    <button
-                      className="btn btn-outline-danger household-detail-cancel"
-                      type="button"
-                      onClick={() => handleCancelJob(selectedJob.id)}
-                    >
-                      Cancel Job
-                    </button>
-                  )}
-                </section>
-
-                <section className="household-detail-panel profile-card p-3 p-md-4 mt-3">
-                  <div className="profile-card-head">Completion & Review</div>
-                  <div className="p-3 d-grid gap-3">
-                    <div className="household-dashboard-job-summary">
-                      <h3>{selectedJob.jobTitle || selectedJob.serviceType}</h3>
-                      <div className="household-dashboard-job-meta">
-                        <span>
-                          <strong>Worker</strong>
-                          {selectedJobAssignedWorker
-                            ? getDisplayName(
-                                selectedJobAssignedWorker.firstName,
-                                selectedJobAssignedWorker.lastName,
-                                selectedJobAssignedWorker.username,
-                              )
-                            : (selectedJob.applications || [])[0]?.workerName || "No worker selected"}
-                        </span>
-                        <span>
-                          <strong>Status</strong>
-                          {selectedJob.status}
-                        </span>
-                        {selectedJobWorkerReview && (
-                          <span>
-                            <strong>Review</strong>
-                            {selectedJobWorkerReview.rating}/5 submitted
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="household-dashboard-completion-notice">
-                      {selectedJobWorkerReview
-                        ? "This completed job has already been reviewed."
-                        : selectedJob.status === "Completed"
-                          ? "Job is completed. Submit your final worker review once."
-                          : selectedJobAssignedWorker
-                            ? "Review the completed work, then confirm completion."
-                            : "No worker is assigned yet, so completion controls are not available."}
-                    </div>
-                    {selectedJob.status !== "Completed" && (
-                      <div className="household-dashboard-completion-actions">
-                        <button
-                          className={`btn ${!selectedJobAssignedWorker ? "btn-secondary" : "btn-success"}`}
-                          type="button"
-                          disabled={!selectedJobAssignedWorker}
-                          onClick={confirmSelectedJobCompleted}
-                        >
-                          Confirm Completed
-                        </button>
-                      </div>
-                    )}
-                    {selectedJobWorkerReview && (
-                      <div className="alert alert-success mb-0">
-                        Review completed. You rated this worker {selectedJobWorkerReview.rating}/5.
-                      </div>
-                    )}
-                    {(householdDashboardReviewOpen || shouldShowSelectedJobReviewForm) && !selectedJobWorkerReview && (
-                      <>
-                        <form className="household-dashboard-review-form" onSubmit={handleHouseholdReviewSubmit}>
-                          <label className="form-label fw-semibold" htmlFor="household-detail-rating-stars">Overall Rating</label>
-                          {renderHouseholdStarRatingInput("household-detail-rating-stars")}
-
-                          <div className="mt-4 pt-3 border-top">
-                            <p className="small text-muted mb-3">Rate worker on specific metrics (optional):</p>
-
-                            <div className="mb-3">
-                              <label className="form-label">Quality of Work</label>
-                              <div className="d-flex gap-2">
-                                {[1, 2, 3, 4, 5].map((val) => (
-                                  <button
-                                    key={val}
-                                    type="button"
-                                    className={`btn btn-sm ${householdReviewForm.quality_of_work == val ? 'btn-success' : 'btn-outline-success'}`}
-                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, quality_of_work: val }))}
-                                  >
-                                    {val}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="mb-3">
-                              <label className="form-label">Punctuality</label>
-                              <div className="d-flex gap-2">
-                                {[1, 2, 3, 4, 5].map((val) => (
-                                  <button
-                                    key={val}
-                                    type="button"
-                                    className={`btn btn-sm ${householdReviewForm.punctuality == val ? 'btn-success' : 'btn-outline-success'}`}
-                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, punctuality: val }))}
-                                  >
-                                    {val}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="mb-3">
-                              <label className="form-label">Communication</label>
-                              <div className="d-flex gap-2">
-                                {[1, 2, 3, 4, 5].map((val) => (
-                                  <button
-                                    key={val}
-                                    type="button"
-                                    className={`btn btn-sm ${householdReviewForm.communication == val ? 'btn-success' : 'btn-outline-success'}`}
-                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, communication: val }))}
-                                  >
-                                    {val}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="mb-3">
-                              <label className="form-label">Professionalism</label>
-                              <div className="d-flex gap-2">
-                                {[1, 2, 3, 4, 5].map((val) => (
-                                  <button
-                                    key={val}
-                                    type="button"
-                                    className={`btn btn-sm ${householdReviewForm.professionalism == val ? 'btn-success' : 'btn-outline-success'}`}
-                                    onClick={() => setHouseholdReviewForm((prev) => ({ ...prev, professionalism: val }))}
-                                  >
-                                    {val}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          <label className="form-label fw-semibold mt-3">Feedback for worker</label>
-                          <textarea
-                            className="form-control"
-                            rows="3"
-                            placeholder="Write feedback about the worker..."
-                            value={householdReviewForm.feedback}
-                            onChange={(event) =>
-                              setHouseholdReviewForm((prev) => ({ ...prev, feedback: event.target.value }))
-                            }
-                          />
-                          <div className="household-dashboard-form-actions">
-                            <button className="btn btn-success" type="submit">
-                              Done
-                            </button>
-                            <button
-                              className="btn btn-outline-secondary"
-                              type="button"
-                              onClick={openHouseholdMyJobs}
-                            >
-                              Close
-                            </button>
-                          </div>
-                        </form>
-                        {selectedJobAssignedWorker && (
-                          <div style={{ marginTop: "2rem", paddingTop: "2rem", borderTop: "1px solid #e0e0e0" }}>
-                            <h4 style={{ marginBottom: "1rem" }}>Rate Worker Skills (Optional)</h4>
-                            <SkillRatingForm
-                              jobId={selectedJob.id}
-                              workerId={selectedJobAssignedWorker.id}
-                              workerName={getDisplayName(
-                                selectedJobAssignedWorker.firstName,
-                                selectedJobAssignedWorker.lastName,
-                                selectedJobAssignedWorker.username,
-                              )}
-                              jobTitle={selectedJob.jobTitle || selectedJob.serviceType}
-                              onSubmitSuccess={() => {
-                                alert("Skills rated successfully!");
-                                openHouseholdMyJobs();
-                              }}
-                              onCancel={() => setHouseholdDashboardReviewOpen(false)}
-                            />
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {selectedJob.status === "Completed" && (
-                      <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #e0e0e0" }}>
-                        <button
-                          type="button"
-                          className="btn btn-outline-danger btn-sm"
-                          onClick={() => {
-                            setComplaintForm({
-                              complaint_type: "",
-                              description: "",
-                              job: selectedJob.id,
-                            });
-                            setShowComplaintModal(true);
-                          }}
-                        >
-                          📋 File a Complaint
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="household-detail-panel profile-card p-3 p-md-4 mt-3">
-                  <h2 className="household-detail-section-title">Applicants</h2>
-                  <p className="small text-muted mb-3">Workers who submitted an application for this job.</p>
-                  <div className="household-applicant-list d-grid gap-3">
-                    {selectedJobApplicantWorkers.length > 0 ? (
-                      selectedJobApplicantWorkers.map((worker) => {
-                        const workerProfileKey =
-                          [
-                            worker.username ?? worker.workerUsername,
-                            worker.id ?? worker.workerId ?? worker.userId ?? worker.user_id ?? worker.profileId,
-                            getDisplayName(worker.firstName, worker.lastName, worker.username),
-                          ]
-                            .filter((value) => value !== null && value !== undefined && value !== "")
-                            .join(":") || "applicant-worker";
-                        return (
-                          <button
-                            type="button"
-                            className="household-applicant-card d-flex align-items-center gap-3"
-                            key={workerProfileKey}
-                            onClick={() => openMatchedWorkerProfile(worker, selectedJob.id)}
-                          >
-                            <div className="profile-avatar match-avatar">
-                              {(worker.avatar || worker.firstName || worker.username || "W").slice(0, 1).toUpperCase()}
-                            </div>
-                            <div className="household-applicant-main">
-                              <p className="fw-semibold mb-1">
-                                {getDisplayName(worker.firstName, worker.lastName, worker.username)}
-                              </p>
-                              <div className="d-flex gap-2 flex-wrap">
-                                <span className="badge text-bg-primary">{getApplicationStatusLabel(worker.applicationStatus) || "Applied"}</span>
-                                {(worker.skills || []).slice(0, 2).map((skill) => (
-                                  <span className="badge text-bg-light border text-dark" key={`${worker.id}-${skill}`}>
-                                    {skill}
-                                  </span>
-                                ))}
-                                <span
-                                  className={`badge ${worker.verification === "Verified" ? "text-bg-success" : "text-bg-warning"}`}
-                                >
-                                  {worker.verification || "Not Yet Verified"}
-                                </span>
-                                <span className="badge text-bg-light border text-dark">
-                                  {formatCurrency(worker.dailyRate)}/day
-                                </span>
-                              </div>
-                            </div>
-                            <span className="household-applicant-distance ms-auto">
-                              {worker.distanceLabel ||
-                                formatDistance(worker.distanceKm, worker.distanceLabel) ||
-                                "Distance unavailable"}
-                              <small className="d-block">Driving route</small>
-                            </span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="household-applicant-empty">No worker applications yet.</div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="household-detail-panel profile-card p-3 p-md-4 mt-3">
-                  <h2 className="household-detail-section-title">Smart Matched Workers</h2>
-                  <p className="small text-muted mb-3">
-                    Suggested workers ranked by skill, verification status, distance, ratings, and service rate.
-                  </p>
-                  <div className="household-applicant-list d-grid gap-3">
-                    {selectedSuggestedWorkers.length > 0 ? (
-                      selectedSuggestedWorkers.map((worker) => {
-                        const workerProfileKey =
-                          [
-                            worker.username ?? worker.workerUsername,
-                            worker.id ?? worker.workerId ?? worker.userId ?? worker.user_id ?? worker.profileId,
-                            getDisplayName(worker.firstName, worker.lastName, worker.username),
-                          ]
-                            .filter((value) => value !== null && value !== undefined && value !== "")
-                            .join(":") || "matched-worker";
-                        return (
-                          <button
-                            type="button"
-                            className="household-applicant-card d-flex align-items-center gap-3"
-                            key={workerProfileKey}
-                            onClick={() => openMatchedWorkerProfile(worker, selectedJob.id)}
-                          >
-                            <div className="profile-avatar match-avatar">
-                              {(worker.avatar || worker.firstName || worker.username || "W").slice(0, 1).toUpperCase()}
-                            </div>
-                            <div className="household-applicant-main">
-                              <p className="fw-semibold mb-1">
-                                {getDisplayName(worker.firstName, worker.lastName, worker.username)}
-                              </p>
-                              <div className="d-flex gap-2 flex-wrap">
-                                {(worker.skills || []).slice(0, 2).map((skill) => (
-                                  <span className="badge text-bg-primary" key={`${worker.id}-${skill}`}>
-                                    {skill}
-                                  </span>
-                                ))}
-                                <span
-                                  className={`badge ${worker.verification === "Verified" ? "text-bg-success" : "text-bg-warning"}`}
-                                >
-                                  {worker.verification || "Not Yet Verified"}
-                                </span>
-                                <span className="badge text-bg-light border text-dark">
-                                  {formatCurrency(worker.dailyRate)}/day
-                                </span>
-                              </div>
-                            </div>
-                            <span className="household-applicant-distance ms-auto">
-                              {worker.distanceLabel ||
-                                formatDistance(worker.distanceKm, worker.distanceLabel) ||
-                                "Distance unavailable"}
-                              <small className="d-block">Driving route</small>
-                            </span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="household-applicant-empty">
-                        No recommended workers are available yet. Add worker skills, verification, or location details and check again later.
-                      </div>
-                    )}
-                  </div>
-                </section>
               </div>
             </div>
           </section>
@@ -5372,7 +5882,7 @@ export default function AppViews({
                   <p className="worker-brand mb-0">GawaGo Community Platform</p>
                 </div>
                 <nav className="worker-nav">
-                  <button className="worker-nav-item" onClick={openHouseholdDashboard}>
+                  <button className="worker-nav-item active" onClick={openHouseholdDashboard}>
                     {navIcon("dashboard")}
                     <span>Dashboard</span>
                   </button>
@@ -5380,9 +5890,13 @@ export default function AppViews({
                     {navIcon("post-job")}
                     <span>Post a Job</span>
                   </button>
-                  <button className="worker-nav-item active" onClick={openHouseholdMyJobs}>
+                  <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
                     {navIcon("jobs")}
                     <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -5407,7 +5921,7 @@ export default function AppViews({
                     <p className="mb-3 text-muted">
                       Worker profile is not available yet. Please go back to the job details and try again.
                     </p>
-                    <button className="btn btn-outline-secondary" type="button" onClick={openHouseholdMyJobs}>
+                    <button className="btn btn-outline-secondary" type="button" onClick={openHouseholdDashboard}>
                       Go Back
                     </button>
                   </div>
@@ -5425,7 +5939,7 @@ export default function AppViews({
                   <p className="worker-brand mb-0">GawaGo Community Platform</p>
                 </div>
                 <nav className="worker-nav">
-                  <button className="worker-nav-item" onClick={openHouseholdDashboard}>
+                  <button className="worker-nav-item active" onClick={openHouseholdDashboard}>
                     {navIcon("dashboard")}
                     <span>Dashboard</span>
                   </button>
@@ -5433,9 +5947,13 @@ export default function AppViews({
                     {navIcon("post-job")}
                     <span>Post a Job</span>
                   </button>
-                  <button className="worker-nav-item active" onClick={openHouseholdMyJobs}>
+                  <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
                     {navIcon("jobs")}
                     <span>My Jobs</span>
+                  </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
 	                  <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -5446,7 +5964,7 @@ export default function AppViews({
                     {navIcon("verified")}
                     <span>{verificationNavLabel}</span>
                   </button>
-	                  <button className="worker-nav-item active" onClick={openHouseholdNotifications}>
+	                  <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
                     {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
@@ -5536,12 +6054,16 @@ export default function AppViews({
                           <button
                             className="btn btn-outline-danger w-100 mb-2"
                             type="button"
-                            onClick={() => handleRejectApplication(selectedWorker.id, selectedJob.id)}
+                            onClick={() => {
+                              if (window.confirm("Reject this application? This can't be undone.")) {
+                                handleRejectApplication(selectedWorker.id, selectedJob.id);
+                              }
+                            }}
                           >
                             Reject Application
                           </button>
                         )}
-                        <button className="btn btn-outline-secondary w-100" type="button" onClick={openHouseholdMyJobs}>
+                        <button className="btn btn-outline-secondary w-100" type="button" onClick={openHouseholdDashboard}>
                           {" "}
                           Go Back{" "}
                         </button>
@@ -5661,6 +6183,10 @@ export default function AppViews({
                     {navIcon("jobs")}
                     <span>My Jobs</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
@@ -5758,13 +6284,6 @@ export default function AppViews({
                                 {householdNotificationMenuId === item.id && (
                                   <div className="household-notification-menu" role="menu">
                                     <button
-                                      role="menuitem"
-                                      type="button"
-                                      onClick={() => openHouseholdNotificationPreview(item)}
-                                    >
-                                      View details
-                                    </button>
-                                    <button
                                       className="danger"
                                       role="menuitem"
                                       type="button"
@@ -5791,100 +6310,6 @@ export default function AppViews({
                       )}
                     </div>
                   </section>
-                  {householdNotificationPreview &&
-                    (() => {
-                      const previewWorker = getHouseholdNotificationWorker(householdNotificationPreview);
-                      const previewJob = getHouseholdNotificationJob(householdNotificationPreview);
-                      return (
-                        <div className="household-notification-modal-backdrop" role="presentation">
-                          <section
-                            aria-labelledby="household-notification-preview-title"
-                            aria-modal="true"
-                            className="household-notification-modal"
-                            role="dialog"
-                          >
-                            <div className="household-notification-modal-head">
-                              <div>
-                                <p className="household-notification-modal-kicker">Notification Details</p>
-                                <h2 id="household-notification-preview-title">
-                                  {householdNotificationPreview.title || "Notification"}
-                                </h2>
-                              </div>
-                              <button
-                                className="btn btn-outline-secondary btn-sm"
-                                type="button"
-                                onClick={closeHouseholdNotificationPreview}
-                              >
-                                Close
-                              </button>
-                            </div>
-                            <div className="household-notification-modal-body">
-                              <p className="household-notification-message">{householdNotificationPreview.message}</p>
-                              {previewWorker ? (
-                                <div className="household-notification-worker-preview">
-                                  <div className="profile-avatar match-avatar">
-                                    {(previewWorker.avatar || previewWorker.firstName || previewWorker.username || "W")
-                                      .slice(0, 1)
-                                      .toUpperCase()}
-                                  </div>
-                                  <div>
-                                    <h3>{getDisplayName(previewWorker.firstName, previewWorker.lastName, previewWorker.username)}</h3>
-                                    <p>{previewWorker.bio || "Worker profile summary is available in full details."}</p>
-                                    <div className="household-notification-worker-facts">
-                                      <span>{previewWorker.verification || "Not Yet Verified"}</span>
-                                      <span>{previewWorker.rating || "No ratings yet"}</span>
-                                      <span>{formatCurrency(previewWorker.dailyRate)}/day</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="household-notification-worker-preview empty">
-                                  <p className="mb-0">No worker profile is attached to this notification.</p>
-                                </div>
-                              )}
-                              <dl className="household-notification-job-preview">
-                                <div>
-                                  <dt>Job</dt>
-                                  <dd>{previewJob?.jobTitle || previewJob?.serviceType || "Not available"}</dd>
-                                </div>
-                                <div>
-                                  <dt>Location</dt>
-                                  <dd>
-                                    {previewJob
-                                      ? formatLocation(previewJob.barangay, previewJob.streetAddress)
-                                      : "Not available"}
-                                  </dd>
-                                </div>
-                                <div>
-                                  <dt>Rate</dt>
-                                  <dd>{previewJob ? formatRate(previewJob.offeredRate, previewJob.rateType) : "Not available"}</dd>
-                                </div>
-                                <div>
-                                  <dt>Date</dt>
-                                  <dd>{formatDateTime(householdNotificationPreview.date)}</dd>
-                                </div>
-                              </dl>
-                            </div>
-                            <div className="household-notification-modal-actions">
-                              <button
-                                className="btn btn-outline-secondary"
-                                type="button"
-                                onClick={closeHouseholdNotificationPreview}
-                              >
-                                Close
-                              </button>
-                              <button
-                                className="btn btn-primary"
-                                type="button"
-                                onClick={openHouseholdNotificationPreviewDetails}
-                              >
-                                View details
-                              </button>
-                            </div>
-                          </section>
-                        </div>
-                      );
-                    })()}
                 </main>
               </div>
             </div>
@@ -5911,6 +6336,10 @@ export default function AppViews({
                     {navIcon("jobs")}
                     <span>My Jobs</span>
                   </button>
+                  <button className="worker-nav-item" onClick={openMyComplaints}>
+                    {navIcon("flag")}
+                    <span>My Reports</span>
+                  </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
                     {navIcon("profile")}
@@ -5934,429 +6363,542 @@ export default function AppViews({
                 </div>
               </aside>
               <div className="household-dashboard-main">
-                <div className="household-dashboard-welcome">
-                  Welcome, {currentUser?.displayName || "Household"}
+                <div className="household-process-topline">
+                  <div>
+                    <h1>Welcome, {currentUser?.displayName || "Household"}</h1>
+                    <p>Jobs that are still in motion &mdash; waiting on applicants, in progress, or waiting on you.</p>
+                  </div>
+                  <button type="button" className="btn btn-primary household-process-post-btn" onClick={openHouseholdPostJob}>
+                    + Post a New Job
+                  </button>
                 </div>
 
-                <div className="household-dashboard-stats">
-                  <div className="household-dashboard-stat">
-                    <p>In Progress</p>
-                    <strong>
-                      {
-                        householdJobs.filter((job) =>
-                          ["Already found a worker", "In Progress", "Waiting for Household Confirmation"].includes(
-                            job.status,
-                          ),
-                        ).length
-                      }
-                    </strong>
+                {needsConfirmationHouseholdJobs.length > 0 && (
+                  <div className="household-process-action-banner" role="status">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <span>
+                      {needsConfirmationHouseholdJobs.length === 1
+                        ? `1 job needs your attention — a worker marked "${
+                            needsConfirmationHouseholdJobs[0].jobTitle || needsConfirmationHouseholdJobs[0].serviceType
+                          }" as done.`
+                        : `${needsConfirmationHouseholdJobs.length} jobs need your attention — workers marked them as done.`}
+                    </span>
                   </div>
-                  <div className="household-dashboard-stat">
-                    <p>Cancelled Jobs</p>
-                    <strong>{householdJobs.filter((job) => job.status === "Cancelled").length}</strong>
-                  </div>
-                  <div className="household-dashboard-stat">
-                    <p>Completed</p>
-                    <strong>{householdJobs.filter((job) => job.status === "Completed").length}</strong>
-                  </div>
-                </div>
-
-                {pendingHouseholdReviewJobs.length > 0 && (
-                  <section className="household-dashboard-review-reminder" aria-live="polite">
-                    <div>
-                      <strong>
-                        {pendingHouseholdReviewJobs.length === 1
-                          ? "Review reminder"
-                          : `${pendingHouseholdReviewJobs.length} review reminders`}
-                      </strong>
-                      <p>
-                        {pendingHouseholdReviewJobs.length === 1
-                          ? `${pendingHouseholdReviewJobs[0].serviceType} service is completed and waiting for your feedback.`
-                          : "Some completed services are waiting for household feedback."}
-                      </p>
-                    </div>
-                  </section>
                 )}
 
-                <section className="household-dashboard-table-card">
-                    <div className="household-dashboard-table-head">
-                      <h2>Recent Post Jobs</h2>
-                    </div>
-                    <div className="household-dashboard-table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Type</th>
-                            <th>Barangay</th>
-                            <th>Rate</th>
-                            <th>Status</th>
-                            <th>Applications</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {householdJobs.length > 0 ? (
-                            householdJobs.map((job) => (
-                              <tr
-                                key={job.id}
-                                className="household-dashboard-job-row"
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => openHouseholdDashboardJobPanel(job)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter" || event.key === " ") {
-                                    event.preventDefault();
-                                    openHouseholdDashboardJobPanel(job);
-                                  }
-                                }}
-                              >
-                                <td>{job.serviceType}</td>
-                                <td>{job.barangay || "Not set"}</td>
-                                <td>{formatRate(job.offeredRate, job.rateType)}</td>
-                                <td>
-                                  <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{job.status}</span>
-                                </td>
-                                <td>{buildMatchedWorkersForJob(job, registeredWorkers).length}</td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan="5" className="text-center text-muted py-4">
-                                No posted jobs yet.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                </section>
-                {householdDashboardDetailJob && (
-                  <section
-                    className={`household-dashboard-detail-tab ${
-                      householdDashboardDetailJob.status === "Cancelled"
-                        ? "cancelled"
-                        : householdDashboardDetailJob.status === "Completed"
-                          ? "completed"
-                      : ""
-                    }`}
-                  >
-                    <div className="household-dashboard-completion-box household-dashboard-review-window">
-                      <div className="household-review-window-header">
-                        <div>
-                          <p className="household-review-window-kicker">Service Review</p>
-                          <h2>{householdDashboardDetailJob.jobTitle || householdDashboardDetailJob.serviceType}</h2>
-                        </div>
-                        <button
-                          className="btn btn-outline-secondary btn-sm"
-                          type="button"
-                          onClick={closeHouseholdDashboardJobPanel}
+                <p className="household-process-section-label">In Process &middot; {inProcessHouseholdJobs.length}</p>
+
+                {inProcessHouseholdJobs.length === 0 ? (
+                  <div className="profile-card p-4 text-center text-muted">
+                    No jobs in process right now.{" "}
+                    <button type="button" className="btn btn-link p-0 align-baseline" onClick={openHouseholdPostJob}>
+                      Post a new job
+                    </button>{" "}
+                    to get started.
+                  </div>
+                ) : (
+                  <div className="household-process-grid">
+                    {inProcessHouseholdJobs.map((job) => {
+                      const worker = getAssignedWorkerForJob(job);
+                      const workerName = worker
+                        ? getDisplayName(worker.firstName, worker.lastName, worker.username)
+                        : null;
+                      const pendingCount = getPendingApplicationCount(job);
+                      // A sent hire request is still an open thread on this job:
+                      // without its own state the card would claim nobody applied
+                      // the moment the household asked someone.
+                      const requestedCount = (job.applications || []).filter(
+                        (application) => application.status === "Hire Request",
+                      ).length;
+                      const needsConfirmation = job.status === "Waiting for Household Confirmation";
+                      const isAssigned = job.status === "Already found a worker";
+                      const hasApplicants = !needsConfirmation && !isAssigned && pendingCount > 0;
+                      const awaitingReply =
+                        !needsConfirmation && !isAssigned && !hasApplicants && requestedCount > 0;
+                      const toneClass = needsConfirmation
+                        ? "review"
+                        : isAssigned
+                          ? "assigned"
+                          : hasApplicants
+                            ? "applicants"
+                            : awaitingReply
+                              ? "assigned"
+                              : "open";
+                      return (
+                        <article
+                          key={job.id}
+                          className={`household-process-card ${needsConfirmation ? "needs-action" : ""}`}
                         >
-                          Close
-                        </button>
-                      </div>
-                      <div className="household-review-window-body">
-                        <aside className="household-dashboard-worker-panel household-review-worker-card">
-                          <div className="household-dashboard-worker-avatar">
-                            {String(
-                              householdDashboardDetailWorker
-                                ? getDisplayName(
-                                    householdDashboardDetailWorker.firstName,
-                                    householdDashboardDetailWorker.lastName,
-                                    householdDashboardDetailWorker.username,
-                                  )
-                                : (householdDashboardDetailJob.applications || [])[0]?.workerName || "W",
-                            )
-                              .slice(0, 2)
-                              .toUpperCase()}
+                          <div className="household-process-card-top">
+                            <div className={`household-process-status-icon ${toneClass}`}>
+                              {needsConfirmation ? (
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path>
+                                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                </svg>
+                              ) : isAssigned || awaitingReply ? (
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <circle cx="12" cy="12" r="10"></circle>
+                                  <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                              ) : hasApplicants ? (
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path>
+                                  <circle cx="9" cy="7" r="4"></circle>
+                                  <path d="M23 21v-2a4 4 0 00-3-3.87"></path>
+                                  <path d="M16 3.13a4 4 0 010 7.75"></path>
+                                </svg>
+                              ) : (
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <circle cx="11" cy="11" r="8"></circle>
+                                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                              )}
+                            </div>
+                            <div className="household-process-card-top-text">
+                              <h3>{job.jobTitle || job.serviceType}</h3>
+                              <span className={`household-process-status-line ${toneClass}`}>
+                                <i aria-hidden="true" />
+                                {needsConfirmation
+                                  ? "Marked done — confirm to finish"
+                                  : isAssigned
+                                    ? "In progress"
+                                    : hasApplicants
+                                      ? `${pendingCount} applicant${pendingCount === 1 ? "" : "s"} waiting`
+                                      : awaitingReply
+                                        ? `${requestedCount} request${requestedCount === 1 ? "" : "s"} sent — waiting for a reply`
+                                        : "Just posted — no applicants yet"}
+                              </span>
+                            </div>
                           </div>
-                          <div>
-                            <h3>
-                              {householdDashboardDetailWorker
-                                ? getDisplayName(
-                                    householdDashboardDetailWorker.firstName,
-                                    householdDashboardDetailWorker.lastName,
-                                    householdDashboardDetailWorker.username,
-                                  )
-                                : (householdDashboardDetailJob.applications || [])[0]?.workerName || "No worker selected"}
-                            </h3>
-                            <p>
-                              {householdDashboardDetailWorker?.bio ||
-                                "Worker profile summary for this selected household job."}
-                            </p>
-                          </div>
-                          <div className="household-dashboard-worker-facts">
-                            <div>
-                              <strong>Verification</strong>
-                              <span>{householdDashboardDetailWorker?.verification || "Not available"}</span>
+                          <div className={`household-process-worker-row ${worker ? "" : "empty"}`}>
+                            <div className="household-process-mini-avatar">
+                              {worker ? String(workerName).slice(0, 2).toUpperCase() : "?"}
                             </div>
                             <div>
-                              <strong>Rating</strong>
-                              <span>{householdDashboardDetailWorker?.rating || "No ratings yet"}</span>
+                              <span>{worker ? workerName : "No worker hired yet"}</span>
+                              {worker && <small>{worker.verification || "Verified"}</small>}
                             </div>
-                            {(householdDashboardDetailWorker?.skills?.length
-                              ? householdDashboardDetailWorker.skills
-                              : [householdDashboardDetailJob.serviceType].filter(Boolean)
-                            ).length > 0 && (
-                              <div>
-                                <strong>Skills</strong>
-                                <span>
-                                  {(householdDashboardDetailWorker?.skills?.length
-                                    ? householdDashboardDetailWorker.skills
-                                    : [householdDashboardDetailJob.serviceType].filter(Boolean)
-                                  ).join(", ")}
-                                </span>
-                              </div>
+                          </div>
+                          <p className="household-process-meta">
+                            {formatRate(job.offeredRate, job.rateType)} &middot; {job.barangay || "Location not set"}
+                            {job.jobStartDate && (
+                              <>
+                                {" "}&middot; {job.jobStartDate}
+                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
+                              </>
                             )}
-                            <div>
-                              <strong>Location</strong>
-                              <span>
-                                {formatLocation(
-                                  householdDashboardDetailWorker?.barangay || householdDashboardDetailJob.barangay,
-                                  householdDashboardDetailWorker?.streetAddress || "",
-                                )}
-                              </span>
-                            </div>
-                            <div>
-                              <strong>Worker Rate</strong>
-                              <span>
-                                {householdDashboardDetailWorker
-                                  ? formatRate(
-                                      householdDashboardDetailWorker.dailyRate || householdDashboardDetailJob.offeredRate,
-                                      householdDashboardDetailJob.rateType,
-                                    )
-                                  : formatRate(householdDashboardDetailJob.offeredRate, householdDashboardDetailJob.rateType)}
-                              </span>
-                            </div>
-                          </div>
-                          {householdDashboardDetailJob.status === "Completed" && householdDashboardDetailWorker && (
+                          </p>
+                          {needsConfirmation && (
                             <button
                               type="button"
-                              className="btn btn-success w-100 mt-3"
-                              onClick={() => openRatingModal(householdDashboardDetailJob, householdDashboardDetailWorker)}
+                              className="btn btn-success household-process-cta"
+                              onClick={() => {
+                                if (window.confirm("Confirm this job as completed? This can't be undone.")) {
+                                  handleConfirmJobCompleted(job.id);
+                                }
+                              }}
                             >
-                              ⭐ Rate Worker
+                              Confirm Completion
                             </button>
                           )}
-                        </aside>
-                        <div className="household-dashboard-completion-panel household-review-main-panel">
-                          <div className="household-dashboard-job-summary">
-                            <h3>Job Details</h3>
-                            <div className="household-dashboard-job-meta">
-                              <span>
-                                <strong>Service</strong>
-                                {householdDashboardDetailJob.serviceType}
-                              </span>
-                              <span>
-                                <strong>Rate</strong>
-                                {formatRate(householdDashboardDetailJob.offeredRate, householdDashboardDetailJob.rateType)}
-                              </span>
-                              <span>
-                                <strong>Schedule</strong>
-                                {formatDateTime(householdDashboardDetailJob.preferredDate, householdDashboardDetailJob.preferredTime)}
-                              </span>
-                              <span>
-                                <strong>Status</strong>
-                                {householdDashboardDetailJob.status}
-                              </span>
+                          {isAssigned && (
+                            <div className="household-process-note">
+                              You&rsquo;ll be notified once {workerName || "the worker"} marks this done.
                             </div>
-                          </div>
-                          <div className="household-review-action-card">
-                            <div className="household-dashboard-completion-notice">
-                              {householdDashboardDetailJob.status === "Cancelled"
-                                ? "This is the previous job post you cancelled. Worker profile details are hidden because no completed service happened."
-                                : householdDashboardDetailJob.status === "Completed"
-                                  ? "Job is completed. You can review the worker profile and your submitted rating here."
-                                  : householdDashboardDetailWorker
-                                    ? "Review the completed work, then confirm completion."
-                                    : "No worker is assigned yet, so completion controls are not available."}
-                            </div>
-                            {householdDashboardDetailJob.status !== "Completed" &&
-                              householdDashboardDetailJob.status !== "Cancelled" && (
-                                <ol className="household-dashboard-completion-steps">
-                                  <li className="done">
-                                    <span>1</span>
-                                    <p>
-                                      <strong>Worker hired</strong>
-                                      Job started after household accepted the worker.
-                                    </p>
-                                  </li>
-                                  <li className={householdDashboardDetailWorker ? "done" : ""}>
-                                    <span>2</span>
-                                    <p>
-                                      <strong>Worker requests completion</strong>
-                                      Worker marks service as done.
-                                    </p>
-                                  </li>
-                                  <li className="active">
-                                    <span>3</span>
-                                    <p>
-                                      <strong>Confirm completed</strong>
-                                      Household confirms completion.
-                                    </p>
-                                  </li>
-                                  <li>
-                                    <span>4</span>
-                                    <p>
-                                      <strong>Rate worker</strong>
-                                      Household submits rating and feedback.
-                                    </p>
-                                  </li>
-                                </ol>
-                              )}
-                            {householdDashboardDetailJob.status !== "Completed" && (
-                              <div className="household-dashboard-completion-actions">
-                                <button
-                                  className={`btn ${!householdDashboardDetailWorker ? "btn-secondary" : "btn-success"}`}
-                                  type="button"
-                                  disabled={!householdDashboardDetailWorker}
-                                  onClick={confirmDashboardJobCompleted}
-                                >
-                                  Confirm Completed
-                                </button>
-                              </div>
-                            )}
-                            {householdDashboardWorkerReview && (
-                              <div className="alert alert-success mb-0 household-dashboard-review-complete">
-                                <span>Review completed. You rated this worker {householdDashboardWorkerReview.rating}/5.</span>
-                              </div>
-                            )}
-                            {(householdDashboardReviewOpen || shouldShowDashboardReviewForm) && !householdDashboardWorkerReview && (
-                              <form
-                                className="household-dashboard-review-form"
-                                id="household-dashboard-review-form"
-                                onSubmit={handleHouseholdReviewSubmit}
-                              >
-                                <label className="form-label fw-semibold" htmlFor="household-dashboard-rating-stars">
-                                  Rating
-                                </label>
-                                {renderHouseholdStarRatingInput("household-dashboard-rating-stars")}
-                                <div className="household-dashboard-star-rating household-dashboard-rating-preview-hidden" aria-label="Rating preview">
-                                  {[1, 2, 3, 4, 5].map((ratingValue) => {
-                                    const selectedRating = Number(householdReviewForm.rating || 0);
-                                    const isFull = selectedRating >= ratingValue;
-                                    const isHalf = selectedRating >= ratingValue - 0.5 && selectedRating < ratingValue;
-                                    return (
-                                      <span
-                                        className={`household-dashboard-star-shell ${
-                                          isFull ? "selected" : isHalf ? "half-selected" : ""
-                                        }`}
-                                        key={ratingValue}
-                                      >
-                                        <span className="household-dashboard-star-base">★</span>
-                                        <span className="household-dashboard-star-fill">★</span>
-                                      </span>
-                                    );
-                                  })}
-                                  <span>{Number(householdReviewForm.rating || 0).toFixed(1)} / 5</span>
-                                </div>
-                                <label className="form-label fw-semibold">Feedback for worker</label>
-                                <textarea
-                                  className="form-control"
-                                  rows="3"
-                                  placeholder="Write feedback about the worker..."
-                                  value={householdReviewForm.feedback}
-                                  onChange={(event) =>
-                                    setHouseholdReviewForm((prev) => ({ ...prev, feedback: event.target.value }))
-                                  }
-                                />
-                              </form>
-                            )}
-                            <div className="household-dashboard-modal-actions">
-                              <button
-                                className="btn btn-success"
-                                form={
-                                  (householdDashboardReviewOpen || shouldShowDashboardReviewForm) &&
-                                  !householdDashboardWorkerReview
-                                    ? "household-dashboard-review-form"
-                                    : undefined
-                                }
-                                type={
-                                  (householdDashboardReviewOpen || shouldShowDashboardReviewForm) &&
-                                  !householdDashboardWorkerReview
-                                    ? "submit"
-                                    : "button"
-                                }
-                                onClick={
-                                  (householdDashboardReviewOpen || shouldShowDashboardReviewForm) &&
-                                  !householdDashboardWorkerReview
-                                    ? undefined
-                                    : closeHouseholdDashboardJobPanel
-                                }
-                              >
-                                Done
-                              </button>
-                              {householdDashboardDetailJob.status === "Completed" && (
-                                <button
-                                  className="btn btn-primary"
-                                  type="button"
-                                  onClick={openHouseholdDashboardReviewsFromJob}
-                                >
-                                  View all Reviews
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-                )}
-                {ratingModalOpen && ratingWorker && (
-                  <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={() => setRatingModalOpen(false)}>
-                    <div className="modal-dialog modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
-                      <div className="modal-content">
-                        <div className="modal-header bg-success text-white">
-                          <h5 className="modal-title">Rate {getDisplayName(ratingWorker.firstName, ratingWorker.lastName, ratingWorker.username)}</h5>
-                          <button type="button" className="btn-close btn-close-white" onClick={() => setRatingModalOpen(false)}></button>
-                        </div>
-                        <div className="modal-body">
-                          <p className="mb-3">Rate the worker's performance on specific skills:</p>
-                          {(ratingWorker.skills || []).length > 0 ? (
-                            <div className="mb-3">
-                              {ratingWorker.skills.map((skill, idx) => (
-                                <div key={idx} className="mb-4 p-3 border rounded">
-                                  <div className="d-flex justify-content-between align-items-center mb-2">
-                                    <label className="form-label mb-0 fw-bold">{skill}</label>
-                                    <span className="badge bg-info">{skillRatings[`skill_${idx}`] || 0} ⭐</span>
-                                  </div>
-                                  <div className="d-flex gap-2">
-                                    {[1, 2, 3, 4, 5].map((ratingValue) => (
-                                      <button
-                                        key={ratingValue}
-                                        type="button"
-                                        className={`btn btn-sm ${skillRatings[`skill_${idx}`] >= ratingValue ? 'btn-warning' : 'btn-outline-warning'}`}
-                                        onClick={() => setSkillRatings({ ...skillRatings, [`skill_${idx}`]: ratingValue })}
-                                      >
-                                        ⭐
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-muted">No skills to rate</p>
                           )}
-                        </div>
-                        <div className="modal-footer">
-                          <button type="button" className="btn btn-secondary" onClick={() => setRatingModalOpen(false)}>Cancel</button>
-                          <button type="button" className="btn btn-success" onClick={handleSubmitRatings}>Submit Ratings</button>
-                        </div>
-                      </div>
-                    </div>
+                          {(hasApplicants || awaitingReply) && (
+                            <button
+                              type="button"
+                              className="household-process-outline-cta"
+                              onClick={() => openDashboardApplicantsModal(job)}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 00-3-3.87"></path>
+                              </svg>
+                              View Applicants
+                            </button>
+                          )}
+                          {!needsConfirmation && !isAssigned && (
+                            <button
+                              type="button"
+                              className="household-process-outline-cta"
+                              onClick={() => openHouseholdJobMatches(job.id)}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                              </svg>
+                              Browse Workers
+                            </button>
+                          )}
+                          {!needsConfirmation && !isAssigned && pendingCount === 0 && (
+                            <div className="household-process-note">
+                              {awaitingReply
+                                ? "We’ll let you know as soon as they accept or decline."
+                                : "We’ll notify you as soon as a worker applies."}
+                            </div>
+                          )}
+                          {!needsConfirmation && !isAssigned && (
+                            <button
+                              type="button"
+                              className="household-process-cancel-link"
+                              onClick={() => {
+                                if (window.confirm("Cancel this job? This can't be undone.")) {
+                                  handleCancelJob(job.id);
+                                }
+                              }}
+                            >
+                              Cancel Job
+                            </button>
+                          )}
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
-                <ComplaintModal
-                  isOpen={showComplaintModal}
-                  complaint={complaintForm}
-                  onClose={() => setShowComplaintModal(false)}
-                  onChange={setComplaintForm}
-                  onSubmit={handleSubmitComplaint}
-                  isWorker={currentUser?.role === "worker"}
-                  postedJobs={workerVisibleJobs || []}
-                />
+
+                {pendingHouseholdReviewJobs.length > 0 && (
+                  <>
+                    <p className="household-process-section-label household-process-section-label-spaced">
+                      Completed &middot; {pendingHouseholdReviewJobs.length}
+                    </p>
+                    <div className="household-process-grid">
+                      {pendingHouseholdReviewJobs.map((job) => {
+                        const worker = getAssignedWorkerForJob(job);
+                        const workerName = worker
+                          ? getDisplayName(worker.firstName, worker.lastName, worker.username)
+                          : null;
+                        return (
+                          <article key={job.id} className="household-process-card">
+                            <div className="household-process-card-top">
+                              <div className="household-process-status-icon review">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                              </div>
+                              <div className="household-process-card-top-text">
+                                <h3>{job.jobTitle || job.serviceType}</h3>
+                                <span className="household-process-status-line review">
+                                  <i aria-hidden="true" />
+                                  Completed &middot; Rate your worker
+                                </span>
+                              </div>
+                            </div>
+                            <div className={`household-process-worker-row ${worker ? "" : "empty"}`}>
+                              <div className="household-process-mini-avatar">
+                                {worker ? String(workerName).slice(0, 2).toUpperCase() : "?"}
+                              </div>
+                              <div>
+                                <span>{worker ? workerName : "Worker record unavailable"}</span>
+                                {worker && <small>{worker.verification || "Verified"}</small>}
+                              </div>
+                            </div>
+                            <p className="household-process-meta">
+                              {formatRate(job.offeredRate, job.rateType)} &middot; {job.barangay || "Location not set"}
+                            </p>
+                            <div className="household-process-card-actions">
+                              <button
+                                type="button"
+                                className="household-process-rate-btn"
+                                disabled={!worker}
+                                onClick={() => openDashboardRateModal(job, worker)}
+                              >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                  <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
+                                </svg>
+                                Rate &amp; Review
+                              </button>
+                              <button
+                                type="button"
+                                className="household-process-report-btn"
+                                onClick={() => openDashboardReportModal(job)}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
+                                  <line x1="4" y1="22" x2="4" y2="15"></line>
+                                </svg>
+                                Report
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
               </div>
             </div>
           </section>
+        )}
+
+        {/* Rendered outside any single view so it can be triggered from the
+            Dashboard's cards and from My Jobs' cards alike. */}
+        {dashboardModal?.type === "applicants" && selectedJob && (
+          <div className="gg-modal-backdrop" role="dialog" aria-modal="true" onClick={closeDashboardModal}>
+            <div className="gg-modal-panel applicants" onClick={(event) => event.stopPropagation()}>
+              <div className="gg-modal-head">
+                <div>
+                  <p className="gg-modal-kicker">Applicants</p>
+                  <h2>{selectedJob.jobTitle || selectedJob.serviceType}</h2>
+                  <p className="gg-modal-sub">
+                    {selectedJobApplicantWorkers.length} applicant
+                    {selectedJobApplicantWorkers.length === 1 ? "" : "s"} waiting &middot; review and respond below
+                  </p>
+                </div>
+                <button type="button" className="gg-modal-close" aria-label="Close" onClick={closeDashboardModal}>
+                  &times;
+                </button>
+              </div>
+              {selectedJobApplicantWorkers.length > 0 && (
+                <div className="gg-applicant-strip">
+                  {selectedJobApplicantWorkers.map((applicant, index) => {
+                    const stripName = getDisplayName(applicant.firstName, applicant.lastName, applicant.username);
+                    return (
+                      <span className="gg-applicant-strip-item" key={`strip-${applicant.id || applicant.username}`}>
+                        {index > 0 && <i className="gg-applicant-strip-dot" aria-hidden="true" />}
+                        {renderWorkerPhoto(applicant, stripName, "gg-applicant-strip-photo")}
+                        <span>{String(stripName).split(" ")[0]}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="gg-modal-body">
+                {selectedJobApplicantWorkers.length === 0 ? (
+                  <p className="text-muted mb-0">No workers have applied to this job yet.</p>
+                ) : (
+                  selectedJobApplicantWorkers.map((applicant) => {
+                    const applicantName = getDisplayName(
+                      applicant.firstName,
+                      applicant.lastName,
+                      applicant.username,
+                    );
+                    const isHired = ["Hired", "Completed"].includes(applicant.applicationStatus);
+                    const isRequested = applicant.applicationStatus === "Hire Request";
+                    const extraSkills = Math.max(0, (applicant.skills || []).length - 3);
+                    return (
+                      <article className="gg-applicant-card" key={applicant.id || applicant.username}>
+                        <div className="gg-applicant-head">
+                          {renderWorkerPhoto(applicant, applicantName, "gg-applicant-avatar")}
+                          <div className="gg-applicant-ident">
+                            <h3>{applicantName}</h3>
+                            <p>{applicant.locationLabel || applicant.barangay || "Location not set"}</p>
+                          </div>
+                          {applicant.aiScore != null && (
+                            <span className="gg-applicant-ring">
+                              {renderMatchRing(applicant.aiScore, 58)}
+                              <small>match</small>
+                            </span>
+                          )}
+                        </div>
+                        <div className="gg-applicant-stats">
+                          {applicant.verification === "Verified" && (
+                            <span className="gg-applicant-check" title="Verified worker">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </span>
+                          )}
+                          {renderStarRow(applicant.rating, applicant.reviewsDone)}
+                          <span className="gg-applicant-rate">{formatCurrency(applicant.dailyRate)}/day</span>
+                          <span className="gg-applicant-jobs">
+                            {applicant.completedJobs || 0}{" "}
+                            {(applicant.completedJobs || 0) === 1 ? "job" : "jobs"}
+                          </span>
+                        </div>
+                        <div className="gg-applicant-tags">
+                          {(applicant.skills || []).slice(0, 3).map((skill) => (
+                            <span key={`${applicant.id}-${skill}`}>{skill}</span>
+                          ))}
+                          {extraSkills > 0 && <span className="muted">+{extraSkills}</span>}
+                        </div>
+                        {applicant.bio && <p className="gg-applicant-bio">{applicant.bio}</p>}
+                        <div className="gg-applicant-footnote">
+                          <span>{applicant.appliedAt ? `Applied ${formatTimeAgo(applicant.appliedAt)}` : "Applied"}</span>
+                          {applicant.applicationStatusLabel && (
+                            <span className="gg-applicant-stage">{applicant.applicationStatusLabel}</span>
+                          )}
+                          {topApplicantKey &&
+                            String(applicant.id || applicant.username) === topApplicantKey && (
+                              <span className="gg-applicant-top">Top match</span>
+                            )}
+                        </div>
+                        <div className="gg-applicant-actions">
+                          {!isHired && (
+                            <button
+                              type="button"
+                              className="gg-applicant-decline"
+                              onClick={() => {
+                                if (!window.confirm("Decline this application? This can't be undone.")) {
+                                  return;
+                                }
+                                closeDashboardModal();
+                                handleRejectApplication(applicant.id, selectedJob.id);
+                              }}
+                            >
+                              Decline
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="gg-applicant-portfolio"
+                            onClick={() => {
+                              closeDashboardModal();
+                              openMatchedWorkerProfile(applicant, selectedJob.id);
+                            }}
+                          >
+                            View Profile
+                          </button>
+                          <button
+                            type="button"
+                            className="gg-applicant-hire"
+                            disabled={isHired || isRequested}
+                            onClick={() => {
+                              if (
+                                !window.confirm(
+                                  `Accept ${applicantName} for this job? They will be hired and the job moves to In progress.`,
+                                )
+                              ) {
+                                return;
+                              }
+                              requestDashboardHire(applicant);
+                            }}
+                          >
+                            {isHired ? "Hired" : isRequested ? "Waiting for worker" : "Accept"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+              <div className="gg-modal-foot">
+                <button type="button" className="gg-modal-foot-btn" onClick={closeDashboardModal}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {dashboardModal?.type === "rate" && selectedJob && selectedWorker && (
+          <div className="gg-modal-backdrop" role="dialog" aria-modal="true" onClick={closeDashboardModal}>
+            <div className="gg-modal-panel rate" onClick={(event) => event.stopPropagation()}>
+              <aside className="gg-rate-aside">
+                <button
+                  type="button"
+                  className="gg-rate-close"
+                  aria-label="Close"
+                  onClick={closeDashboardModal}
+                >
+                  &times;
+                </button>
+                <div className="gg-rate-avatar">
+                  {String(
+                    getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username),
+                  )
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </div>
+                <h3>
+                  {getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username)}
+                </h3>
+                <p className="gg-rate-verified">
+                  {selectedWorker.verification === "Verified" ? "✓ Verified" : selectedWorker.verification || "Not Yet Verified"}
+                </p>
+                <div className="gg-rate-score">
+                  <strong>{Number.parseFloat(selectedWorker.rating) ? Number.parseFloat(selectedWorker.rating).toFixed(2) : "—"}</strong>
+                  <span>
+                    {Number.parseFloat(selectedWorker.rating)
+                      ? `${selectedWorker.reviewsDone || 0} reviews`
+                      : "No ratings yet"}
+                  </span>
+                </div>
+                <dl className="gg-rate-facts">
+                  <div>
+                    <dt>Skills</dt>
+                    <dd>{(selectedWorker.skills || []).join(", ") || selectedJob.serviceType}</dd>
+                  </div>
+                  <div>
+                    <dt>Location</dt>
+                    <dd>{selectedWorker.barangay || "Not set"}</dd>
+                  </div>
+                  <div>
+                    <dt>Rate</dt>
+                    <dd>{formatCurrency(selectedWorker.dailyRate)} / Per Day</dd>
+                  </div>
+                  <div>
+                    <dt>Job</dt>
+                    <dd>{selectedJob.jobTitle || selectedJob.serviceType}</dd>
+                  </div>
+                </dl>
+              </aside>
+              <div className="gg-rate-main">
+                <p className="gg-modal-kicker">Rate &amp; Review</p>
+                <h2>How was your experience?</h2>
+                <form
+                  className="gg-rate-form"
+                  onSubmit={async (event) => {
+                    const submitted = await handleHouseholdReviewSubmit(event);
+                    if (submitted) {
+                      closeDashboardModal();
+                    }
+                  }}
+                >
+                  <label className="form-label fw-semibold" htmlFor="dashboard-rate-stars">
+                    Overall Rating
+                  </label>
+                  {renderHouseholdStarRatingInput("dashboard-rate-stars")}
+                  {renderHouseholdReviewMetricInputs()}
+                  <label className="form-label fw-semibold mt-3">Feedback (optional)</label>
+                  <textarea
+                    className="form-control"
+                    rows="4"
+                    placeholder="Share details about the worker's performance..."
+                    value={householdReviewForm.feedback}
+                    onChange={(event) =>
+                      setHouseholdReviewForm((prev) => ({ ...prev, feedback: event.target.value }))
+                    }
+                  />
+                  <div className="gg-rate-actions">
+                    <button className="btn btn-success gg-rate-submit" type="submit">
+                      Submit Rating
+                    </button>
+                    <button
+                      className="btn btn-link gg-rate-cancel"
+                      type="button"
+                      onClick={closeDashboardModal}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showComplaintModal && selectedJob && (
+          <ComplaintModal
+            isOpen={showComplaintModal}
+            onClose={() => setShowComplaintModal(false)}
+            onSubmitted={() => addToast("Report submitted. Our admin team will review it.", "success")}
+            job={selectedJob}
+            role="household"
+            applicants={(selectedJob.applications || []).map((application) => ({
+              id: application.workerId,
+              username: application.workerUsername,
+              name: application.workerName,
+            }))}
+          />
         )}
       </main>
     </div>

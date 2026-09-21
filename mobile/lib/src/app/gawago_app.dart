@@ -1731,6 +1731,122 @@ class _LoginPanelState extends State<_LoginPanel> {
     }
   }
 
+  /// Two-step reset in one dialog: request a code by email, then submit
+  /// that code with the new password. The email field locks once the code
+  /// has gone out so the two steps cannot disagree.
+  Future<void> _openForgotPasswordDialog() async {
+    final email = TextEditingController();
+    final code = TextEditingController();
+    final newPassword = TextEditingController();
+    var codeSent = false;
+    var busy = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          Future<void> sendCode() async {
+            if (email.text.trim().isEmpty) {
+              _showMessage('Enter the email on your account.');
+              return;
+            }
+            setDialogState(() => busy = true);
+            try {
+              await GawaGoApi.requestPasswordReset(email.text);
+              setDialogState(() => codeSent = true);
+              _showMessage(
+                'If that email is registered, a code is on its way.',
+              );
+            } catch (error) {
+              _showMessage(friendlyApiError(error));
+            } finally {
+              setDialogState(() => busy = false);
+            }
+          }
+
+          Future<void> submitReset() async {
+            if (code.text.trim().isEmpty) {
+              _showMessage('Enter the reset code from your email.');
+              return;
+            }
+            if (newPassword.text.length < 8) {
+              _showMessage('Password must be at least 8 characters.');
+              return;
+            }
+            setDialogState(() => busy = true);
+            try {
+              await GawaGoApi.resetPassword(
+                email: email.text,
+                token: code.text,
+                newPassword: newPassword.text,
+              );
+              if (!dialogContext.mounted) return;
+              Navigator.of(dialogContext).pop();
+              _showMessage('Password updated. You can log in now.');
+            } catch (error) {
+              _showMessage(friendlyApiError(error));
+            } finally {
+              setDialogState(() => busy = false);
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Reset your password'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: email,
+                  enabled: !codeSent,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
+                if (codeSent) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: code,
+                    decoration: const InputDecoration(labelText: 'Reset code'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: newPassword,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'New password',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              if (codeSent)
+                FilledButton(
+                  onPressed: busy ? null : submitReset,
+                  child: Text(busy ? 'Saving...' : 'Reset Password'),
+                )
+              else
+                FilledButton(
+                  onPressed: busy ? null : sendCode,
+                  child: Text(busy ? 'Sending...' : 'Send Code'),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+
+    email.dispose();
+    code.dispose();
+    newPassword.dispose();
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(
       context,
@@ -1802,7 +1918,7 @@ class _LoginPanelState extends State<_LoginPanel> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: () {},
+              onPressed: _openForgotPasswordDialog,
               style: TextButton.styleFrom(
                 foregroundColor: GawaGoColors.primary,
                 padding: EdgeInsets.zero,

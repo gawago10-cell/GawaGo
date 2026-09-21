@@ -22,6 +22,8 @@ from apps.jobs.services import (
     HiringWorkerVerificationError,
     complete_job,
     hire_application,
+    record_application_status_event,
+    record_job_status_event,
 )
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
@@ -99,6 +101,10 @@ class JobViewSet(viewsets.ModelViewSet):
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context["request"] = self.request
+        if self.action == "list":
+            # A job list serializes every job and its applicants; resolving
+            # each route live would be one outbound HTTP request per row.
+            context["route_lookup"] = "cache_only"
         return context
 
     def get_queryset(self):
@@ -114,6 +120,20 @@ class JobViewSet(viewsets.ModelViewSet):
             elif getattr(profile, "role", None) == UserProfile.ROLE_WORKER:
                 queryset = queryset.filter(applications__worker=user).distinct()
             elif not user.is_staff:
+                return queryset.none()
+        # A worker's own job history, by user id. Public like the rest of
+        # list/retrieve: this is the employment record a household reads off
+        # an applicant's profile before hiring. Without this filter the
+        # `worker` parameter both clients already send was silently ignored,
+        # so every completed job on the platform came back as if one worker
+        # had done all of them.
+        worker_id = params.get("worker")
+        if worker_id:
+            try:
+                queryset = queryset.filter(
+                    applications__worker_id=int(worker_id)
+                ).distinct()
+            except (TypeError, ValueError):
                 return queryset.none()
         if params.get("status"):
             queryset = queryset.filter(status=params["status"])
@@ -145,6 +165,11 @@ class JobViewSet(viewsets.ModelViewSet):
         household_profile = ensure_household_profile(household, auth_payload.get("role", ""))
         if not household_profile:
             return Response({"detail": "Only households can create job postings."}, status=status.HTTP_403_FORBIDDEN)
+        if household_profile.verification_status != "verified":
+            return Response(
+                {"detail": "Your household account must be verified before you can post a job."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         requested_status = serializer.validated_data.get("status", JobPosting.STATUS_OPEN)
         if requested_status != JobPosting.STATUS_OPEN:
             return Response({"detail": "New job postings must start as open."}, status=status.HTTP_400_BAD_REQUEST)
@@ -193,9 +218,16 @@ class JobViewSet(viewsets.ModelViewSet):
             should_complete = current_status != JobPosting.STATUS_COMPLETED and requested_status == JobPosting.STATUS_COMPLETED
             if should_complete and not serializer.instance.applications.filter(status=JobApplication.STATUS_HIRED).exists():
                 raise ValidationError({"status": "Only jobs with hired workers can be completed."})
+            if should_complete and not self.request.user.is_staff:
+                household_profile = getattr(self.request.user, "profile", None)
+                if not household_profile or household_profile.verification_status != "verified":
+                    raise PermissionDenied("Your household account must be verified before you can complete a job.")
+        previous_status = serializer.instance.status
         job = serializer.save()
         if should_complete:
-            complete_job(job)
+            complete_job(job, actor=self.request.user, previous_status=previous_status)
+        else:
+            record_job_status_event(job, previous_status, job.status, actor=self.request.user)
 
     def perform_destroy(self, instance):
         if instance.household != self.request.user and not self.request.user.is_staff:
@@ -263,7 +295,13 @@ class JobApplicationListView(APIView):
         else:
             visible_applications = JobApplication.objects.none()
 
-        return Response(JobApplicationSerializer(visible_applications, many=True, context={"request": request}).data)
+        return Response(
+            JobApplicationSerializer(
+                visible_applications,
+                many=True,
+                context={"request": request, "route_lookup": "cache_only"},
+            ).data
+        )
 
 
 class JobApplicationStatusView(APIView):
@@ -277,6 +315,13 @@ class JobApplicationStatusView(APIView):
             return Response({"detail": "Application not found."}, status=status.HTTP_404_NOT_FOUND)
         if application.job.household != request.user and not request.user.is_staff:
             return Response({"detail": "Only the job owner can update application status."}, status=status.HTTP_403_FORBIDDEN)
+        if not request.user.is_staff:
+            household_profile = getattr(request.user, "profile", None)
+            if not household_profile or household_profile.verification_status != "verified":
+                return Response(
+                    {"detail": "Your household account must be verified before you can manage job applications."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         serializer = JobApplicationStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         requested_status = serializer.validated_data["status"]
@@ -300,7 +345,9 @@ class JobApplicationStatusView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                application = hire_application(application.id, JobApplication.STATUS_PENDING)
+                application = hire_application(
+                    application.id, JobApplication.STATUS_PENDING, actor=request.user
+                )
             except HiringCapacityReached:
                 return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringWorkerVerificationError:
@@ -331,8 +378,12 @@ class JobApplicationStatusView(APIView):
             hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).count()
             if hired_count >= application.job.worker_slots:
                 return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
+        previous_status = application.status
         application.status = requested_status
         application.save(update_fields=["status", "updated_at"])
+        record_application_status_event(
+            application, previous_status, application.status, actor=request.user
+        )
         if application.status == JobApplication.STATUS_HIRE_REQUESTED:
             create_notification(
                 recipient=application.worker,
@@ -371,6 +422,13 @@ class JobHireRequestView(APIView):
         job = get_object_or_404(JobPosting, pk=job_id)
         if job.household != request.user and not request.user.is_staff:
             return Response({"detail": "Only the job owner can send hire requests."}, status=status.HTTP_403_FORBIDDEN)
+        if not request.user.is_staff:
+            household_profile = getattr(request.user, "profile", None)
+            if not household_profile or household_profile.verification_status != "verified":
+                return Response(
+                    {"detail": "Your household account must be verified before you can hire workers."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         if job.status in {JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED}:
             return Response({"detail": "Hire requests cannot be sent for completed or cancelled jobs."}, status=status.HTTP_400_BAD_REQUEST)
         worker_id = request.data.get("worker_id")
@@ -397,8 +455,12 @@ class JobHireRequestView(APIView):
             return Response({"detail": "A hire request was already sent to this worker."}, status=status.HTTP_400_BAD_REQUEST)
         if application.status in {JobApplication.STATUS_REJECTED, JobApplication.STATUS_CLOSED, JobApplication.STATUS_COMPLETED}:
             return Response({"detail": "This application can no longer receive a hire request."}, status=status.HTTP_400_BAD_REQUEST)
+        previous_status = application.status
         application.status = JobApplication.STATUS_HIRE_REQUESTED
         application.save(update_fields=["status", "updated_at"])
+        record_application_status_event(
+            application, previous_status, application.status, actor=request.user
+        )
         create_notification(
             recipient=worker,
             notification_type=Notification.TYPE_HIRING,
@@ -440,8 +502,10 @@ class JobCompletionRequestView(APIView):
             application.save(update_fields=["note", "updated_at"])
 
         if job.status != JobPosting.STATUS_COMPLETION_REQUESTED:
+            previous_status = job.status
             job.status = JobPosting.STATUS_COMPLETION_REQUESTED
             job.save(update_fields=["status"])
+            record_job_status_event(job, previous_status, job.status, actor=request.user)
 
         worker_name = request.user.get_full_name().strip() or request.user.username
         message = f"{worker_name} marked {job.title} as done. Please confirm if the service was completed."
@@ -480,7 +544,9 @@ class JobApplicationDecisionView(APIView):
             return Response({"detail": "This job is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
         if decision == "accept":
             try:
-                application = hire_application(application.id, JobApplication.STATUS_HIRE_REQUESTED)
+                application = hire_application(
+                    application.id, JobApplication.STATUS_HIRE_REQUESTED, actor=request.user
+                )
             except HiringCapacityReached:
                 return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringWorkerVerificationError:
@@ -501,8 +567,12 @@ class JobApplicationDecisionView(APIView):
                 action_url=f"/household/jobs/{application.job_id}",
             )
         else:
+            previous_status = application.status
             application.status = JobApplication.STATUS_REJECTED
             application.save(update_fields=["status", "updated_at"])
+            record_application_status_event(
+                application, previous_status, application.status, actor=request.user
+            )
             create_notification(
                 recipient=application.job.household,
                 notification_type=Notification.TYPE_REJECTION,

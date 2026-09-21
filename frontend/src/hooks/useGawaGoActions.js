@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+
 import { BARANGAY_CENTERS } from "../constants/appConstants";
 import { getBarangayCenter, normalizeBarangayName } from "../utils/locationUtils";
 
@@ -86,6 +88,14 @@ export function useGawaGoActions({
   workerForm,
   workerProfileForm,
 }) {
+  // Guards handleHouseholdJobSubmit against a double-click. A ref (not a
+  // plain closure variable) is required: this whole hook body re-runs on
+  // every render, and a state update during resolveLocationCoordinates'
+  // multi-second geocode round-trip would otherwise re-render before the
+  // POST resolves, silently resetting a plain variable's guard.
+  const isSubmittingJobRef = useRef(false);
+  const [isSubmittingJob, setIsSubmittingJob] = useState(false);
+
   function handleApplyToJob(jobId) {
     if (!currentWorker) {
       window.alert("Please login as a worker first.");
@@ -187,14 +197,17 @@ export function useGawaGoActions({
     }
     (async () => {
       const requestedAt = new Date().toLocaleString("en-PH");
-      const isDirectApplicantHire = existingApplication?.status === "Pending";
+      // Applying is itself consent, so accepting an applicant hires them
+      // outright. A worker who never applied was surfaced by matching and has
+      // not agreed to anything yet, so they still get a request to confirm.
+      const isApplicant = existingApplication?.status === "Pending";
       const applicationRecord = {
         ...existingApplication,
         id: existingApplication?.id || `hire-request-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
         workerId: selectedWorker.id,
         workerName: getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username),
         workerUsername: selectedWorker.username,
-        status: isDirectApplicantHire ? "Hired" : "Hire Request",
+        status: isApplicant ? "Hired" : "Hire Request",
         requestedAt,
       };
       try {
@@ -203,7 +216,7 @@ export function useGawaGoActions({
               method: "PATCH",
               auth: true,
               body: {
-                status: isDirectApplicantHire ? "hired" : "hire_requested",
+                status: isApplicant ? "hired" : "hire_requested",
               },
             })
           : await apiRequest(`jobs/${selectedJob.id}/hire-request/`, {
@@ -216,7 +229,9 @@ export function useGawaGoActions({
             });
         const data = await readResponseData(response);
         if (!response.ok) {
-          throw new Error(getApiErrorMessage(data, "Unable to send hire request."));
+          throw new Error(
+            getApiErrorMessage(data, isApplicant ? "Unable to hire this worker." : "Unable to send hire request."),
+          );
         }
         const normalizedApplication = normalizeBackendApplication(data);
         setPostedJobs((prev) =>
@@ -250,10 +265,6 @@ export function useGawaGoActions({
               ...job,
               cancellationReason: "",
               applications,
-              status: isDirectApplicantHire ? "Already found a worker" : job.status,
-              matchedWorkerIds: isDirectApplicantHire
-                ? [...new Set([...(job.matchedWorkerIds || []), selectedWorker.id])]
-                : job.matchedWorkerIds,
             };
             return nextJob;
           }),
@@ -269,9 +280,9 @@ export function useGawaGoActions({
                       id: `hire-request-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
                       applicationId: normalizedApplication?.id || applicationRecord.id,
                       jobId: selectedJob.id,
-                      title: isDirectApplicantHire ? "Application accepted" : "Hire request",
-                      message: isDirectApplicantHire
-                        ? `Your application for ${selectedJob.jobTitle || selectedJob.serviceType} was accepted.`
+                      title: isApplicant ? "Application accepted" : "Hire request",
+                      message: isApplicant
+                        ? `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} accepted your application for ${selectedJob.jobTitle || selectedJob.serviceType}.`
                         : `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} wants to hire you for ${selectedJob.jobTitle || selectedJob.serviceType}.`,
                       date: requestedAt,
                       unread: true,
@@ -283,16 +294,17 @@ export function useGawaGoActions({
         );
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
+        const workerLabel = getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username);
         window.alert(
-          isDirectApplicantHire
-            ? `${getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username)} has been hired.`
-            : `Hire request sent to ${getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username)}. They can accept or reject it from Notifications.`,
+          isApplicant
+            ? `${workerLabel} is hired. The job is now in progress.`
+            : `Hire request sent to ${workerLabel}. They can accept or reject it from Notifications.`,
         );
-        setView("household-my-jobs");
+        setView("household-dashboard");
       } catch (error) {
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
-        window.alert(error.message || (isDirectApplicantHire ? "Unable to hire this worker." : "Unable to send hire request."));
+        window.alert(error.message || "Unable to complete this action.");
       }
     })();
   }
@@ -483,7 +495,7 @@ export function useGawaGoActions({
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
         window.alert(message);
-        setView("household-my-jobs");
+        setView("household-dashboard");
       } catch (error) {
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
@@ -833,7 +845,6 @@ export function useGawaGoActions({
         yearsExperience: workerProfileForm.yearsExperience,
         skills: workerProfileForm.skills,
         availabilityWindows: workerProfileForm.availabilityWindows || [],
-        weeklyAvailability: workerProfileForm.weeklyAvailability || [],
         locationLabel: workerLocationLabel,
         latitude: workerLatitude,
         longitude: workerLongitude,
@@ -921,7 +932,6 @@ export function useGawaGoActions({
               longitude: nextWorkerPatch.longitude,
                 profilePhotoPreview: savedProfilePhoto,
                 availabilityWindows: nextWorkerPatch.availabilityWindows,
-                weeklyAvailability: nextWorkerPatch.weeklyAvailability,
               });
             nextWorkerPatch.profilePhotoPreview = savedProfilePhoto;
           }
@@ -959,9 +969,6 @@ export function useGawaGoActions({
                   hourly_rate: workerProfileForm.hourlyRate,
                   daily_rate: workerProfileForm.dailyRate,
                   availability_windows: nextWorkerPatch.availabilityWindows,
-                  weekly_availability: nextWorkerPatch.weeklyAvailability.filter(
-                    (window) => window.isAvailable,
-                  ),
                   location_label: workerLocationLabel,
                   latitude: nextWorkerPatch.latitude,
                   longitude: nextWorkerPatch.longitude,
@@ -1107,7 +1114,10 @@ export function useGawaGoActions({
         await refreshVerificationStateFromBackend();
         window.alert("Verification request submitted. Status is now Under Review.");
       } catch (error) {
-        window.alert(error.message || "Verification documents submitted. Please wait for admin review.");
+        // Must never read as success -- a fallback claiming the documents
+        // were submitted here would tell the worker/household their
+        // verification is under review when the request actually failed.
+        window.alert(error.message || "Unable to submit verification documents. Please try again.");
       }
     })();
   }
@@ -1282,22 +1292,27 @@ export function useGawaGoActions({
       }
     })();
   }
-  function handleHouseholdReviewSubmit(event) {
+  // Returns whether the review was actually saved, so the modal that hosts
+  // this form only closes on success -- it used to close unconditionally
+  // right after calling this (a fire-and-forget inner IIFE the caller never
+  // awaited), so a rejected review surfaced later as an alert with the
+  // filled-in form already gone.
+  async function handleHouseholdReviewSubmit(event) {
     event.preventDefault();
     if (!currentHousehold || !selectedWorker) {
       window.alert("Select a worker first.");
-      return;
+      return false;
     }
     const rating = parseFloat(householdReviewForm.rating);
     if (!rating) {
       window.alert("Please select a star rating first.");
-      return;
+      return false;
     }
     if (!selectedJob?.id) {
       window.alert("Select a completed job first.");
-      return;
+      return false;
     }
-    (async () => {
+    return (async () => {
       try {
         const body = {
           target_username: selectedWorker.username,
@@ -1323,11 +1338,16 @@ export function useGawaGoActions({
         }
         setHouseholdReviewForm(EMPTY_HOUSEHOLD_REVIEW_FORM);
         await refreshReviewsFromBackend();
+        // Also re-pull jobs: canReview flips off once the review lands, which is
+        // what moves the job out of the dashboard's "Completed" list.
+        await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
         window.alert("Review submitted for the worker.");
+        return true;
       } catch (error) {
         await refreshReviewsFromBackend();
         window.alert(error.message || "Unable to submit review. Please try again.");
+        return false;
       }
     })();
   }
@@ -1406,6 +1426,13 @@ export function useGawaGoActions({
       window.alert("Household profile not found.");
       return;
     }
+    if (!review?.jobId) {
+      // Guessing selectedJob?.id here would risk filing the reply against
+      // whatever job happens to be selected elsewhere in the UI rather than
+      // the one this review is actually about.
+      window.alert("Unable to determine which job this review is for. Please try again.");
+      return;
+    }
     (async () => {
       try {
         const response = await apiRequest("reviews/", {
@@ -1413,7 +1440,7 @@ export function useGawaGoActions({
           auth: true,
           body: {
             target_username: household.username,
-            job_id: review?.jobId || selectedJob?.id,
+            job_id: review.jobId,
             job_title: review?.jobTitle || "",
             rating,
             feedback,
@@ -1455,7 +1482,17 @@ export function useGawaGoActions({
       window.alert("Please complete the service type, preferred date, preferred time, and number of workers needed.");
       return;
     }
+    if (isSubmittingJobRef.current) {
+      // Ignore a double-click/double-submit rather than posting the job
+      // twice -- resolveLocationCoordinates below is a multi-second geocode
+      // round-trip, leaving a wide window for a second click to land before
+      // the first POST resolves.
+      return;
+    }
+    isSubmittingJobRef.current = true;
+    setIsSubmittingJob(true);
     (async () => {
+     try {
       const resolvedLocation =
         householdJobLocationPreview ||
         (await resolveLocationCoordinates(householdJobForm.barangay, householdJobForm.streetAddress, true));
@@ -1511,6 +1548,7 @@ export function useGawaGoActions({
       };
       const imageFiles = Array.isArray(householdJobImages) ? householdJobImages : [];
       let shouldResetHouseholdJobForm = false;
+      let postedJobForMatching = null;
       try {
         const requestBody = imageFiles.length > 0 ? new FormData() : payload;
         if (requestBody instanceof FormData) {
@@ -1532,11 +1570,9 @@ export function useGawaGoActions({
         if (normalizedJob) {
           setPostedJobs((prev) => [normalizedJob, ...prev.filter((job) => job.id !== normalizedJob.id)]);
           setSelectedJobId(normalizedJob.id);
-          await refreshRecommendedWorkers(normalizedJob.id);
+          postedJobForMatching = normalizedJob;
         }
-        await refreshJobsFromBackend();
         shouldResetHouseholdJobForm = true;
-        window.alert("Job posted successfully.");
       } catch (error) {
         await refreshJobsFromBackend();
         window.alert(error.message || "Unable to post job. Please review the form and try again.");
@@ -1565,9 +1601,17 @@ export function useGawaGoActions({
             estimatedWorkingDays: "",
             geographicBoundary: "1km",
           });
-          setView("household-my-jobs");
+          if (postedJobForMatching) {
+            refreshRecommendedWorkers(postedJobForMatching.id, "ai");
+          }
+          refreshJobsFromBackend();
+          setView("household-job-matches");
         }
       }
+     } finally {
+      isSubmittingJobRef.current = false;
+      setIsSubmittingJob(false);
+     }
     })();
   }
   function handleAdminApproveVerification(requestId) {
@@ -1658,9 +1702,10 @@ export function useGawaGoActions({
         setSelectedVerificationRequestId(requestId);
         setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
       } catch (error) {
-        window.alert(error.message || `Verified ${request.workerName}.`);
-        setSelectedVerificationRequestId(requestId);
-        setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
+        // Must never read as success: a fallback like "Verified {name}."
+        // here would tell the admin the approval went through when it
+        // didn't, and navigating away regardless hid that nothing changed.
+        window.alert(error.message || "Unable to approve this verification request. Please try again.");
       }
     })();
   }
@@ -1758,9 +1803,9 @@ export function useGawaGoActions({
         setSelectedVerificationRequestId(requestId);
         setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
       } catch (error) {
-        window.alert(error.message || `Rejected ${request.workerName}.`);
-        setSelectedVerificationRequestId(requestId);
-        setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
+        // Must never read as success -- see the matching note in
+        // handleAdminApproveVerification above.
+        window.alert(error.message || "Unable to reject this verification request. Please try again.");
       }
     })();
   }
@@ -1784,5 +1829,6 @@ export function useGawaGoActions({
     handleConfirmJobCompleted,
     handleAdminApproveVerification,
     handleAdminRejectVerification,
+    isSubmittingJob,
   };
 }

@@ -5,10 +5,11 @@ from django.core.exceptions import ValidationError
 from django.core.mail import BadHeaderError
 from django.db import transaction, models
 from django.utils import timezone
-from rest_framework import generics, status
+from rest_framework import exceptions, generics, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.accounts.models import (
@@ -41,17 +42,21 @@ from apps.accounts.serializers import (
     WorkerCertificationSerializer,
     WorkerPortfolioItemSerializer,
     SkillRatingSerializer,
+    VerificationDocumentSerializer,
     WorkerPortfolioSerializer,
 )
+from apps.jobs.models import JobApplication, JobPosting
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 from apps.accounts.services import (
+    SuspensionValidationError,
+    apply_account_suspension,
     create_password_reset_request,
     send_password_reset_email,
     validate_latest_reset_request,
 )
-from apps.common.authentication import create_jwt_token
-from apps.common.permissions import is_platform_admin, is_platform_superadmin
+from apps.common.authentication import create_jwt_token, decode_jwt_token, revoke_token
+from apps.common.permissions import IsPlatformAdmin, IsPlatformSuperAdmin, is_platform_admin, is_platform_superadmin
 from apps.reviews.services import assign_due_default_worker_ratings
 
 
@@ -80,6 +85,51 @@ class UserProfileListView(generics.ListAPIView):
         context = super().get_serializer_context()
         context["request"] = self.request
         return context
+
+
+class UserAccountBlockAdminView(APIView):
+    """POST /api/accounts/profiles/<username>/block/ -- suspend (timed or
+    permanent) or restore any household or worker account, for the User
+    Management screen. Shares its logic with the complaint-review "block
+    this respondent" action (apps.accounts.services.apply_account_suspension)
+    so the two stay in sync, but targets a user directly instead of going
+    through a complaint record.
+
+    Body:
+      blocked (bool, default True) -- False restores the account.
+      reason (str) -- shown to the user, only stored when blocking.
+      duration_days (int, optional) -- 3 or 7 for a timed suspension that
+        lifts itself automatically; omitted/null means a permanent block.
+    """
+
+    permission_classes = [IsAuthenticated, IsPlatformSuperAdmin]
+
+    def post(self, request, username):
+        target_user = User.objects.filter(username=username).first()
+        if not target_user:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        if target_user.is_staff or target_user.is_superuser:
+            return Response(
+                {"detail": "Admin accounts cannot be blocked from User Management."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        profile = UserProfile.objects.filter(user=target_user).first()
+        if not profile:
+            return Response({"detail": "That account has no profile to block."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            apply_account_suspension(
+                profile,
+                blocked=request.data.get("blocked", True),
+                reason=request.data.get("reason", ""),
+                duration_days=request.data.get("duration_days"),
+            )
+        except SuspensionValidationError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer_class = UserProfileSerializer if request.user.is_staff else PublicUserProfileSerializer
+        return Response(serializer_class(profile, context={"request": request}).data)
 
 
 class RegisterView(APIView):
@@ -136,6 +186,8 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -157,6 +209,8 @@ class LoginView(APIView):
         if not user:
             return Response({"detail": "Invalid username or password."}, status=status.HTTP_400_BAD_REQUEST)
         profile = UserProfile.objects.filter(user=user).first()
+        if profile and profile.refresh_block_status():
+            return Response({"detail": profile.block_message}, status=status.HTTP_403_FORBIDDEN)
         account_role = get_account_role(user, profile)
         return Response(
             {
@@ -174,6 +228,8 @@ class LoginView(APIView):
 
 class VerifySignupView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = VerifySignupSerializer(data=request.data)
@@ -192,6 +248,8 @@ class VerifySignupView(APIView):
 
 class ForgotPasswordRequestView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = ForgotPasswordRequestSerializer(data=request.data)
@@ -212,6 +270,8 @@ class ForgotPasswordRequestView(APIView):
 
 class VerifyResetTokenView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = VerifyResetTokenSerializer(data=request.data)
@@ -226,6 +286,8 @@ class VerifyResetTokenView(APIView):
 
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
@@ -245,6 +307,10 @@ class ResetPasswordView(APIView):
 
         reset_request.user.set_password(new_password)
         reset_request.user.save(update_fields=["password"])
+        profile = getattr(reset_request.user, "profile", None)
+        if profile:
+            profile.credentials_updated_at = timezone.now()
+            profile.save(update_fields=["credentials_updated_at"])
         reset_request.used_at = reset_request.used_at or timezone.now()
         reset_request.save(update_fields=["used_at"])
         return Response({"detail": "Password reset successful."}, status=status.HTTP_200_OK)
@@ -252,6 +318,15 @@ class ResetPasswordView(APIView):
 
 class LogoutView(APIView):
     def post(self, request):
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+            try:
+                payload = decode_jwt_token(token)
+            except exceptions.AuthenticationFailed:
+                payload = None
+            if payload:
+                revoke_token(payload)
         if request.user.is_authenticated:
             request.session.flush()
         return Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
@@ -486,15 +561,59 @@ class WorkerPortfolioItemView(APIView):
 class SkillRatingView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
+    def post(self, request, job_id):
         profile = getattr(request.user, "profile", None)
         if not profile or profile.role != UserProfile.ROLE_HOUSEHOLD:
             return Response({"detail": "Only households can rate skills."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            job = JobPosting.objects.get(pk=job_id, household=request.user)
+        except JobPosting.DoesNotExist:
+            return Response({"detail": "Job posting not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if job.status != JobPosting.STATUS_COMPLETED:
+            return Response(
+                {"detail": "Skills can only be rated once the job is completed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = SkillRatingSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        serializer.save(household=request.user)
-        skill_id = serializer.validated_data.get("skill").id
-        skill = WorkerSkill.objects.get(id=skill_id)
+        skill = serializer.validated_data.get("skill")
+        if skill is None:
+            skill_name = serializer.validated_data["skill_name"].strip()
+            worker_id = request.data.get("worker_id") or request.data.get("worker")
+            completed_applications = job.applications.filter(status=JobApplication.STATUS_COMPLETED)
+            application = (
+                completed_applications.filter(worker_id=worker_id).first()
+                if worker_id
+                else completed_applications.first()
+            )
+            if not application:
+                return Response(
+                    {"detail": "No completed worker found for this job."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            skill = WorkerSkill.objects.filter(
+                worker=application.worker, skill_name__iexact=skill_name
+            ).first()
+            if not skill:
+                skill = WorkerSkill.objects.create(worker=application.worker, skill_name=skill_name)
+        elif not job.applications.filter(
+            worker=skill.worker, status=JobApplication.STATUS_COMPLETED
+        ).exists():
+            # A skill id is client-supplied, so it could belong to any worker.
+            # Without this, a household could attach a rating to someone who
+            # never worked this job.
+            return Response(
+                {"detail": "That skill belongs to a worker who did not complete this job."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # skill_name is resolved above into a real WorkerSkill; it isn't a
+        # SkillRating model field, so it must not reach Model.objects.create().
+        serializer.validated_data.pop("skill_name", None)
+        serializer.save(job=job, household=request.user, worker=skill.worker, skill=skill)
+
         skill.rating_count = SkillRating.objects.filter(skill=skill).count()
         skill.average_rating = SkillRating.objects.filter(skill=skill).aggregate(models.Avg("rating"))["rating__avg"]
         skill.save()
@@ -502,26 +621,27 @@ class SkillRatingView(APIView):
 
 
 class CertificateVerificationAdminView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
-    def get(self, request):
-        user = request.user
-        if not (user.is_staff or user.is_superuser):
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+    def get(self, request, cert_id=None):
+        # The detail URL (.../<cert_id>/) also routes GET here for PATCH's
+        # sake, so this has to accept the id rather than only the list route.
+        if cert_id is not None:
+            cert = WorkerCertification.objects.select_related("worker", "verified_by").filter(id=cert_id).first()
+            if not cert:
+                return Response({"detail": "Certificate not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(WorkerCertificationSerializer(cert, context={"request": request}).data)
 
         status_filter = request.query_params.get("status", WorkerCertification.STATUS_PENDING)
-        certs = WorkerCertification.objects.select_related("worker", "verified_by").filter(
-            verification_status=status_filter
-        ).order_by("-created_at")
+        certs = WorkerCertification.objects.select_related("worker", "worker__profile", "verified_by").order_by("-created_at")
+        if status_filter and status_filter != "all":
+            certs = certs.filter(verification_status=status_filter)
 
         serializer = WorkerCertificationSerializer(certs, many=True, context={"request": request})
         return Response(serializer.data)
 
     def patch(self, request, cert_id):
         user = request.user
-        if not (user.is_staff or user.is_superuser):
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
-
         cert = WorkerCertification.objects.filter(id=cert_id).first()
         if not cert:
             return Response({"detail": "Certificate not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -557,16 +677,24 @@ class VerificationDocumentView(APIView):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def post(self, request):
-        data = request.data.copy()
-        data["user"] = request.user.id
-
-        serializer = VerificationDocumentSerializer(data=data, context={"request": request})
+        # `user` is read-only on the serializer, so it has to be supplied to
+        # save() -- stuffing it into the input data leaves validated_data
+        # without a user and the non-nullable FK then blows up on insert.
+        serializer = VerificationDocumentSerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
-            doc = serializer.save()
+            serializer.save(user=request.user)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    def get(self, request):
+    def get(self, request, doc_id=None):
+        # The detail URL (.../<doc_id>/) also routes GET here for DELETE's
+        # sake, so this has to accept the id rather than only the list route.
+        if doc_id is not None:
+            doc = VerificationDocument.objects.filter(id=doc_id, user=request.user).first()
+            if not doc:
+                return Response({"detail": "Document not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(VerificationDocumentSerializer(doc, context={"request": request}).data)
+
         docs = VerificationDocument.objects.select_related("verified_by").filter(user=request.user)
         serializer = VerificationDocumentSerializer(docs, many=True, context={"request": request})
         return Response(serializer.data)
@@ -580,26 +708,27 @@ class VerificationDocumentView(APIView):
 
 
 class VerificationDocumentAdminView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
-    def get(self, request):
-        user = request.user
-        if not (user.is_staff or user.is_superuser):
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+    def get(self, request, doc_id=None):
+        # The detail URL (.../<doc_id>/) also routes GET here for PATCH's
+        # sake, so this has to accept the id rather than only the list route.
+        if doc_id is not None:
+            doc = VerificationDocument.objects.select_related("user", "verified_by").filter(id=doc_id).first()
+            if not doc:
+                return Response({"detail": "Document not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(VerificationDocumentSerializer(doc, context={"request": request}).data)
 
         status_filter = request.query_params.get("status", VerificationDocument.STATUS_PENDING)
-        docs = VerificationDocument.objects.select_related("user", "verified_by").filter(
-            verification_status=status_filter
-        ).order_by("-created_at")
+        docs = VerificationDocument.objects.select_related("user", "user__profile", "verified_by").order_by("-created_at")
+        if status_filter and status_filter != "all":
+            docs = docs.filter(verification_status=status_filter)
 
         serializer = VerificationDocumentSerializer(docs, many=True, context={"request": request})
         return Response(serializer.data)
 
     def patch(self, request, doc_id):
         user = request.user
-        if not (user.is_staff or user.is_superuser):
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
-
         doc = VerificationDocument.objects.filter(id=doc_id).first()
         if not doc:
             return Response({"detail": "Document not found."}, status=status.HTTP_404_NOT_FOUND)

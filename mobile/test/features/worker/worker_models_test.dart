@@ -21,10 +21,9 @@ void main() {
         'longitude': '121.5929000',
         'verification_status': 'verified',
         'display_rating': 'No ratings yet',
-        'weekly_availability': [
+        'availability_windows': [
           {
-            'weekday': 0,
-            'weekday_label': 'Monday',
+            'date': '2026-09-21',
             'start_time': '09:00:00',
             'end_time': '15:00:00',
           },
@@ -35,7 +34,7 @@ void main() {
     expect(profile.fullName, 'John Israel');
     expect(profile.hourlyRate, 120);
     expect(profile.verificationStatus, 'verified');
-    expect(profile.weeklyAvailability.single.label, 'Monday');
+    expect(profile.availabilityWindows.single.date, '2026-09-21');
   });
 
   test('parses backend job action flags and application', () {
@@ -44,6 +43,9 @@ void main() {
       'title': 'Laundry',
       'household_username': 'household1',
       'household_name': 'Household One',
+      'household_verification_status': 'verified',
+      'hired_count': 1,
+      'workers_needed': 2,
       'required_skill': 'Laundry',
       'service_rate': '500.00',
       'status': 'open',
@@ -67,6 +69,9 @@ void main() {
       },
     });
 
+    expect(job.householdVerificationStatus, 'verified');
+    expect(job.hiredCount, 1);
+    expect(job.workerSlots, 2);
     expect(job.distanceKm, 2.45);
     expect(job.canAcceptHireRequest, isTrue);
     expect(job.application?.status, 'hire_requested');

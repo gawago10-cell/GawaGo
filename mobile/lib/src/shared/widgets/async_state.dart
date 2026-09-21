@@ -55,22 +55,61 @@ class AppEmptyState extends StatelessWidget {
     super.key,
     required this.message,
     this.icon = Icons.inbox_outlined,
+    this.title,
   });
 
   final String message;
   final IconData icon;
 
+  /// A short headline above the message. With one, the icon sits in a tinted
+  /// tile and the message reads as the explanation underneath -- the shape
+  /// the web empty cards use.
+  final String? title;
+
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 42, color: GawaGoColors.primary),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
+            if (title == null)
+              Icon(icon, size: 42, color: GawaGoColors.primary)
+            else
+              Container(
+                width: 64,
+                height: 64,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1EEE6),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, size: 30, color: GawaGoColors.ink),
+              ),
+            const SizedBox(height: 14),
+            if (title != null) ...[
+              Text(
+                title!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: GawaGoColors.ink,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 14.5,
+                height: 1.4,
+              ),
+            ),
           ],
         ),
       ),

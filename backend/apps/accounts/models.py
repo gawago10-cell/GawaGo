@@ -60,9 +60,45 @@ class UserProfile(models.Model):
         ("declining", "Declining"),
         ("neutral", "Neutral"),
     ])
+    # Bumped whenever this user's credentials change (e.g. password reset) so
+    # every previously issued JWT -- which carries an iat claim -- can be
+    # rejected at once, without needing a per-token revocation entry for each.
+    credentials_updated_at = models.DateTimeField(null=True, blank=True)
+    # Admin suspension. Deliberately NOT User.is_active: LoginView reactivates
+    # any inactive account that supplies the right password (kept for legacy
+    # accounts), which would silently undo every block.
+    is_blocked = models.BooleanField(default=False)
+    blocked_at = models.DateTimeField(null=True, blank=True)
+    blocked_reason = models.TextField(blank=True, default="")
+    # Null means the block is permanent (or the account isn't blocked at all).
+    # A future datetime means a timed suspension that should lift on its own.
+    blocked_until = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:
         return f"{self.user.username} ({self.role})"
+
+    def refresh_block_status(self) -> bool:
+        """Returns whether the account is currently blocked right now, lazily
+        lifting an expired timed suspension along the way (no cron needed --
+        this is called from every login/authenticated-request/admin-read
+        path, so an expired suspension self-heals on the next touch)."""
+        if not self.is_blocked:
+            return False
+        if self.blocked_until and timezone.now() >= self.blocked_until:
+            self.is_blocked = False
+            self.blocked_at = None
+            self.blocked_reason = ""
+            self.blocked_until = None
+            self.save(update_fields=["is_blocked", "blocked_at", "blocked_reason", "blocked_until"])
+            return False
+        return True
+
+    @property
+    def block_message(self) -> str:
+        if self.blocked_until:
+            until = timezone.localtime(self.blocked_until).strftime("%Y-%m-%d %H:%M")
+            return f"This account is suspended until {until}. Contact support for assistance."
+        return "This account has been blocked. Contact support for assistance."
 
     @property
     def has_location(self) -> bool:

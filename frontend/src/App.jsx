@@ -99,6 +99,7 @@ import ComplaintModal from "./components/ComplaintModal";
 const AppViews = lazy(() => import("./components/AppViews"));
 const ForgotPasswordView = lazy(() => import("./components/ForgotPasswordView"));
 const SuperAdminDashboardView = lazy(() => import("./components/SuperAdminDashboardView"));
+const MyComplaintsView = lazy(() => import("./components/MyComplaintsView"));
 const WorkerJobDetailView = lazy(() => import("./components/WorkerJobDetailView"));
 
 function ViewLoading() {
@@ -243,7 +244,7 @@ function App() {
   const [backendNotifications, setBackendNotifications] = useState([]);
   const [selectedVerificationRequestId, setSelectedVerificationRequestId] = useState(null);
   const [adminSection, setAdminSection] = useState("verification");
-  const [superAdminSection, setSuperAdminSection] = useState("verification");
+  const [superAdminSection, setSuperAdminSection] = useState("dashboard");
   const [heatMapMetric, setHeatMapMetric] = useState("jobs");
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedWorkerId, setSelectedWorkerId] = useState(null);
@@ -309,6 +310,7 @@ function App() {
   });
   const [showCertificationModal, setShowCertificationModal] = useState(false);
   const [showWorkSampleModal, setShowWorkSampleModal] = useState(false);
+  const [showSkillModal, setShowSkillModal] = useState(false);
   const [certificationForm, setCertificationForm] = useState({
     name: "",
     certificateImage: null,
@@ -329,13 +331,10 @@ function App() {
   const [ratingModalOpen, setRatingModalOpen] = useState(false);
   const [ratingJobId, setRatingJobId] = useState(null);
   const [ratingWorker, setRatingWorker] = useState(null);
+  const [ratingWorkerSkills, setRatingWorkerSkills] = useState([]);
+  const [ratingSkillsLoading, setRatingSkillsLoading] = useState(false);
+  const [ratingExtraSkills, setRatingExtraSkills] = useState([]);
   const [skillRatings, setSkillRatings] = useState({});
-  const [showComplaintModal, setShowComplaintModal] = useState(false);
-  const [complaintForm, setComplaintForm] = useState({
-    complaint_type: "",
-    description: "",
-    job: null,
-  });
   const [verificationForm, setVerificationForm] = useState({
     primaryIdName: "",
     primaryIdFile: null,
@@ -657,7 +656,16 @@ function App() {
         item.notificationType === "application" ||
         item.notificationType === "completion" ||
         item.notificationType === "verification" ||
-        item.title === "New feedback received",
+        // Report status changes, account block/restore notices, and reviews
+        // received from a worker (reviews/views.py uses TYPE_ACCOUNT_ACTIVITY
+        // for all of these). Households read this list through an allowlist,
+        // so without this entry they never saw these updates at all.
+        item.notificationType === "account_activity" ||
+        // A worker accepting or rejecting a household's hire request
+        // (jobs/views.py TYPE_ACCEPTED / TYPE_REJECTION go to the household).
+        // Without these the household never learns the worker responded.
+        item.notificationType === "accepted" ||
+        item.notificationType === "rejection",
     ),
     ...getHouseholdNotifications(householdJobs, registeredWorkers),
     ...getHouseholdReviewReminderNotifications(householdJobs, registeredWorkers, currentHousehold),
@@ -689,6 +697,7 @@ function App() {
             appliedAt: application.appliedAt,
             updatedAt: application.updatedAt,
             applicationStatus: application.status,
+            applicationStatusLabel: application.statusLabel || "",
             applicationId: application.id,
           })),
       )
@@ -970,6 +979,7 @@ function App() {
     refreshRecommendedWorkers,
     refreshNotificationsFromBackend,
     refreshReviewsFromBackend,
+    recommendedWorkersLoading,
   } = useBackendSync({
     currentUser,
     registeredWorkers,
@@ -1008,6 +1018,7 @@ function App() {
     selectedWorker,
     setBackendNotifications,
     setCurrentUser,
+    view,
   });
   useGawaGoPersistence({
     chatMessages: chatMessagesByConversation,
@@ -1033,9 +1044,9 @@ function App() {
     openHouseholdDashboard,
     openHouseholdFeedbackAll,
     openHouseholdGetVerified,
-    openHouseholdJobDetail,
+    openHouseholdJobMatches,
     openHouseholdMyJobs,
-    openHouseholdNotificationWorker,
+    openMyComplaints,
     openHouseholdNotifications,
     openHouseholdPostJob,
     openHouseholdProfile,
@@ -1049,6 +1060,7 @@ function App() {
     openWorkerFindJobs,
     openWorkerGetVerified,
     openWorkerJobDetail,
+    openWorkerMyJobs,
     openWorkerNotifications,
     openWorkerProfile,
     openWorkerRegister,
@@ -1121,6 +1133,7 @@ function App() {
     handleHouseholdJobSubmit,
     handleAdminApproveVerification,
     handleAdminRejectVerification,
+    isSubmittingJob,
   } = useGawaGoActions({
     EMPTY_HOUSEHOLD_FORM,
     EMPTY_HOUSEHOLD_REVIEW_FORM,
@@ -1250,18 +1263,68 @@ function App() {
     }, 5200);
   };
 
+  const addRatingExtraSkill = (name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    const alreadyListed = [
+      ...ratingWorkerSkills.map((skill) => skill.skill_name),
+      ...ratingExtraSkills.map((skill) => skill.name),
+    ].some((existing) => existing.toLowerCase() === trimmed.toLowerCase());
+    if (alreadyListed) {
+      addToast(`${trimmed} is already in this list.`, "warning");
+      return;
+    }
+    setRatingExtraSkills((prev) => [...prev, { tempId: `extra-${Date.now()}-${Math.random()}`, name: trimmed }]);
+  };
+
+  const removeRatingExtraSkill = (tempId) => {
+    setRatingExtraSkills((prev) => prev.filter((skill) => skill.tempId !== tempId));
+    setSkillRatings((prev) => {
+      const next = { ...prev };
+      delete next[tempId];
+      return next;
+    });
+  };
+
   const openRatingModal = (job, worker) => {
     setRatingJobId(job.id);
     setRatingWorker(worker);
     setSkillRatings({});
+    setRatingWorkerSkills([]);
+    setRatingExtraSkills([]);
     setRatingModalOpen(true);
+    (async () => {
+      setRatingSkillsLoading(true);
+      try {
+        const response = await apiRequest(`accounts/profiles/${worker.id}/portfolio/`, { auth: true });
+        const data = await readResponseData(response);
+        if (response.ok) {
+          const portfolioSkills = data?.skills || [];
+          setRatingWorkerSkills(portfolioSkills);
+          // The job's own service type is always rateable, even if the worker
+          // never added it to their portfolio -- otherwise you can't rate the
+          // very work you hired them for.
+          const jobSkill = (job.serviceType || job.requiredSkill || "").trim();
+          const alreadyListed = portfolioSkills.some(
+            (skill) => (skill.skill_name || "").toLowerCase() === jobSkill.toLowerCase(),
+          );
+          if (jobSkill && !alreadyListed) {
+            setRatingExtraSkills([{ tempId: `extra-job-skill-${job.id}`, name: jobSkill }]);
+          }
+        }
+      } catch (error) {
+        // Leave the skill list empty; the modal shows "No skills to rate".
+      } finally {
+        setRatingSkillsLoading(false);
+      }
+    })();
   };
 
   const handleSubmitRatings = async () => {
     if (!ratingJobId || !ratingWorker) return;
 
-    const ratedSkills = Object.keys(skillRatings).filter(skill => skillRatings[skill]);
-    if (ratedSkills.length === 0) {
+    const ratedSkillIds = Object.keys(skillRatings).filter((skillId) => skillRatings[skillId]);
+    if (ratedSkillIds.length === 0) {
       addToast("Please rate at least one skill", "warning");
       return;
     }
@@ -1269,20 +1332,22 @@ function App() {
     try {
       if (!getAuthToken()) return;
 
-      for (const skillId of ratedSkills) {
-        const response = await apiRequest("jobs/skill-ratings/", {
+      const extraSkillByTempId = new Map(ratingExtraSkills.map((skill) => [skill.tempId, skill.name]));
+
+      for (const skillId of ratedSkillIds) {
+        const extraName = extraSkillByTempId.get(skillId);
+        const body = extraName
+          ? { skill_name: extraName, worker_id: ratingWorker.id, rating: skillRatings[skillId] }
+          : { skill: skillId, rating: skillRatings[skillId] };
+        const response = await apiRequest(`accounts/jobs/${ratingJobId}/skill-ratings/`, {
           method: "POST",
           auth: true,
-          body: {
-            job: ratingJobId,
-            worker: ratingWorker.id,
-            skill: skillId,
-            rating: skillRatings[skillId],
-          },
+          body,
         });
+        const data = await readResponseData(response);
 
         if (!response.ok) {
-          throw new Error("Failed to submit rating");
+          throw new Error(getApiErrorMessage(data, "Failed to submit rating"));
         }
       }
 
@@ -1290,48 +1355,11 @@ function App() {
       setRatingModalOpen(false);
       setRatingJobId(null);
       setRatingWorker(null);
+      setRatingWorkerSkills([]);
+      setRatingExtraSkills([]);
       setSkillRatings({});
     } catch (error) {
       addToast(`Error submitting ratings: ${error.message}`, "danger");
-    }
-  };
-
-  const handleSubmitComplaint = async () => {
-    if (!complaintForm.complaint_type.trim()) {
-      addToast("Please select a complaint type", "warning");
-      return;
-    }
-    if (!complaintForm.description.trim()) {
-      addToast("Please describe the issue", "warning");
-      return;
-    }
-
-    try {
-      if (!getAuthToken()) return;
-
-      const payload = {
-        complaint_type: complaintForm.complaint_type,
-        description: complaintForm.description,
-      };
-      if (complaintForm.job) {
-        payload.job = complaintForm.job;
-      }
-
-      const response = await apiRequest("complaints/create/", {
-        method: "POST",
-        auth: true,
-        body: payload,
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to submit complaint");
-      }
-
-      addToast("Complaint submitted successfully. We will review it shortly.", "success");
-      setShowComplaintModal(false);
-      setComplaintForm({ complaint_type: "", description: "", job: null });
-    } catch (error) {
-      addToast(`Error submitting complaint: ${error.message}`, "danger");
     }
   };
 
@@ -1514,6 +1542,7 @@ function App() {
           openWorkerProfile={openWorkerProfile}
           workerApplicationUnreadCount={workerApplicationUnreadCount}
           workerMiniPhoto={workerMiniPhoto}
+          addToast={addToast}
         />
       </Suspense>
     );
@@ -1532,6 +1561,7 @@ function App() {
           openVerificationRequest={openVerificationRequest}
           pendingVerificationRequests={pendingVerificationRequests}
           postedJobs={postedJobs}
+          refreshProfilesFromBackend={refreshProfilesFromBackend}
           registeredHouseholds={registeredHouseholds}
           registeredWorkers={registeredWorkers}
           rejectedVerificationRequests={rejectedVerificationRequests}
@@ -1559,6 +1589,31 @@ function App() {
           onResetPassword={handleResetPassword}
           onOpenLogin={openLogin}
           onOpenForgotPassword={openForgotPassword}
+        />
+      </Suspense>
+    );
+  }
+  if (view === "my-reports") {
+    return renderWithToasts(
+      <Suspense fallback={<ViewLoading />}>
+        <MyComplaintsView
+          currentUser={currentUser}
+          currentHousehold={currentHousehold}
+          currentWorker={currentWorker}
+          handleLogout={handleLogout}
+          openHouseholdDashboard={openHouseholdDashboard}
+          openHouseholdPostJob={openHouseholdPostJob}
+          openHouseholdMyJobs={openHouseholdMyJobs}
+          openHouseholdProfile={openHouseholdProfile}
+          openHouseholdGetVerified={openHouseholdGetVerified}
+          openHouseholdNotifications={openHouseholdNotifications}
+          openWorkerDashboard={openWorkerDashboard}
+          openWorkerFindJobs={openWorkerFindJobs}
+          openWorkerProfile={openWorkerProfile}
+          openWorkerApplications={openWorkerApplications}
+          openWorkerGetVerified={openWorkerGetVerified}
+          openWorkerNotifications={openWorkerNotifications}
+          workerApplicationUnreadCount={workerApplicationUnreadCount}
         />
       </Suspense>
     );
@@ -1595,6 +1650,8 @@ function App() {
       handleHouseholdChange={handleHouseholdChange}
       handleHouseholdJobChange={handleHouseholdJobChange}
       handleHouseholdJobSubmit={handleHouseholdJobSubmit}
+      isSubmittingJob={isSubmittingJob}
+      recommendedWorkersLoading={recommendedWorkersLoading}
       handleHouseholdProfileChange={handleHouseholdProfileChange}
       handleHouseholdProfileSave={handleHouseholdProfileSave}
       handleHouseholdRegisterSubmit={handleHouseholdRegisterSubmit}
@@ -1633,9 +1690,10 @@ function App() {
       openHouseholdDashboard={openHouseholdDashboard}
       openHouseholdFeedbackAll={openHouseholdFeedbackAll}
       openHouseholdGetVerified={openHouseholdGetVerified}
-      openHouseholdJobDetail={openHouseholdJobDetail}
+      openHouseholdJobMatches={openHouseholdJobMatches}
       openHouseholdMyJobs={openHouseholdMyJobs}
-      openHouseholdNotificationWorker={openHouseholdNotificationWorker}
+      openMyComplaints={openMyComplaints}
+      addToast={addToast}
       openHouseholdNotifications={openHouseholdNotifications}
       openHouseholdPostJob={openHouseholdPostJob}
       openHouseholdProfile={openHouseholdProfile}
@@ -1649,6 +1707,7 @@ function App() {
       openWorkerFindJobs={openWorkerFindJobs}
       openWorkerGetVerified={openWorkerGetVerified}
       openWorkerJobDetail={openWorkerJobDetail}
+      openWorkerMyJobs={openWorkerMyJobs}
       openWorkerNotifications={openWorkerNotifications}
       openWorkerProfile={openWorkerProfile}
       openWorkerRegister={openWorkerRegister}
@@ -1676,6 +1735,8 @@ function App() {
       toggleWorkerProfileSkill={toggleWorkerProfileSkill}
       showCertificationModal={showCertificationModal}
       setShowCertificationModal={setShowCertificationModal}
+      showSkillModal={showSkillModal}
+      setShowSkillModal={setShowSkillModal}
       showWorkSampleModal={showWorkSampleModal}
       setShowWorkSampleModal={setShowWorkSampleModal}
       certificationForm={certificationForm}
@@ -1701,15 +1762,15 @@ function App() {
       setRatingModalOpen={setRatingModalOpen}
       ratingJobId={ratingJobId}
       ratingWorker={ratingWorker}
+      ratingWorkerSkills={ratingWorkerSkills}
+      ratingSkillsLoading={ratingSkillsLoading}
+      ratingExtraSkills={ratingExtraSkills}
+      addRatingExtraSkill={addRatingExtraSkill}
+      removeRatingExtraSkill={removeRatingExtraSkill}
       skillRatings={skillRatings}
       setSkillRatings={setSkillRatings}
       openRatingModal={openRatingModal}
       handleSubmitRatings={handleSubmitRatings}
-      showComplaintModal={showComplaintModal}
-      setShowComplaintModal={setShowComplaintModal}
-      complaintForm={complaintForm}
-      setComplaintForm={setComplaintForm}
-      handleSubmitComplaint={handleSubmitComplaint}
       verificationForm={verificationForm}
       verificationRequests={verificationRequests}
       view={view}

@@ -1,6 +1,8 @@
 # GawaGo Database Structure and Dictionary
 
-This section presents the full database structure and dictionary of the GawaGo Employment Platform. The structure follows the current Django backend implementation and includes both Django framework tables and GawaGo application tables.
+This section presents the full database structure and dictionary of the GawaGo Employment Platform. The structure follows the current Django backend implementation and includes both Django framework tables and GawaGo application tables — 28 in total: 8 Django framework tables and 20 GawaGo application tables.
+
+Last reconciled against the Django models on 2026-09-16.
 
 ## Table 1: `django_content_type`
 
@@ -118,8 +120,17 @@ This table stores Django admin activity logs, including the admin user, affected
 | 16 | rating_count | INTEGER UNSIGNED | 1 | 0 | 0 |
 | 17 | reputation_tier | VARCHAR(20) | 1 | new | 0 |
 | 18 | rating_trend | VARCHAR(20) | 1 | neutral | 0 |
+| 19 | credentials_updated_at | DATETIME | 0 | NULL | 0 |
+| 20 | is_blocked | BOOL | 1 | 0 | 0 |
+| 21 | blocked_at | DATETIME | 0 | NULL | 0 |
+| 22 | blocked_reason | TEXT | 1 | '' | 0 |
+| 23 | blocked_until | DATETIME | 0 | NULL | 0 |
 
 This table stores profile information for household and worker users. It includes skills (capped at 4 per worker), service rates, verification status, the worker's chosen government ID type, location coordinates, profile image, and rating/reputation summary. `reputation_tier` (`new`/`established`/`trusted`/`elite`) and `rating_trend` (`improving`/`declining`/`neutral`) are recalculated after every new review.
+
+**Account security and suspension.** `credentials_updated_at` is bumped whenever the user's credentials change (for example a password reset), so every JWT issued before that moment — each token carries an `iat` claim — is rejected at once without needing a per-token blacklist entry.
+
+Suspension deliberately uses `is_blocked` rather than `auth_user.is_active`: login reactivates any inactive account that supplies the correct password (kept for legacy accounts), which would silently undo every block. `blocked_until` distinguishes the two kinds of suspension — `NULL` while blocked means a permanent block, while a future datetime is a timed suspension (3 or 7 days from the admin queue) that lifts itself. The expiry is applied lazily on the next login, authenticated request, or admin read, so no scheduled job is required. A block is enforced per-request in `JWTAuthentication`, so it takes effect immediately on sessions that are already signed in.
 
 ## Table 10: `accounts_workeravailability`
 
@@ -241,7 +252,7 @@ This table stores work-sample images on a worker's portfolio, including optional
 | 6 | feedback | TEXT | 1 | '' | 0 |
 | 7 | created_at | DATETIME | 1 | NULL | 0 |
 
-This table stores a household's per-skill rating of a worker for one completed job, feeding the average rating shown on each `accounts_workerskill` entry.
+This table stores a household's per-skill rating of a worker for one completed job, feeding the average rating shown on each `accounts_workerskill` entry. `rating` is constrained to 1-5 by `SkillRatingSerializer`; because the value is averaged into `accounts_workerskill.average_rating`, an out-of-range score would permanently skew the worker's displayed standing. The rated `skill` is also checked against the job, so a household cannot attach a rating to a worker who never worked it.
 
 ## Table 18: `accounts_verificationdocument`
 
@@ -291,6 +302,8 @@ This table stores multiple-ID-type identity documents (national ID, passport, dr
 | 22 | completed_at | DATETIME | 0 | NULL | 0 |
 
 This table stores job postings created by household users, including the job schedule window (`job_start_date`/`job_end_date`/`estimated_working_days`) and the geographic search radius applied as a hard distance filter during worker matching (`max_distance_km`, with a `geographic_boundary` label of `1km`/`2km`/`5km`/`10km`/`unlimited`).
+
+Values accepted on create are bounded by `JobCreateSerializer`: `service_rate` must be at least 0, `estimated_working_days` at least 1, `max_distance_km` at least 0.1, and `job_end_date` must fall after `job_start_date`.
 
 ## Table 20: `jobs_jobimage`
 
@@ -413,6 +426,34 @@ This table stores dispute/issue reports filed by a household or worker (`complai
 
 This table stores cached road-route distance results (fetched from the OSRM routing service) between job locations and worker profile locations, keyed by job and worker coordinates so repeated matching requests avoid re-fetching the route.
 
+Because each cache miss costs a synchronous outbound HTTP request, collection endpoints (the job list and the application list) read this cache only and never fetch live — an uncached pair simply reports no distance. Detail responses, where the set is bounded and the distance is the point of the screen, still resolve live and populate the cache.
+
+## Table 27: `complaints_complaintevidence`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | complaint_id | BIGINT | 1 | NULL | 0 |
+| 2 | image | VARCHAR(100) | 1 | NULL | 0 |
+| 3 | uploaded_at | DATETIME | 1 | NULL | 0 |
+| 4 | order | INTEGER UNSIGNED | 1 | 0 | 0 |
+
+This table stores photo evidence attached to a report, so an admin can see what happened instead of judging from the description alone. A report accepts at most 5 photos, extension-validated the same way job images are. Rows are ordered by `order` then `uploaded_at`.
+
+## Table 28: `common_revokedtoken`
+
+| cid | name | type | notnull | dflt_value | pk |
+|---:|---|---|---:|---|---:|
+| 0 | id | BIGINT | 1 | NULL | 1 |
+| 1 | jti | VARCHAR(64) | 1 | NULL | 0 |
+| 2 | user_id | INTEGER | 1 | NULL | 0 |
+| 3 | expires_at | DATETIME | 1 | NULL | 0 |
+| 4 | revoked_at | DATETIME | 1 | NULL | 0 |
+
+This table blacklists a JWT before its natural expiry — on logout, for example. `jti` is the token's unique id claim and is indexed and unique. Rows only matter until `expires_at` (which mirrors the token's own `exp`), since after that the token is rejected on expiry alone; stale rows are opportunistically deleted whenever a new one is inserted.
+
+Note that this is per-token revocation. Invalidating *every* token for a user at once — after a password change — is handled instead by `accounts_userprofile.credentials_updated_at`, which needs no rows here.
+
 ## Relationship Summary
 
 | Relationship | Cardinality | Description |
@@ -449,3 +490,7 @@ This table stores cached road-route distance results (fetched from the OSRM rout
 | `jobs_jobposting` to `complaints_complaint` | 1:N | One job can have many complaints filed against it. |
 | `jobs_jobposting` to `matching_routedistancecache` | 1:N | One job can have cached distance records for many worker profiles. |
 | `accounts_userprofile` to `matching_routedistancecache` | 1:N | One worker profile can appear in many cached job distance records. |
+| `complaints_complaint` to `complaints_complaintevidence` | 1:N | One report can carry up to five evidence photos. |
+| `auth_user` to `common_revokedtoken` | 1:N | One user can have many individually revoked tokens. |
+| `auth_user` to `accounts_workercertification` (as verifier) | 1:N | One administrator can approve or reject many certificates; `SET_NULL` preserves review history if that admin account is deleted. |
+| `auth_user` to `accounts_verificationdocument` (as verifier) | 1:N | One administrator can review many identity documents, also `SET_NULL`. |

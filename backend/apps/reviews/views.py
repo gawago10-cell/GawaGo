@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.db import IntegrityError
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -12,6 +13,15 @@ from apps.reviews.services import assign_due_default_worker_ratings, update_work
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 
+# GET here is AllowAny (reviews are public), but it also sweeps every
+# completed application for reviews due a default rating -- without a
+# cooldown, an anonymous client looping this endpoint drives unbounded DB
+# work on a safe method. cache.add() only succeeds for the first caller in
+# the window, so the sweep still self-triggers on read but at most once
+# per window regardless of request volume.
+ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS = 300
+ASSIGN_DEFAULT_RATINGS_LOCK_KEY = "reviews:assign_due_default_ratings_lock"
+
 
 class ReviewListCreateView(APIView):
     def get_permissions(self):
@@ -20,9 +30,21 @@ class ReviewListCreateView(APIView):
         return [IsAuthenticated()]
 
     def get(self, request):
-        assign_due_default_worker_ratings()
+        if cache.add(ASSIGN_DEFAULT_RATINGS_LOCK_KEY, True, ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS):
+            assign_due_default_worker_ratings()
         target_username = request.query_params.get("username") or request.query_params.get("target_username")
         author_username = request.query_params.get("author_username")
+        if target_username:
+            # reputation_tier/rating_trend are only recalculated when a new
+            # review comes in, so a worker who stops receiving reviews keeps
+            # a stale badge forever. Refreshing (cooldown-bounded, like the
+            # sweep above) here self-heals it at the moment someone is
+            # actually looking at that worker's reviews.
+            reputation_lock_key = f"reviews:refresh_reputation_lock:{target_username}"
+            if cache.add(reputation_lock_key, True, ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS):
+                target_user_for_reputation = User.objects.filter(username=target_username).select_related("profile").first()
+                if target_user_for_reputation:
+                    update_worker_reputation(target_user_for_reputation)
         reviews = Review.objects.select_related("author", "target", "job")
         if target_username:
             reviews = reviews.filter(target__username=target_username)
@@ -88,26 +110,43 @@ class ReviewListCreateView(APIView):
         if not eligible:
             return Response({"detail": "Users can only review each other after a completed job relationship."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if Review.objects.filter(job=job, author=author_user, target=target_user).exists():
+        existing_review = Review.objects.filter(job=job, author=author_user, target=target_user).first()
+        if existing_review and not existing_review.is_system_generated:
             return Response({"detail": "This user has already been reviewed for this completed job."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            review = Review.objects.create(
-                author=author_user,
-                target=target_user,
-                author_role=author_role,
-                target_role=target_role,
-                job=job,
-                job_title=serializer.validated_data.get("job_title") or job.title,
-                rating=serializer.validated_data.get("rating"),
-                feedback=serializer.validated_data.get("feedback", ""),
-                quality_of_work=serializer.validated_data.get("quality_of_work"),
-                punctuality=serializer.validated_data.get("punctuality"),
-                communication=serializer.validated_data.get("communication"),
-                professionalism=serializer.validated_data.get("professionalism"),
-            )
-        except IntegrityError:
-            return Response({"detail": "This user has already been reviewed for this completed job."}, status=status.HTTP_400_BAD_REQUEST)
+        review_fields = dict(
+            job_title=serializer.validated_data.get("job_title") or job.title,
+            rating=serializer.validated_data.get("rating"),
+            feedback=serializer.validated_data.get("feedback", ""),
+            quality_of_work=serializer.validated_data.get("quality_of_work"),
+            punctuality=serializer.validated_data.get("punctuality"),
+            communication=serializer.validated_data.get("communication"),
+            professionalism=serializer.validated_data.get("professionalism"),
+            is_system_generated=False,
+        )
+
+        if existing_review:
+            # A real review replaces the automatic 3.5-star placeholder in
+            # place, rather than being rejected as a duplicate of a rating
+            # the reviewer never actually gave (see reviews/services.py).
+            for field, value in review_fields.items():
+                setattr(existing_review, field, value)
+            existing_review.save(update_fields=[*review_fields.keys()])
+            review = existing_review
+            response_status = status.HTTP_200_OK
+        else:
+            try:
+                review = Review.objects.create(
+                    author=author_user,
+                    target=target_user,
+                    author_role=author_role,
+                    target_role=target_role,
+                    job=job,
+                    **review_fields,
+                )
+            except IntegrityError:
+                return Response({"detail": "This user has already been reviewed for this completed job."}, status=status.HTTP_400_BAD_REQUEST)
+            response_status = status.HTTP_201_CREATED
         notification_message = (
             "You received anonymous feedback from a worker."
             if author_role == "worker"
@@ -115,7 +154,7 @@ class ReviewListCreateView(APIView):
         )
         create_notification(
             recipient=target_user,
-            notification_type=Notification.TYPE_ANALYTICS,
+            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
             title="New feedback received" if author_role == "worker" else "New review received",
             message=notification_message,
             actor=author_user,
@@ -125,4 +164,4 @@ class ReviewListCreateView(APIView):
         )
         # Update reputation tier and trend after new review
         update_worker_reputation(target_user)
-        return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
+        return Response(ReviewSerializer(review).data, status=response_status)

@@ -1,16 +1,20 @@
 import json
 
+from datetime import timedelta
+
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from decimal import Decimal
 from unittest.mock import patch
 
 from apps.accounts.models import UserProfile, WorkerAvailability
 from apps.common.authentication import create_jwt_token
-from apps.jobs.models import JobPosting
+from apps.jobs.models import JobApplication, JobPosting
 from apps.matching.models import RouteDistanceCache
 from apps.matching.services import fetch_osrm_route, normalize_skill_label, skill_matches
+from apps.notifications.models import Notification
 
 
 class SkillNormalizationTests(TestCase):
@@ -112,7 +116,7 @@ class RecommendedWorkersAvailabilityTests(TestCase):
 
         response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
     def test_unrelated_household_cannot_fetch_recommended_workers(self):
         other_household = User.objects.create_user(username="other-household-match", password="password")
@@ -195,6 +199,46 @@ class RecommendedWorkersAvailabilityTests(TestCase):
         self.assertEqual(response.status_code, 200)
         usernames = {item["worker_username"] for item in response.data["results"]}
         self.assertEqual(usernames, {"available-worker", "unavailable-worker"})
+
+    def test_match_results_carry_the_profile_fields_the_cards_render(self):
+        profile = self.available_worker.profile
+        profile.bio = "Five years of deep cleaning."
+        profile.location_label = "Poblacion, Tayabas"
+        profile.rating_count = 4
+        profile.save(update_fields=["bio", "location_label", "rating_count"])
+        self.available_worker.first_name = "Ava"
+        self.available_worker.last_name = "Lopez"
+        self.available_worker.save(update_fields=["first_name", "last_name"])
+        finished = JobPosting.objects.create(
+            household=self.household,
+            title="Past job",
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="One-Time",
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+            status=JobPosting.STATUS_COMPLETED,
+        )
+        JobApplication.objects.create(
+            job=finished,
+            worker=self.available_worker,
+            status=JobApplication.STATUS_COMPLETED,
+        )
+
+        response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
+
+        self.assertEqual(response.status_code, 200)
+        result = next(
+            item for item in response.data["results"] if item["worker_username"] == "available-worker"
+        )
+        self.assertEqual(result["worker_name"], "Ava Lopez")
+        self.assertEqual(result["worker_bio"], "Five years of deep cleaning.")
+        self.assertEqual(result["worker_location_label"], "Poblacion, Tayabas")
+        self.assertEqual(result["worker_rating_count"], 4)
+        self.assertEqual(result["worker_completed_jobs"], 1)
+        self.assertEqual(result["worker_profile_photo_url"], "")
 
     def test_matching_ranks_alias_skill_matches_first(self):
         self.job.preferred_date = None
@@ -307,6 +351,24 @@ class RecommendedWorkersRankingTests(TestCase):
         self.assertEqual(cached_result["route_points"][0], [13.9622745, 121.5632841])
         self.assertEqual(RouteDistanceCache.objects.count(), 1)
 
+    def test_unlimited_boundary_bypasses_max_distance_km_in_smart_matching(self):
+        # A job can end up with geographic_boundary='unlimited' while
+        # max_distance_km still holds a small number (the two fields are
+        # written independently, with nothing keeping them in sync). The AI
+        # ranker already treats 'unlimited' as no limit regardless of
+        # max_distance_km; Smart Matching's build_match_results must agree,
+        # or the same job produces different candidate pools on the two
+        # screens.
+        self.job.max_distance_km = 1.0
+        self.job.geographic_boundary = "unlimited"
+        self.job.save(update_fields=["max_distance_km", "geographic_boundary"])
+        self.create_worker_profile(
+            "far-worker", ["House Cleaning"], verification_status="verified",
+            latitude="13.9800000", longitude="121.5800000",
+        )
+
+        self.assertIn("far-worker", self.get_ranked_usernames())
+
     def test_skill_match_ranks_before_other_factors(self):
         self.create_worker_profile("skilled-worker", ["cleaning"], verification_status="pending")
         self.create_worker_profile("near-verified-worker", ["Plumbing"], verification_status="verified")
@@ -382,3 +444,232 @@ class RecommendedWorkersRankingTests(TestCase):
         )
 
         self.assertEqual(self.get_ranked_usernames()[0], "rate-fit-worker")
+
+
+class RecommendedWorkersAiRankingTests(TestCase):
+    """Household-facing AI matching: ?rank=ai scores the same candidates with
+    the content-based recommender instead of the Smart Matching rule order.
+    """
+
+    def setUp(self):
+        self.household = User.objects.create_user(username="ai-household", password="password")
+        UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD)
+        self.job = JobPosting.objects.create(
+            household=self.household,
+            title="AI ranking job",
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="Flexible schedule",
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+            max_distance_km=10.0,
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {create_jwt_token({'user_id': self.household.id})}"
+
+    def create_worker_profile(self, username, skills, verification_status="pending", latitude="13.9622745", longitude="121.5632841"):
+        user = User.objects.create_user(username=username, password="password")
+        return UserProfile.objects.create(
+            user=user,
+            role=UserProfile.ROLE_WORKER,
+            skills=skills,
+            verification_status=verification_status,
+            latitude=latitude,
+            longitude=longitude,
+        )
+
+    def fake_road_route(self, lat1, lon1, lat2, lon2):
+        distance_km = 0.1 if str(lat2) == "13.9622745" else 7.5
+        return {
+            "distance_km": distance_km,
+            "route_points": [[float(lat1), float(lon1)], [float(lat2), float(lon2)]],
+        }
+
+    def fetch_results(self, **params):
+        with patch("apps.matching.services.fetch_road_route", self.fake_road_route):
+            response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id, **params})
+        self.assertEqual(response.status_code, 200)
+        return response.data
+
+    def test_ai_rank_prefers_skill_and_proximity_over_verification(self):
+        self.create_worker_profile(
+            "verified-far-worker",
+            ["House Cleaning"],
+            verification_status="verified",
+            latitude="13.9800000",
+            longitude="121.5800000",
+        )
+        self.create_worker_profile("unverified-near-worker", ["House Cleaning"])
+
+        data = self.fetch_results(rank="ai")
+
+        self.assertEqual(data["rank"], "ai")
+        self.assertEqual(data["results"][0]["worker_username"], "unverified-near-worker")
+
+    def test_default_rank_keeps_smart_matching_order(self):
+        self.create_worker_profile(
+            "verified-far-worker",
+            ["House Cleaning"],
+            verification_status="verified",
+            latitude="13.9800000",
+            longitude="121.5800000",
+        )
+        self.create_worker_profile("unverified-near-worker", ["House Cleaning"])
+
+        data = self.fetch_results()
+
+        self.assertEqual(data["rank"], "smart")
+        self.assertEqual(data["results"][0]["worker_username"], "verified-far-worker")
+
+    def test_every_result_carries_the_explainability_breakdown(self):
+        self.create_worker_profile("skilled-worker", ["House Cleaning"])
+
+        result = self.fetch_results(rank="ai")["results"][0]
+
+        self.assertTrue(result["exact_skill_match"])
+        self.assertGreater(result["ai_score"], 0)
+        self.assertAlmostEqual(
+            result["skill_contribution"] + result["proximity_contribution"],
+            result["ai_score"],
+            places=3,
+        )
+
+    def test_worker_without_location_is_kept_but_scores_zero(self):
+        self.create_worker_profile("skilled-worker", ["House Cleaning"])
+        self.create_worker_profile("no-location-worker", ["House Cleaning"], latitude=None, longitude=None)
+
+        results = self.fetch_results(rank="ai")["results"]
+        scores = {item["worker_username"]: item["ai_score"] for item in results}
+
+        self.assertEqual(scores["no-location-worker"], 0.0)
+        self.assertEqual(results[-1]["worker_username"], "no-location-worker")
+
+    def test_smart_rank_skips_the_ai_scoring_pass_entirely(self):
+        """roadmap audit LOW #38: rank=smart never reads the AI score
+        breakdown, so the (expensive, content-based) scoring pass shouldn't
+        run at all for it -- only for rank=ai, which actually uses it."""
+        self.create_worker_profile("smart-only-worker", ["House Cleaning"])
+
+        with patch("apps.matching.views.get_recommended_workers") as mocked:
+            mocked.return_value = []
+            results = self.fetch_results()["results"]
+        mocked.assert_not_called()
+        self.assertEqual(results[0]["ai_score"], 0.0)
+        self.assertFalse(results[0]["exact_skill_match"])
+
+        with patch("apps.matching.views.get_recommended_workers") as mocked:
+            mocked.return_value = []
+            self.fetch_results(rank="ai")
+        mocked.assert_called_once()
+
+
+@override_settings(ENABLE_JOB_MATCH_NOTIFICATIONS=True, JOB_MATCH_NOTIFY_THRESHOLD=0.5)
+class JobMatchNotificationSignalTests(TestCase):
+    """notify_matching_workers (roadmap audit MEDIUM #16): an exact skill
+    match must not be silently skipped just because cosine similarity gets
+    diluted by a worker's *other* listed skills."""
+
+    def test_exact_skill_match_is_notified_despite_score_dilution_from_other_skills(self):
+        household = User.objects.create_user(username="notify-household", password="password")
+        UserProfile.objects.create(user=household, role=UserProfile.ROLE_HOUSEHOLD)
+
+        # 4 skills, only one of which the job needs. Cosine similarity over a
+        # 4-term worker document against a 1-term job document dilutes to
+        # roughly 1/sqrt(4) = 0.5, so skill_contribution alone (0.5 * 0.7 =
+        # 0.35) plus a modest proximity_contribution at 5km (~0.05) lands the
+        # combined ai_score around 0.40 -- below the 0.5 notify threshold --
+        # even though this worker is an exact, in-radius match.
+        worker = User.objects.create_user(username="notify-worker", password="password")
+        UserProfile.objects.create(
+            user=worker,
+            role=UserProfile.ROLE_WORKER,
+            skills=["House Cleaning", "Cooking", "Laundry", "Gardening"],
+            latitude="13.9622745",
+            longitude="121.5632841",
+        )
+
+        with patch(
+            "apps.matching.services.fetch_road_route",
+            return_value={"distance_km": 5.0, "route_points": []},
+        ):
+            JobPosting.objects.create(
+                household=household,
+                title="Cleaning job",
+                job_type="House Cleaning",
+                required_skill="House Cleaning",
+                schedule="Flexible",
+                location_label="Isabang, Tayabas",
+                latitude="13.9622745",
+                longitude="121.5632841",
+                service_rate="500.00",
+                status=JobPosting.STATUS_OPEN,
+                max_distance_km=10.0,
+            )
+
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=worker, notification_type=Notification.TYPE_JOB_MATCH
+            ).exists()
+        )
+
+    def test_suspended_or_inactive_workers_are_never_notified(self):
+        """roadmap audit LOW #30: a candidate excluded from every other
+        worker-facing list (blocked, or logged out entirely) shouldn't be
+        singled out for a proactive match notification either. A worker
+        whose timed suspension already lifted should still be notified."""
+        household = User.objects.create_user(username="notify-household-2", password="password")
+        UserProfile.objects.create(user=household, role=UserProfile.ROLE_HOUSEHOLD)
+
+        def make_worker(username, **profile_kwargs):
+            user = User.objects.create_user(username=username, password="password")
+            UserProfile.objects.create(
+                user=user,
+                role=UserProfile.ROLE_WORKER,
+                skills=["House Cleaning"],
+                latitude="13.9622745",
+                longitude="121.5632841",
+                **profile_kwargs,
+            )
+            return user
+
+        permanently_blocked = make_worker("blocked-permanent", is_blocked=True)
+        timed_blocked = make_worker(
+            "blocked-timed", is_blocked=True, blocked_until=timezone.now() + timedelta(days=1)
+        )
+        expired_block = make_worker(
+            "blocked-expired", is_blocked=True, blocked_until=timezone.now() - timedelta(days=1)
+        )
+        eligible = make_worker("eligible-worker")
+        inactive = make_worker("inactive-worker")
+        inactive.is_active = False
+        inactive.save(update_fields=["is_active"])
+
+        with patch(
+            "apps.matching.services.fetch_road_route",
+            return_value={"distance_km": 1.0, "route_points": []},
+        ):
+            JobPosting.objects.create(
+                household=household,
+                title="Cleaning job",
+                job_type="House Cleaning",
+                required_skill="House Cleaning",
+                schedule="Flexible",
+                location_label="Isabang, Tayabas",
+                latitude="13.9622745",
+                longitude="121.5632841",
+                service_rate="500.00",
+                status=JobPosting.STATUS_OPEN,
+                max_distance_km=10.0,
+            )
+
+        notified_usernames = set(
+            Notification.objects.filter(notification_type=Notification.TYPE_JOB_MATCH).values_list(
+                "recipient__username", flat=True
+            )
+        )
+        self.assertNotIn(permanently_blocked.username, notified_usernames)
+        self.assertNotIn(timed_blocked.username, notified_usernames)
+        self.assertNotIn(inactive.username, notified_usernames)
+        self.assertIn(eligible.username, notified_usernames)
+        self.assertIn(expired_block.username, notified_usernames)

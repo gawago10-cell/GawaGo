@@ -23,7 +23,7 @@ Authorization: Bearer <access>
 ```
 
 - Timestamps are ISO 8601 strings.
-- Decimal values such as rates, latitude, and longitude may be returned as strings by Django REST Framework.
+- Decimal values such as rates, latitude, and longitude may be returned as strings by Django REST Framework. Coerce before doing arithmetic — a value like `"5.00"` has no numeric methods.
 - Common error shape:
 
 ```json
@@ -31,6 +31,16 @@ Authorization: Bearer <access>
   "detail": "Human-readable error message."
 }
 ```
+
+### Pagination
+
+List endpoints are paginated by DRF at **20 items per page**. Once a collection outgrows one page the response shape changes from a bare array to:
+
+```json
+{"count": 57, "next": "http://localhost:8000/api/jobs/?page=2", "previous": null, "results": [...]}
+```
+
+**Clients must follow `next` until it is `null`.** Reading only `results` silently drops every record past the first page, with no error to signal it — jobs and users simply start disappearing from lists once the platform passes 20 of them. Both shapes have to be handled, since a short collection still returns a plain array.
 
 ## Roles
 
@@ -201,6 +211,51 @@ PUT body:
 }
 ```
 
+### Worker Portfolio
+
+| Method | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/api/accounts/profiles/{user_id}/portfolio/` | Bearer required | Public portfolio for one worker: `bio`, `years_experience`, `skills`, `certifications`, `portfolio_items`. |
+| GET/POST | `/api/accounts/me/portfolio/skills/` | Bearer required, worker only | List or add portfolio skills. |
+| PATCH/DELETE | `/api/accounts/me/portfolio/skills/{id}/` | Bearer required, owner only | Update or remove a skill. |
+| GET/POST | `/api/accounts/me/portfolio/certifications/` | Bearer required, worker only | List or upload certificates (multipart). |
+| PATCH/DELETE | `/api/accounts/me/portfolio/certifications/{id}/` | Bearer required, owner only | Update or remove a certificate. |
+| GET/POST | `/api/accounts/me/portfolio/items/` | Bearer required, worker only | List or upload work samples (multipart). |
+| PATCH/DELETE | `/api/accounts/me/portfolio/items/{id}/` | Bearer required, owner only | Update or remove a work sample. |
+
+Note that decimal fields such as a skill's `average_rating` serialize as **strings** (`"5.00"`), so clients must coerce before doing arithmetic on them.
+
+### Skill Ratings
+
+`POST /api/accounts/jobs/{job_id}/skill-ratings/` — Auth: Bearer required, must be the job's household.
+
+```json
+{"skill": 3, "rating": 5, "feedback": "Spotless work."}
+```
+
+Supply either an existing `skill` id, or `skill_name` plus `worker_id` to rate work outside the posted scope (the `WorkerSkill` is created on the completed worker if needed). `rating` must be **1-5**; the value is averaged into the worker's skill standing, so out-of-range scores are rejected with 400. The job must be `completed`, and a `skill` belonging to a worker who never worked that job is rejected with 403.
+
+### Certificate Verification (Admin)
+
+| Method | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/api/accounts/admin/certificates/?status=pending` | Bearer required, `IsPlatformAdmin` | Lists worker certificates by `verification_status` (`pending`/`approved`/`rejected`). |
+| PATCH | `/api/accounts/admin/certificates/{cert_id}/` | Bearer required, `IsPlatformAdmin` | Body: `{"verification_status": "approved"|"rejected", "verification_notes": "..."}`. |
+
+Approving sets `is_verified` and stamps `verified_by`/`verified_at`; either decision notifies the worker (type `verification`). Any other `verification_status` value returns 400. Each row includes `worker_username` so the queue can show whose certificate it is.
+
+### Identity Documents
+
+A **second, multi-ID-type** identity system, separate from the Verification Requests flow below that the shipped UI uses for worker identity. Supports 8 ID types: `national_id`, `passport`, `drivers_license`, `voter_id`, `tin`, `umid`, `postal_id`, `other`.
+
+| Method | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/api/accounts/me/verification-documents/` | Bearer required | The caller's own documents only. |
+| POST | `/api/accounts/me/verification-documents/` | Bearer required | Multipart: `id_type`, `id_number`, `document_file`, `is_primary`. The owner is taken from the token — a client-supplied `user` is ignored. |
+| DELETE | `/api/accounts/me/verification-documents/{doc_id}/` | Bearer required, owner only | Removes one of the caller's documents. |
+| GET | `/api/accounts/admin/verification-documents/?status=pending` | Bearer required, `IsPlatformAdmin` | Review queue; rows include `user_username` and `id_type_label`. |
+| PATCH | `/api/accounts/admin/verification-documents/{doc_id}/` | Bearer required, `IsPlatformAdmin` | Body: `{"verification_status": "approved"|"rejected", "verification_notes": "..."}`. Notifies the owner. |
+
 ### Password Reset
 
 | Method | Endpoint | Auth | Body | Description |
@@ -341,19 +396,27 @@ Allowed requested statuses are `hired` and `rejected`.
 
 Hiring a worker moves the job to `assigned`. When all worker slots are filled, other pending applications are closed.
 
-## Smart Matching
+## Smart Matching And Household AI Matching
 
-`GET /api/matching/recommended-workers/?job_id=12`
+`GET /api/matching/recommended-workers/?job_id=12&rank=ai`
 
 `POST /api/matching/recommended-workers/`
 
 Auth: Bearer required, job owner or staff only.
 
+`rank` selects the ordering only; every result carries both scoring systems either way.
+
+| `rank` | Ordering |
+| --- | --- |
+| omitted / `smart` (default) | Smart Matching's documented priority order: skill match, then verification, then road distance, then rating and rate. |
+| `ai` | The content-based `ai_score`, highest first. Used by the post-a-job recommendation screen on web and mobile. |
+
 POST body:
 
 ```json
 {
-  "job_id": 12
+  "job_id": 12,
+  "rank": "ai"
 }
 ```
 
@@ -378,13 +441,22 @@ Response:
       "rating_score": 4.8,
       "available_at_requested_time": true,
       "rate_score": 1.0,
-      "worker_rate": "800.00 daily"
+      "worker_rate": "800.00 daily",
+      "ai_score": 0.62,
+      "skill_similarity": 0.88,
+      "skill_contribution": 0.47,
+      "proximity_contribution": 0.15,
+      "exact_skill_match": true
     }
   ]
 }
 ```
 
-Matching is advisory. Households still choose the final worker.
+`match_score` is the rule-based Smart Matching score (roughly 0-100). `ai_score` is the content-based score in `[0, 1]`, equal to `skill_contribution + proximity_contribution`, and is the same algorithm the worker-facing recommendations use — so a household sees the same "why this match" breakdown a worker sees.
+
+Workers the content-based scorer cannot rank — no saved location, no listed skills, or outside the job's search radius — are still returned with their Smart Matching fields, scoring `ai_score: 0.0`.
+
+Matching is advisory under either ranking. Households still choose the final worker.
 
 ## AI-Based Job Recommendations
 
@@ -583,6 +655,131 @@ Response:
 ```
 
 The nested `analytics` object contains dashboard summaries such as job activity, verification/trust metrics, geographic distribution, and service rate transparency data.
+
+## Reports
+
+Exportable activity reports for the three audiences described in `AGENTS.md` IV.A.
+
+`GET /api/reports/me/` — the signed-in user's own report. Auth: Bearer required. The backend picks the household or worker report from the caller's profile role, so clients do not choose.
+
+`GET /api/reports/platform/` — platform-wide report. Auth: Staff/admin required.
+
+Both accept the same query parameters:
+
+| Parameter | Meaning |
+| --- | --- |
+| `start`, `end` | `YYYY-MM-DD` bounds. Defaults to the trailing 180 days. Reversed bounds are swapped rather than returning an empty window. |
+| `export=csv` | Returns the report as a CSV attachment instead of JSON. |
+
+Note the CSV switch is `export`, not `format` — DRF reserves `format` for content negotiation.
+
+Response:
+
+```json
+{
+  "scope": "household",
+  "title": "Household activity report",
+  "period": { "start": "2026-03-17", "end": "2026-09-13" },
+  "summary": {
+    "jobsPosted": 9,
+    "completedJobs": 9,
+    "totalSpend": 4500.0,
+    "averageRatingGiven": 5.0
+  },
+  "sections": [
+    {
+      "title": "Jobs by service type",
+      "description": "Which services you post most often.",
+      "columns": ["Service", "Jobs posted"],
+      "rows": [["House Cleaning", 5]]
+    }
+  ]
+}
+```
+
+All three scopes share this envelope, so one client renderer covers every role. `summary` values may be `null`, meaning "no data yet" rather than zero. Money figures are the sum of offered `service_rate` across completed jobs — GawaGo does not process payments, so this is agreed rate, not a payment ledger.
+
+## Complaints ("Report an Issue")
+
+An incident report against a specific job's other party — a household reporting a worker, or a worker reporting a household (payment issue, quality of work, no-show, safety concern, inappropriate behavior, other) — reviewed and resolved by admin. Distinct from Reports above: this is a case to investigate, not a personal activity summary.
+
+Every report must be tied to a job the filer has a real stake in, at **any** job status (not only completed) — a live safety concern doesn't have to wait for the job to finish. The respondent is derived by the server, never accepted from the client:
+
+- A household names which of the job's applicants the report is about (`respondent` = that worker's user id, validated to actually have an application on the job).
+- A worker's report always targets that job's household — supplying a different `respondent` is ignored.
+
+`GET /api/complaints/` — Auth: Bearer required. Reports the caller filed, plus reports naming them as respondent (both sides can see status; only the filer's own description is meant to be shown by clients — see confidentiality note below).
+
+`POST /api/complaints/create/` — Auth: Bearer required.
+
+```json
+{
+  "job": 19,
+  "respondent": 1,
+  "complaint_type": "no_show",
+  "description": "Worker never showed up for the scheduled cleaning."
+}
+```
+`respondent` is required when the filer is the job's household; omit it as a worker (it's derived). Returns 403 if the filer has no relationship to the job (not its household, no application on it), 400 if `job` is missing or the named `respondent` has no application on that job.
+
+`GET /api/complaints/admin/?status=&type=` — Auth: `IsPlatformSuperAdmin`. Lists every report, optionally filtered.
+
+`PATCH /api/complaints/admin/<id>/` — Auth: `IsPlatformSuperAdmin`. Body: any of `status` (`submitted|under_review|resolved|closed`), `resolution`, `admin_notes`. Rejects an unrecognized `status` with 400. On a real status change, sends the complainant (not the respondent) a notification that their report was updated — confidentiality is preserved by never telling the respondent a report exists. The notification is typed `account_activity`.
+
+### Photo Evidence
+
+`POST /api/complaints/create/` also accepts `multipart/form-data` with up to **5** `evidence` image files (extension-validated like job images). The plain JSON body above still works unchanged when no photo is attached. Each report returns its photos as an `evidence` array of `{id, image_url, uploaded_at, order}`.
+
+### Suspend Or Restore The Reported Account
+
+`POST /api/complaints/admin/<id>/block/` — Auth: `IsPlatformSuperAdmin`.
+
+```json
+{
+  "blocked": true,
+  "reason": "Repeated no-shows.",
+  "duration_days": 3
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `blocked` | `true` suspends, `false` restores. Defaults to `true`. |
+| `reason` | Shown to the suspended user in their notification. Cleared on restore. |
+| `duration_days` | Optional, **3 or 7**. A timed suspension that lifts itself. Omit (or send `null`) for a permanent block. Any other value returns 400. |
+
+Works identically whether the respondent is a worker or a household — the view only ever acts on the report's `respondent`. Admin accounts cannot be suspended from this queue (403), and a report with no respondent returns 400.
+
+Suspension sets `UserProfile.is_blocked` rather than `auth_user.is_active`, because login reactivates any inactive account that supplies the correct password and would silently undo the block. It is enforced per-request in `JWTAuthentication`, so it takes effect **immediately on sessions that are already signed in**, not just at next login; `LoginView` refuses a blocked account with 403. A timed suspension expires lazily on the next login, authenticated request, or admin read, so no scheduled job is needed.
+
+Response shape (all endpoints):
+```json
+{
+  "id": 11,
+  "complainant": 25,
+  "complainant_username": "john",
+  "respondent": 1,
+  "respondent_username": "gawago",
+  "respondent_is_blocked": true,
+  "respondent_blocked_until": "2026-09-19T22:40:32+08:00",
+  "job": 19,
+  "job_title": "Test Job at Test Location",
+  "job_service_type": "Test Service",
+  "job_status": "completed",
+  "complaint_type": "no_show",
+  "description": "Worker never showed up for the scheduled cleaning.",
+  "evidence": [
+    {"id": 4, "image_url": "http://localhost:8000/media/complaint_evidence/11/sink.jpg", "uploaded_at": "2026-09-15T09:02:11+08:00", "order": 0}
+  ],
+  "status": "submitted",
+  "resolution": null,
+  "admin_notes": null,
+  "created_at": "2026-09-13T16:10:54+08:00",
+  "updated_at": "2026-09-13T16:10:54+08:00"
+}
+```
+
+`respondent_is_blocked` reflects the account's *current* state (an expired timed suspension already reads as `false`). `respondent_blocked_until` is `null` when the account is unblocked **or** when the block is permanent.
 
 ## Mobile Client Notes
 

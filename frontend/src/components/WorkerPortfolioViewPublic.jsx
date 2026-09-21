@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/apiClient";
+import { readResponseData } from "../utils/apiUtils";
 
 export default function WorkerPortfolioViewPublic({
   workerId,
@@ -18,8 +19,12 @@ export default function WorkerPortfolioViewPublic({
   const fetchPortfolio = async () => {
     try {
       setLoading(true);
-      const response = await apiRequest(`/accounts/profiles/${workerId}/portfolio/`, "GET");
-      setPortfolio(response);
+      const response = await apiRequest(`accounts/profiles/${workerId}/portfolio/`, { auth: true });
+      if (!response.ok) {
+        setPortfolio({});
+        return;
+      }
+      setPortfolio(await readResponseData(response));
     } catch (error) {
       console.error("Failed to fetch portfolio:", error);
       setPortfolio({});
@@ -32,17 +37,27 @@ export default function WorkerPortfolioViewPublic({
     return <div className="text-center py-5">Loading portfolio...</div>;
   }
 
-  if (!portfolio || (typeof portfolio === 'object' && Object.keys(portfolio).length === 0)) {
+  const skills = portfolio?.skills || [];
+  const certifications = portfolio?.certifications || [];
+  const portfolioItems = portfolio?.portfolio_items || [];
+
+  // The endpoint get_or_creates the portfolio row, so a worker who has filled
+  // nothing in still returns a full object -- emptiness has to be judged on
+  // the content itself, not on whether the response has keys.
+  const hasContent =
+    Boolean(portfolio?.bio) ||
+    Number(portfolio?.years_experience) > 0 ||
+    skills.length > 0 ||
+    certifications.length > 0 ||
+    portfolioItems.length > 0;
+
+  if (!hasContent) {
     return (
       <div style={{ padding: "2rem", textAlign: "center", color: "#999", background: "#fafafa", borderRadius: "8px", marginTop: "2rem" }}>
         No portfolio information yet
       </div>
     );
   }
-
-  const skills = portfolio.skills || [];
-  const certifications = portfolio.certifications || [];
-  const portfolioItems = portfolio.portfolio_items || [];
 
   return (
     <div className="worker-portfolio-public" style={{ marginTop: "2rem" }}>
@@ -52,6 +67,10 @@ export default function WorkerPortfolioViewPublic({
           border-radius: 12px;
           border: 1px solid var(--gg-border);
           overflow: hidden;
+          /* overflow:hidden gives a flex item an automatic minimum size of 0,
+             so inside a flex-column modal body this gets crushed to a sliver
+             instead of the body scrolling. */
+          flex-shrink: 0;
         }
 
         .portfolio-section-public {
@@ -238,13 +257,15 @@ export default function WorkerPortfolioViewPublic({
       `}</style>
 
       {/* Professional Summary */}
-      {portfolio.bio && (
+      {(portfolio.bio || Number(portfolio.years_experience) > 0) && (
         <div className="portfolio-section-public">
           <h3 className="section-title-public">Professional Summary</h3>
-          <p style={{ color: "var(--gg-dark)", lineHeight: 1.6 }}>
-            {portfolio.bio}
-          </p>
-          {portfolio.years_experience > 0 && (
+          {portfolio.bio && (
+            <p style={{ color: "var(--gg-dark)", lineHeight: 1.6 }}>
+              {portfolio.bio}
+            </p>
+          )}
+          {Number(portfolio.years_experience) > 0 && (
             <p style={{ color: "var(--gg-dark-3)", fontSize: "0.9rem" }}>
               <strong>{portfolio.years_experience}</strong> years of experience
             </p>
@@ -264,7 +285,8 @@ export default function WorkerPortfolioViewPublic({
                 {skill.average_rating ? (
                   <div className="skill-rating-display">
                     <span>★</span>
-                    <span>{skill.average_rating.toFixed(1)}</span>
+                    {/* DRF serializes DecimalField as a string, e.g. "5.00" */}
+                    <span>{Number(skill.average_rating).toFixed(1)}</span>
                     <span className="skill-rating-count">({skill.rating_count})</span>
                   </div>
                 ) : (

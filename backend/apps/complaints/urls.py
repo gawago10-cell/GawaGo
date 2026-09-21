@@ -5,6 +5,7 @@ from apps.complaints.views import (
     ComplaintDetailView,
     ComplaintListView,
     ComplaintListAdminView,
+    ComplaintRespondentBlockAdminView,
     ComplaintUpdateAdminView,
 )
 
@@ -14,4 +15,9 @@ urlpatterns = [
     path("<int:pk>/", ComplaintDetailView.as_view(), name="complaint-detail"),
     path("admin/", ComplaintListAdminView.as_view(), name="complaint-list-admin"),
     path("admin/<int:pk>/", ComplaintUpdateAdminView.as_view(), name="complaint-update-admin"),
+    path(
+        "admin/<int:pk>/block/",
+        ComplaintRespondentBlockAdminView.as_view(),
+        name="complaint-block-admin",
+    ),
 ]

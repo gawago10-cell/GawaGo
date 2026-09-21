@@ -17,7 +17,9 @@ class StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = statusColor(status);
     final displayText = label ?? formatStatus(status);
-    final resolvedLabel = prefix == null ? displayText : '$prefix: $displayText';
+    final resolvedLabel = prefix == null
+        ? displayText
+        : '$prefix: $displayText';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(

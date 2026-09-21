@@ -24,6 +24,11 @@ class Review(models.Model):
     communication = models.IntegerField(null=True, blank=True, choices=[(i, str(i)) for i in range(1, 6)])
     professionalism = models.IntegerField(null=True, blank=True, choices=[(i, str(i)) for i in range(1, 6)])
     created_at = models.DateTimeField(auto_now_add=True)
+    # True only for the automatic 3.5-star placeholder assigned when a
+    # household never reviews within the window (see reviews/services.py).
+    # A real review submitted later replaces it in place instead of being
+    # rejected as a duplicate of a rating the reviewer never actually gave.
+    is_system_generated = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]

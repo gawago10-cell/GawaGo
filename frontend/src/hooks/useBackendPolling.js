@@ -15,6 +15,7 @@ export function useBackendPolling({
   selectedWorker,
   setBackendNotifications,
   setCurrentUser,
+  view,
 }) {
   useEffect(() => {
     if (!currentUser?.username) {
@@ -27,8 +28,16 @@ export function useBackendPolling({
     if (currentUser?.role !== "household" || !selectedJob?.id) {
       return;
     }
-    refreshRecommendedWorkers(selectedJob.id);
-  }, [currentUser?.role, selectedJob?.id, registeredWorkers.length]);
+    // The post-a-job matches screen explicitly fetches rank="ai" right
+    // after posting; without matching that here, this poll (which re-fires
+    // on every registeredWorkers.length change) would overwrite it with the
+    // default "smart" ranking moments later. Everywhere else (the regular
+    // job detail view), the default must stay "smart" -- AGENTS.md I.B/I.C
+    // documents that Smart Matching's priority order is not to be silently
+    // replaced by AI ranking.
+    const rank = view === "household-job-matches" ? "ai" : undefined;
+    refreshRecommendedWorkers(selectedJob.id, rank);
+  }, [currentUser?.role, selectedJob?.id, registeredWorkers.length, view]);
 
   useEffect(() => {
     if (currentUser?.role !== "worker" || !currentWorkerVerificationLabel) {

@@ -84,7 +84,7 @@ class VerificationRequestPermissionTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
     def test_worker_submits_verification_documents_as_private_files(self):
         self.request_record.delete()
@@ -191,12 +191,12 @@ class VerificationRequestPermissionTests(TestCase):
     def test_anonymous_user_cannot_list_verification_requests(self):
         response = self.client.get(reverse("verification-request-list-create"))
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
     def test_anonymous_user_cannot_view_verification_request_detail(self):
         response = self.client.get(reverse("verification-request-detail", args=[self.request_record.id]))
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
     def test_worker_can_only_list_own_verification_requests(self):
         self.client.force_authenticate(user=self.worker)

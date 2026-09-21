@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { readResponseData } from "../utils/apiUtils";
 export function useGawaGoDomEffects({
   clearAuthToken,
   currentHousehold,
@@ -28,6 +29,9 @@ export function useGawaGoDomEffects({
     }
   }, [verificationRequests, selectedVerificationRequestId]);
   useEffect(() => {
+    if (currentUser?.role !== "household") {
+      return;
+    }
     if (!householdJobs.length) {
       setSelectedJobId(null);
       return;
@@ -35,7 +39,7 @@ export function useGawaGoDomEffects({
     if (!householdJobs.some((item) => String(item.id) === String(selectedJobId))) {
       setSelectedJobId(householdJobs[0].id);
     }
-  }, [householdJobs, selectedJobId]);
+  }, [currentUser?.role, householdJobs, selectedJobId]);
   useEffect(() => {
     if (view !== "household-post-job") {
       return;
@@ -62,17 +66,28 @@ export function useGawaGoDomEffects({
     currentUser?.profile?.locationLabel,
   ]);
   useEffect(() => {
-    setUnauthorizedHandler(() => {
-      clearAuthToken();
-      setCurrentUser(null);
-      setSelectedWorkerId(null);
-      setSelectedJobId(null);
-      setLoginForm({
-        username: "",
-        password: "",
-        role: "worker",
-      });
-      setView("login");
+    setUnauthorizedHandler((response) => {
+      const finishLogout = (message) => {
+        clearAuthToken();
+        setCurrentUser(null);
+        setSelectedWorkerId(null);
+        setSelectedJobId(null);
+        setLoginForm({
+          username: "",
+          password: "",
+          role: "worker",
+        });
+        setView("login");
+        if (message) {
+          window.alert(message);
+        }
+      };
+      // The server explains *why* the session ended (blocked account, revoked
+      // token, expired session) in the response body -- without reading it,
+      // every 401 looked identical to the user: a silent bounce to login.
+      readResponseData(response)
+        .then((data) => finishLogout(data?.detail))
+        .catch(() => finishLogout());
     });
     return () => setUnauthorizedHandler(null);
   }, []);

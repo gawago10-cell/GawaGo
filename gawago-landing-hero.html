@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GawaGo — Find trusted helpers and skilled workers near you</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1F2A19;
+    --panel: #29341F;
+    --accent: #9EBF5E;
+    --text: #F5F1E6;
+    --text-muted: #ADB79C;
+    --text-muted-card: #C2CBAF;
+    --on-accent: #1B2412;
+    --border: rgba(245, 241, 230, 0.12);
+    --border-strong: rgba(245, 241, 230, 0.28);
+    --accent-border: rgba(158, 191, 94, 0.4);
+    --accent-fill: rgba(158, 191, 94, 0.1);
+    --accent-fill-strong: rgba(158, 191, 94, 0.12);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    background-image: radial-gradient(rgba(245, 241, 230, 0.05) 1px, transparent 1px);
+    background-size: 22px 22px;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    color: var(--text);
+  }
+
+  .page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  a { text-decoration: none; }
+
+  /* --- Nav --- */
+  .nav {
+    height: 96px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 96px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 24px;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  .logo span { color: var(--accent); }
+
+  .nav-actions { display: flex; align-items: center; gap: 12px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 10px;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.15s ease;
+  }
+
+  .btn:hover { opacity: 0.88; }
+
+  .btn-ghost {
+    padding: 11px 22px;
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    background: transparent;
+  }
+
+  .btn-accent {
+    padding: 11px 26px;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  /* --- Hero --- */
+  .hero {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    padding: 64px 96px;
+    gap: 80px;
+    flex-wrap: wrap;
+  }
+
+  .hero-left {
+    flex: 1 1 480px;
+    max-width: 620px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .badge {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--accent-border);
+    background: var(--accent-fill);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  .headline {
+    margin: 0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 58px;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  .headline .highlight {
+    color: var(--accent);
+    border-bottom: 4px solid var(--accent-border);
+  }
+
+  .subtext {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    max-width: 500px;
+  }
+
+  .pill-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  .pill {
+    padding: 9px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(245, 241, 230, 0.04);
+    font-size: 14px;
+    color: #E4E1D3;
+  }
+
+  .cta-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary {
+    padding: 15px 28px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 16px;
+  }
+
+  .btn-secondary {
+    padding: 15px 28px;
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    font-size: 16px;
+    background: transparent;
+  }
+
+  /* --- Stats card --- */
+  .hero-right {
+    width: 440px;
+    flex-shrink: 0;
+  }
+
+  .stat-card {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.4);
+  }
+
+  .notch {
+    position: absolute;
+    top: 218px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+
+  .notch-left { left: -13px; }
+  .notch-right { right: -13px; }
+
+  .stat-badge {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--accent-border);
+    background: var(--accent-fill-strong);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .stat-main { display: flex; flex-direction: column; gap: 6px; }
+
+  .stat-main-label,
+  .stat-main-caption {
+    font-size: 15px;
+    color: var(--text-muted-card);
+  }
+
+  .stat-main-caption { font-size: 14.5px; }
+
+  .stat-main-number {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 800;
+    font-size: 84px;
+    line-height: 1;
+    color: var(--accent);
+  }
+
+  .divider {
+    border-top: 1.5px dashed rgba(245, 241, 230, 0.2);
+  }
+
+  .stat-grid {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat-item-number {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 30px;
+    color: var(--text);
+  }
+
+  .stat-item-label {
+    font-size: 13px;
+    color: var(--text-muted-card);
+  }
+
+  /* --- Responsive --- */
+  @media (max-width: 900px) {
+    .nav, .hero { padding-left: 24px; padding-right: 24px; }
+    .headline { font-size: 40px; }
+    .hero-right { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <nav class="nav">
+    <div class="logo">Gawa<span>Go</span></div>
+    <div class="nav-actions">
+      <a href="#" class="btn btn-ghost">Login</a>
+      <a href="#" class="btn btn-accent">Sign Up</a>
+    </div>
+  </nav>
+
+  <div class="hero">
+
+    <div class="hero-left">
+      <div class="badge">
+        <span class="dot"></span>
+        Tayabas City · Now Live
+      </div>
+
+      <h1 class="headline">
+        Find <span class="highlight">trusted</span> helpers and skilled workers near you.
+      </h1>
+
+      <p class="subtext">
+        GawaGo connects households and workers with smart matching, transparent rates, and a fair reputation system.
+      </p>
+
+      <div class="pill-row">
+        <span class="pill">Post jobs</span>
+        <span class="pill">Apply nearby</span>
+        <span class="pill">Verify profiles</span>
+      </div>
+
+      <div class="cta-row">
+        <a href="#" class="btn btn-primary">
+          Post a Job
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B2412" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+        <a href="#" class="btn btn-secondary">Find Work</a>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="stat-card">
+        <span class="notch notch-left"></span>
+        <span class="notch notch-right"></span>
+
+        <div class="stat-badge">
+          <span class="dot"></span>
+          Open Jobs Live
+        </div>
+
+        <div class="stat-main">
+          <span class="stat-main-label">Open Jobs</span>
+          <span class="stat-main-number">3</span>
+          <span class="stat-main-caption">Jobs waiting for workers to apply</span>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="stat-grid">
+          <div class="stat-item">
+            <span class="stat-item-number">4</span>
+            <span class="stat-item-label">Verified Workers</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-item-number">4</span>
+            <span class="stat-item-label">Completed Services</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-item-number">8</span>
+            <span class="stat-item-label">Registered Accounts</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

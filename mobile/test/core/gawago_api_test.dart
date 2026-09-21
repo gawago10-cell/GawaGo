@@ -86,6 +86,47 @@ void main() {
     expect(SessionStorage.currentSession, same(session));
   });
 
+  test('429 is classified as rate limited with the wait spelled out', () async {
+    GawaGoApi.setClient(
+      MockClient(
+        (_) async => http.Response(
+          '{"detail":"Request was throttled. Expected available in 42 seconds."}',
+          429,
+        ),
+      ),
+    );
+
+    await expectLater(
+      GawaGoApi.post('/accounts/login/', body: const {}),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.type, 'type', ApiErrorType.rateLimited)
+            .having(
+              (error) => error.message,
+              'message',
+              'Too many attempts. Please wait 42 seconds and try again.',
+            ),
+      ),
+    );
+  });
+
+  test('a throttle response without a wait time still reads plainly', () async {
+    GawaGoApi.setClient(
+      MockClient((_) async => http.Response('{"detail":"Throttled."}', 429)),
+    );
+
+    await expectLater(
+      GawaGoApi.post('/accounts/login/', body: const {}),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          'Too many attempts. Please wait a moment and try again.',
+        ),
+      ),
+    );
+  });
+
   test('field validation errors are converted to readable messages', () async {
     GawaGoApi.setClient(
       MockClient(

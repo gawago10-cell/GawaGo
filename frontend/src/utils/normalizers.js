@@ -24,7 +24,26 @@ export function normalizeReview(review) {
     targetName: review.targetName || "User",
     rating: review.rating ?? null,
     feedback: review.feedback || "",
+    // normalizeBackendReview derives this from the backend's `job` field --
+    // without it here, a worker replying to a household's review always
+    // sent job_id: undefined (ReviewCreateSerializer.job_id is required, so
+    // the reply just failed, or filed against whatever job happened to be
+    // selected elsewhere in the UI).
+    jobId: review.jobId || null,
     jobTitle: review.jobTitle || "",
+    // The four e-commerce-style metrics behind the overall rating, and the
+    // backend's own computed overall_rating (their average when present,
+    // else the plain `rating`). Without these the metric breakdown UI has
+    // nothing to render and always falls back to the raw star rating.
+    qualityOfWork: review.qualityOfWork ?? null,
+    punctuality: review.punctuality ?? null,
+    communication: review.communication ?? null,
+    professionalism: review.professionalism ?? null,
+    // DRF serializes a Decimal-backed value as a string but a computed
+    // Python float as a number -- get_overall_rating() can return either
+    // depending on whether metrics were supplied, so coerce here rather
+    // than leaving callers to guess which type they got.
+    overallRating: review.overallRating != null ? Number(review.overallRating) : null,
     createdAt: review.createdAt || new Date().toLocaleString("en-PH"),
   };
 }
@@ -111,20 +130,6 @@ export function normalizeAvailabilityWindow(window) {
   };
 }
 
-export function normalizeWeeklyAvailabilityWindow(window) {
-  if (!window) {
-    return null;
-  }
-  return {
-    id: window.id || `weekly-availability-${window.weekday ?? Date.now()}`,
-    weekday: Number(window.weekday),
-    weekdayLabel: window.weekday_label || window.weekdayLabel || "",
-    startTime: window.start_time || window.startTime || "",
-    endTime: window.end_time || window.endTime || "",
-    isAvailable: window.is_available ?? window.isAvailable ?? true,
-  };
-}
-
 export function normalizeBackendWorker(currentUser) {
   if (!currentUser || currentUser.role !== "worker" || !currentUser.profile) {
     return null;
@@ -156,9 +161,6 @@ export function normalizeBackendWorker(currentUser) {
     longitude: profile.longitude ?? currentUser.longitude ?? null,
     profilePhotoPreview: profile.profile_photo_url || profile.profile_photo || currentUser.profilePhotoPreview || "",
     availabilityWindows: (profile.availability_windows || []).map(normalizeAvailabilityWindow).filter(Boolean),
-    weeklyAvailability: (profile.weekly_availability || [])
-      .map(normalizeWeeklyAvailabilityWindow)
-      .filter(Boolean),
     avatar: (currentUser.displayName || currentUser.username || "W").slice(0, 1).toUpperCase(),
     receivedReviews: [],
     givenFeedback: [],
@@ -217,14 +219,18 @@ export function normalizeProfileRecord(profile) {
     reviewsDone: profile.rating_count || 0,
     latitude: profile.latitude,
     longitude: profile.longitude,
-    profilePhotoPreview: profile.profile_photo_url || profile.profile_photo || "",
     availabilityWindows: (profile.availability_windows || []).map(normalizeAvailabilityWindow).filter(Boolean),
-    weeklyAvailability: (profile.weekly_availability || [])
-      .map(normalizeWeeklyAvailabilityWindow)
-      .filter(Boolean),
     role: profile.role || profile.user_type || "worker",
     verificationSubmission: normalizeVerificationRequest(profile.verification_request),
     verificationRequestId: profile.verification_request?.id || null,
+    memberSince: profile.date_joined || "",
+    // Admin-only (see PublicUserProfileSerializer) -- undefined for a
+    // non-staff caller, so isBlocked/isStaff read as falsy rather than
+    // crashing.
+    isBlocked: Boolean(profile.is_blocked),
+    blockedUntil: profile.blocked_until || null,
+    blockedReason: profile.blocked_reason || "",
+    isStaff: Boolean(profile.is_staff),
   };
 }
 
@@ -299,13 +305,33 @@ export function normalizeBackendApplication(application) {
     id: application.id,
     workerId: application.worker ?? application.worker_id ?? null,
     workerUsername: application.worker_username || application.workerUsername || "",
+    householdPhone: application.household_phone || application.householdPhone || "",
+    householdEmail: application.household_email || application.householdEmail || "",
     workerName: application.worker_name || application.workerName || application.worker_username || "Worker",
     workerLocationLabel: application.worker_location_label || application.workerLocationLabel || "",
+    // Profile details the applicant cards render, straight off the
+    // application so the card doesn't depend on a separate profile fetch.
+    workerPhotoUrl: application.worker_profile_photo_url || application.workerPhotoUrl || "",
+    workerSkills: application.worker_skills || application.workerSkills || [],
+    workerBio: application.worker_bio || application.workerBio || "",
+    workerVerification: getWorkerVerificationLabel(
+      application.worker_verification_status || application.workerVerificationStatus,
+    ),
+    workerRatingLabel: application.worker_rating_label || application.workerRatingLabel || "No ratings yet",
+    workerRatingCount: application.worker_rating_count ?? application.workerRatingCount ?? 0,
+    workerCompletedJobs: application.worker_completed_jobs ?? application.workerCompletedJobs ?? 0,
+    workerMatchScore: application.worker_match_score ?? application.workerMatchScore ?? null,
+    workerDailyRate: application.worker_daily_rate || application.workerDailyRate || "",
     workerLatitude: application.worker_latitude ?? application.workerLatitude ?? null,
     workerLongitude: application.worker_longitude ?? application.workerLongitude ?? null,
     routeDistanceKm: application.route_distance_km ?? application.routeDistanceKm ?? null,
     routePoints: application.route_points || application.routePoints || [],
     status: normalizeJobApplicationStatus(application.status),
+    // The backend owns the display vocabulary (apps/jobs/statuses.py) so the
+    // web and Flutter clients cannot drift apart; `status` above stays for the
+    // existing client-side branching only.
+    statusStage: application.status_stage || application.statusStage || "",
+    statusLabel: application.status_label || application.statusLabel || "",
     appliedAt: application.applied_at || application.appliedAt || "",
     updatedAt: application.updated_at || application.updatedAt || "",
     note: application.note || "",
@@ -334,12 +360,23 @@ export function normalizeBackendJob(job) {
     id: job.id,
     householdUsername: job.household_username || job.householdUsername || "",
     householdName: job.household_name || job.householdName || job.household_username || "Household",
+    householdVerificationStatus:
+      job.household_verification_status || job.householdVerificationStatus || "",
+    // Only the JobApplication payload carries these (gated server-side to
+    // the hired worker viewing their own application), not the job itself.
+    householdPhone: currentWorkerApplication?.householdPhone || "",
+    householdEmail: currentWorkerApplication?.householdEmail || "",
     jobTitle: job.title || job.job_title || job.required_skill || job.jobType || "",
     serviceType: job.required_skill || job.job_type || job.jobType || job.title || "",
     scheduleType: job.schedule_type || job.scheduleType || job.schedule || "One-Time",
     preferredDate: job.preferred_date || "",
     preferredTime: job.preferred_time || "",
     description: job.description || "",
+    jobStartDate: job.job_start_date || job.jobStartDate || "",
+    jobEndDate: job.job_end_date || job.jobEndDate || "",
+    estimatedWorkingDays: job.estimated_working_days ?? job.estimatedWorkingDays ?? null,
+    maxDistanceKm: job.max_distance_km ?? job.maxDistanceKm ?? null,
+    geographicBoundary: job.geographic_boundary || job.geographicBoundary || "",
     barangay: parsedLocation.barangay || job.barangay || "",
     streetAddress: job.street_address || parsedLocation.streetAddress || "",
     latitude: job.latitude ?? job.job_latitude ?? null,
@@ -351,6 +388,8 @@ export function normalizeBackendJob(job) {
     workersNeeded,
     hiredCount,
     status: normalizeJobStatus(job.status),
+    statusStage: job.status_stage || job.statusStage || "",
+    statusLabel: job.status_label || job.statusLabel || "",
     matchedWorkerIds: hiredApplications.map((application) => application.workerId).filter(Boolean),
     selectedWorkerId: hiredApplications[0]?.workerId || null,
     selectedWorkerName: hiredApplications[0]?.workerName || "",
@@ -413,8 +452,61 @@ export function normalizeBackendReview(review) {
     feedback: review.feedback || "",
     jobId: review.job || review.job_id || review.jobId || "",
     jobTitle: review.job_title || review.jobTitle || "",
+    qualityOfWork: review.quality_of_work ?? review.qualityOfWork ?? null,
+    punctuality: review.punctuality ?? null,
+    communication: review.communication ?? null,
+    professionalism: review.professionalism ?? null,
+    overallRating: review.overall_rating ?? review.overallRating ?? null,
     createdAt: review.created_at || review.createdAt || new Date().toLocaleString("en-PH"),
   });
+}
+
+function normalizeComplaintParty(detail) {
+  if (!detail) {
+    return null;
+  }
+  return {
+    username: detail.username || "",
+    displayName: detail.display_name || detail.username || "",
+    role: detail.role || "",
+    averageRating: detail.average_rating != null ? Number(detail.average_rating) : null,
+    ratingCount: detail.rating_count || 0,
+    locationLabel: detail.location_label || "",
+    memberSince: detail.member_since || "",
+    phone: detail.phone || "",
+    email: detail.email || "",
+  };
+}
+
+export function normalizeBackendComplaint(complaint) {
+  if (!complaint) {
+    return null;
+  }
+  return {
+    id: complaint.id,
+    complainantUsername: complaint.complainant_username || "",
+    respondentUsername: complaint.respondent_username || "",
+    complainantDetail: normalizeComplaintParty(complaint.complainant_detail),
+    respondentDetail: normalizeComplaintParty(complaint.respondent_detail),
+    jobId: complaint.job || null,
+    jobTitle: complaint.job_title || "",
+    jobName: complaint.job_name || "",
+    jobBarangay: complaint.job_barangay || "",
+    jobServiceType: complaint.job_service_type || "",
+    jobStatus: complaint.job_status || "",
+    complaintType: complaint.complaint_type || "",
+    description: complaint.description || "",
+    evidence: (complaint.evidence || [])
+      .map((item) => ({ id: item.id, imageUrl: item.image_url || "" }))
+      .filter((item) => item.imageUrl),
+    respondentIsBlocked: Boolean(complaint.respondent_is_blocked),
+    respondentBlockedUntil: complaint.respondent_blocked_until || null,
+    status: complaint.status || "submitted",
+    resolution: complaint.resolution || "",
+    adminNotes: complaint.admin_notes || "",
+    createdAt: complaint.created_at || "",
+    updatedAt: complaint.updated_at || "",
+  };
 }
 
 export function dedupeNotifications(notifications) {
@@ -449,4 +541,53 @@ export function isNumericIdentifier(value) {
     return false;
   }
   return /^\d+$/.test(String(value));
+}
+
+export function normalizeCertificate(certificate) {
+  if (!certificate) {
+    return null;
+  }
+  return {
+    id: certificate.id,
+    workerUsername: certificate.worker_username || "",
+    workerName: certificate.worker_name || certificate.worker_username || "",
+    workerLocationLabel: certificate.worker_location_label || "",
+    workerMemberSince: certificate.worker_member_since || "",
+    certificateType: certificate.certificate_type || "",
+    certificateTypeLabel: certificate.certificate_type_label || certificate.certificate_type || "",
+    certificateName: certificate.certificate_name || "",
+    issuer: certificate.issuer || "",
+    issueDate: certificate.issue_date || "",
+    expiryDate: certificate.expiry_date || "",
+    fileUrl: certificate.certificate_file_url || certificate.certificate_file || "",
+    isVerified: Boolean(certificate.is_verified),
+    verificationStatus: certificate.verification_status || "pending",
+    verificationNotes: certificate.verification_notes || "",
+    verifiedByUsername: certificate.verified_by_username || "",
+    verifiedAt: certificate.verified_at || "",
+    createdAt: certificate.created_at || "",
+  };
+}
+
+export function normalizeVerificationDocument(document) {
+  if (!document) {
+    return null;
+  }
+  return {
+    id: document.id,
+    username: document.user_username || "",
+    displayName: document.user_name || document.user_username || "",
+    locationLabel: document.user_location_label || "",
+    memberSince: document.user_member_since || "",
+    idType: document.id_type || "",
+    idTypeLabel: document.id_type_label || document.id_type || "",
+    idNumber: document.id_number || "",
+    fileUrl: document.document_file || "",
+    isPrimary: Boolean(document.is_primary),
+    verificationStatus: document.verification_status || "pending",
+    verificationNotes: document.verification_notes || "",
+    verifiedByUsername: document.verified_by_username || "",
+    verifiedAt: document.verified_at || "",
+    createdAt: document.created_at || "",
+  };
 }

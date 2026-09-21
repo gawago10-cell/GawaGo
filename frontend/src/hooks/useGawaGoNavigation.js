@@ -58,6 +58,9 @@ export function useGawaGoNavigation({
   }
 
   function handleLogout() {
+    // Revoke the token server-side so it can't be reused if it leaks; fired
+    // without awaiting so a slow/failed request never delays logging out.
+    apiRequest("accounts/logout/", { method: "POST", auth: true, suppressUnauthorized: true }).catch(() => {});
     clearAuthToken();
     setCurrentUser(null);
     setSelectedWorkerId(null);
@@ -114,28 +117,13 @@ export function useGawaGoNavigation({
     setView("worker-applications");
   }
 
+  function openWorkerMyJobs() {
+    setSelectedJobId(null);
+    setView("worker-my-jobs");
+  }
+
   function openWorkerProfile() {
     if (currentWorker) {
-      const savedWeeklyAvailability = currentWorker.weeklyAvailability || [];
-      const weeklyAvailability = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-      ].map((weekdayLabel, weekday) => {
-        const savedWindow = savedWeeklyAvailability.find((window) => Number(window.weekday) === weekday);
-        return {
-          id: savedWindow?.id || `weekly-${weekday}`,
-          weekday,
-          weekdayLabel,
-          startTime: savedWindow?.startTime || "09:00",
-          endTime: savedWindow?.endTime || "17:00",
-          isAvailable: Boolean(savedWindow?.isAvailable),
-        };
-      });
       setWorkerProfileForm({
         firstName: currentWorker.firstName || "",
         lastName: currentWorker.lastName || "",
@@ -157,7 +145,6 @@ export function useGawaGoNavigation({
         skills: currentWorker.skills || [],
         availability: true,
         availabilityWindows: currentWorker.availabilityWindows || [],
-        weeklyAvailability,
         profilePhotoFile: null,
         profilePhotoPreview:
           currentWorker.profilePhotoPreview || currentWorker.verificationSubmission?.primaryIdPreview || "",
@@ -245,10 +232,17 @@ export function useGawaGoNavigation({
     setView("household-notifications");
   }
 
-  function openHouseholdJobDetail(jobId) {
+  // "My Reports" -- incidents the user filed or was reported in. The
+  // household/worker activity-summary report was removed; admin still has
+  // its own Reports tab inside SuperAdminDashboardView.
+  function openMyComplaints() {
+    setView("my-reports");
+  }
+
+  function openHouseholdJobMatches(jobId) {
     setSelectedJobId(jobId);
     setSelectedWorkerId(null);
-    setView("household-job-detail");
+    setView("household-job-matches");
   }
 
   function openWorkerJobDetail(jobId) {
@@ -363,11 +357,6 @@ export function useGawaGoNavigation({
     }
   }
 
-  function openHouseholdNotificationWorker(notification) {
-    markNotificationRead(notification.id);
-    openMatchedWorkerProfile(notification.workerId, notification.jobId);
-  }
-
   function openMatchedWorkerProfile(worker, jobId = selectedJob?.id) {
     const selectedWorker =
       worker && typeof worker === "object"
@@ -407,9 +396,9 @@ export function useGawaGoNavigation({
     openHouseholdDashboard,
     openHouseholdFeedbackAll,
     openHouseholdGetVerified,
-    openHouseholdJobDetail,
+    openHouseholdJobMatches,
     openHouseholdMyJobs,
-    openHouseholdNotificationWorker,
+    openMyComplaints,
     openHouseholdNotifications,
     openHouseholdPostJob,
     openHouseholdProfile,
@@ -423,6 +412,7 @@ export function useGawaGoNavigation({
     openWorkerFindJobs,
     openWorkerGetVerified,
     openWorkerJobDetail,
+    openWorkerMyJobs,
     openWorkerNotifications,
     openWorkerProfile,
     openWorkerRegister,

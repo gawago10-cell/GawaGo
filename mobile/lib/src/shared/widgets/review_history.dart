@@ -167,9 +167,9 @@ class _Summary extends StatelessWidget {
                           ? 'No ratings yet'
                           : average.toStringAsFixed(1),
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0,
-                          ),
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
                     ),
                     Text(
                       '$count ${count == 1 ? 'review' : 'reviews'} received',
@@ -227,10 +227,10 @@ class _Section extends StatelessWidget {
         Text(
           title,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: const Color(0xFF10251A),
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
+            color: const Color(0xFF10251A),
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0,
+          ),
         ),
         const SizedBox(height: 8),
         if (reviews.isEmpty)

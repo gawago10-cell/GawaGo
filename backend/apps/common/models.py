@@ -26,3 +26,17 @@ class VerificationRequest(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     review_note = models.TextField(blank=True, default="")
+
+
+class RevokedToken(models.Model):
+    """A JWT explicitly invalidated before its natural expiry (e.g. on logout).
+
+    Rows are only meaningful until `expires_at`, matching the token's own
+    exp claim -- after that the token would be rejected on expiry alone, so
+    stale rows are opportunistically deleted whenever a new one is inserted.
+    """
+
+    jti = models.CharField(max_length=64, unique=True, db_index=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="revoked_tokens")
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(auto_now_add=True)

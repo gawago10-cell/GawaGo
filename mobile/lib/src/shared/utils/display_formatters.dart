@@ -48,6 +48,30 @@ String formatDateOrText(String value) {
       : formatLocalDateTime(normalized);
 }
 
+/// "3 hours ago" -- relative wording for a backend timestamp. Walks up the
+/// unit ladder while the remaining amount still fills the next unit.
+String formatTimeAgo(String value) {
+  final date = parseBackendDateTime(value);
+  if (date == null) return '';
+  final seconds = DateTime.now().difference(date).inSeconds;
+  if (seconds < 60) return 'just now';
+  const units = [
+    ('minute', 60),
+    ('hour', 60),
+    ('day', 24),
+    ('month', 30),
+    ('year', 12),
+  ];
+  var amount = seconds;
+  var label = 'second';
+  for (final (nextLabel, size) in units) {
+    if (amount < size) break;
+    amount = amount ~/ size;
+    label = nextLabel;
+  }
+  return '$amount $label${amount == 1 ? '' : 's'} ago';
+}
+
 DateTime? parseBackendDateTime(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty) return null;

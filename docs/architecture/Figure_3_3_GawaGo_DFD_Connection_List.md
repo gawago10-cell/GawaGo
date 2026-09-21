@@ -55,7 +55,7 @@ This file lists every connector used in `Figure_3_3_GawaGo_DFD.drawio`.
 | S10 | 9.0 Notifications and Analytics | D8 django_admin_log | Admin log records |
 | S11 | 2.0 Profile and Availability | D9 accounts_userprofile | Profile records |
 | S12 | 2.0 Profile and Availability | D10 accounts_workeravailability | Availability records |
-| S13 | 2.0 Profile and Availability | D11 accounts_workerweeklyavailability | Weekly availability |
+| S13 | ~~2.0 Profile and Availability~~ | ~~D11 accounts_workerweeklyavailability~~ | **Retired** with D11 (table dropped in accounts migration 0009). |
 | S14 | 3.0 Job Posting Management | D14 jobs_jobposting | Job posting records |
 | S15 | 3.0 Job Posting Management | D15 jobs_jobimage | Job image records |
 | S16 | 4.0 Job Application Management | D16 jobs_jobapplication | Application records |

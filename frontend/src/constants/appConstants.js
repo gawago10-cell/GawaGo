@@ -1,20 +1,10 @@
 import { getApiBaseUrl } from "../api/apiClient";
 
-export const MAX_WORKER_SKILLS = 4;
+export const MAX_WORKER_SKILLS = 3;
 export const SKILLS = [
   "House Cleaning",
-  "Cooking",
   "Laundry",
-  "Childcare",
-  "Elder Care",
-  "Gardening",
-  "Electrical Work",
-  "Plumbing",
-  "Carpentry",
-  "Painting",
-  "Aircon Repair/Cleaning",
-  "Welding",
-  "Driving",
+  "Cooking",
   "Other",
 ];
 export const BARANGAYS = [
@@ -141,6 +131,10 @@ export const TAYABAS_MAP_BOUNDS = {
 // Validated categorical palette (dataviz skill reference palette, light mode):
 // fixed hue order chosen so adjacent slots clear CVD-safety checks. Never reorder
 // or cycle the first N slots independently -- add categories in this order.
+// Mirrors SKILL_WEIGHT in backend/apps/matching/recommendations.py. Used only
+// to describe the blend in the UI; the scores themselves come from the backend.
+export const AI_SKILL_WEIGHT = 0.7;
+
 export const ANALYTICS_CHART_COLORS = [
   "#2a78d6", // blue
   "#eb6834", // orange

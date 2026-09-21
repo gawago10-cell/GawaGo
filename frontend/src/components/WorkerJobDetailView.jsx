@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import ComplaintModal from "./ComplaintModal";
 import { DashboardSidebar, DashboardTopbar } from "./DashboardLayout";
 import JobImageGallery from "./JobImageGallery";
 import LocationDistanceMap from "./LocationDistanceMap";
@@ -27,6 +28,7 @@ export default function WorkerJobDetailView({
   openWorkerNotifications,
   openWorkerProfile,
   workerApplicationUnreadCount,
+  addToast,
 }) {
   const job = currentWorkerJobDetail;
   const household = currentWorkerJobHousehold;
@@ -64,6 +66,7 @@ export default function WorkerJobDetailView({
   const canAcceptHireRequest = Boolean(job?.canAcceptHireRequest);
   const canRequestCompletion = Boolean(job?.canRequestCompletion);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showComplaintModal, setShowComplaintModal] = useState(false);
   useEffect(() => {
     setRouteDistanceKm(null);
   }, [job?.id, currentWorker?.id, currentWorker?.username]);
@@ -182,7 +185,7 @@ export default function WorkerJobDetailView({
                           </p>
                           <p className="mb-0 small text-muted">
                             {isAssignedWorker
-                              ? [household?.phone ? `+63${household.phone}` : "", household?.email || ""]
+                              ? [job?.householdPhone ? `+63${job.householdPhone}` : "", job?.householdEmail || ""]
                                   .filter(Boolean)
                                   .join(" | ") || "Contact details not provided"
                               : "Contact details become available after you are hired."}
@@ -218,6 +221,24 @@ export default function WorkerJobDetailView({
                             <dt>Time</dt>
                             <dd>{job.preferredTime ? "Included above" : "Not set"}</dd>
                           </div>
+                          {(job.jobStartDate || job.jobEndDate) && (
+                            <div>
+                              <dt>Job Period</dt>
+                              <dd>
+                                {job.jobStartDate || "Not set"}
+                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
+                              </dd>
+                            </div>
+                          )}
+                          {job.estimatedWorkingDays ? (
+                            <div>
+                              <dt>Working Days</dt>
+                              <dd>
+                                {job.estimatedWorkingDays} day
+                                {Number(job.estimatedWorkingDays) === 1 ? "" : "s"}
+                              </dd>
+                            </div>
+                          ) : null}
                           <div>
                             <dt>Needed</dt>
                             <dd>{getHiringProgressLabel(job)} hired</dd>
@@ -297,7 +318,11 @@ export default function WorkerJobDetailView({
                                 className="btn btn-outline-danger btn-sm"
                                 type="button"
                                 disabled={!currentWorkerApplicationId}
-                                onClick={() => handleWorkerHireDecision(currentWorkerApplicationId, "reject")}
+                                onClick={() => {
+                                  if (window.confirm("Reject this hire request? This can't be undone.")) {
+                                    handleWorkerHireDecision(currentWorkerApplicationId, "reject");
+                                  }
+                                }}
                               >
                                 Reject Request
                               </button>
@@ -325,6 +350,17 @@ export default function WorkerJobDetailView({
                         {!canApply && !alreadyApplied && !canAcceptHireRequest && (
                           <div className="alert alert-warning mt-3 mb-0 py-2">
                             Applications are unavailable for this job right now.
+                          </div>
+                        )}
+                        {alreadyApplied && (
+                          <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #e0e0e0" }}>
+                            <button
+                              type="button"
+                              className="btn btn-outline-danger btn-sm"
+                              onClick={() => setShowComplaintModal(true)}
+                            >
+                              🚩 Report an Issue
+                            </button>
                           </div>
                         )}
                       </div>
@@ -365,6 +401,15 @@ export default function WorkerJobDetailView({
                     </div>
                   </div>
                 </div>
+              )}
+              {job && showComplaintModal && (
+                <ComplaintModal
+                  isOpen={showComplaintModal}
+                  onClose={() => setShowComplaintModal(false)}
+                  onSubmitted={() => addToast?.("Report submitted. Our admin team will review it.", "success")}
+                  job={job}
+                  role="worker"
+                />
               )}
             </div>
           </div>

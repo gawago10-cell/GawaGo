@@ -1,9 +1,10 @@
 import calendar
+import math
 from collections import Counter
 from decimal import Decimal
 
 from django.contrib.auth.models import User
-from django.db.models import Avg, Count, Sum
+from django.db.models import Avg, Count, F, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
@@ -143,6 +144,15 @@ def _build_barangay_analytics(counter, value_key):
     )[:8]
 
 
+def _round_half_up(value):
+    """Python's round() rounds half-to-even (4.5 -> 4, 2.5 -> 2), which
+    bucket a rating distribution's boundary values the wrong way. Clamped to
+    [1, 5] so a sub-0.5 average -- a data anomaly, since ratings are 1-5 --
+    still lands in a bucket instead of vanishing from the chart entirely.
+    """
+    return max(1, min(5, math.floor(value + 0.5)))
+
+
 def _build_rating_distribution(worker_profiles):
     ratings = [
         float(profile.average_rating)
@@ -152,7 +162,7 @@ def _build_rating_distribution(worker_profiles):
     return [
         {
             "stars": f"{stars} star{'s' if stars > 1 else ''}",
-            "count": sum(1 for rating in ratings if round(rating) == stars),
+            "count": sum(1 for rating in ratings if _round_half_up(rating) == stars),
         }
         for stars in [5, 4, 3, 2, 1]
     ]
@@ -222,11 +232,23 @@ def build_dashboard_metrics():
     average_rates_by_category = _build_average_rates_by_category()
     pricing_trends = _build_pricing_trends()
 
-    rating_avg = UserProfile.objects.filter(
+    # A plain Avg("average_rating") weighs a worker with 1 review the same
+    # as one with 200 -- weighting each worker's mean by their own
+    # rating_count instead recovers the true mean across every individual
+    # rating (sum(rating_i * count_i) / sum(count_i) == mean of all rating_i).
+    rating_stats = UserProfile.objects.filter(
         role=UserProfile.ROLE_WORKER,
         rating_count__gt=0,
         average_rating__isnull=False,
-    ).aggregate(value=Avg("average_rating"))["value"]
+    ).aggregate(
+        weighted_total=Sum(F("average_rating") * F("rating_count")),
+        total_count=Sum("rating_count"),
+    )
+    rating_avg = (
+        rating_stats["weighted_total"] / rating_stats["total_count"]
+        if rating_stats["total_count"]
+        else None
+    )
     rated_worker_count = sum(1 for profile in worker_profiles if profile.rating_count and profile.average_rating is not None)
 
     open_job_slots = JobPosting.objects.filter(status=JobPosting.STATUS_OPEN).aggregate(total=Sum("worker_slots"))["total"] or 0

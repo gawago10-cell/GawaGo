@@ -31,6 +31,7 @@ urlpatterns = [
     path("api/analytics/", include("apps.analytics.urls")),
     path("api/common/", include("apps.common.urls")),
     path("api/complaints/", include("apps.complaints.urls")),
+    path("api/reports/", include("apps.reports.urls")),
 ]
 
 if settings.DEBUG:

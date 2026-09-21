@@ -8,6 +8,11 @@ from django.db import models
 
 from apps.matching.models import RouteDistanceCache
 
+# Shared with recommendations.py so both rankers agree on what "no distance
+# limit" means for a job -- they used to disagree, since only the AI path
+# checked this.
+DISTANCE_UNLIMITED = "unlimited"
+
 
 SKILL_ALIASES = {
     "aircon": "aircon_repair",
@@ -166,6 +171,25 @@ def fetch_osrm_route(lat1, lon1, lat2, lon2):
         return None
 
 
+def get_cached_road_route(job, profile):
+    """Cache-only lookup -- never calls the external routing service.
+
+    For list serialization, where doing a live lookup per row means one
+    sequential outbound HTTP round-trip per item. Pairs that aren't cached
+    yet simply report no distance until the matching endpoints populate
+    them; a slow list is worse than a missing distance label.
+    """
+    if None in (job.latitude, job.longitude, profile.latitude, profile.longitude):
+        return {"distance_km": None, "route_points": []}
+    cache_record = RouteDistanceCache.objects.filter(job=job, worker_profile=profile).first()
+    if cache_record and cached_coordinates_match(cache_record, job, profile):
+        return {
+            "distance_km": float(cache_record.distance_km),
+            "route_points": cache_record.route_points or [],
+        }
+    return {"distance_km": None, "route_points": []}
+
+
 def get_road_route_for_match(job, profile):
     if None in (job.latitude, job.longitude, profile.latitude, profile.longitude):
         return {"distance_km": None, "route_points": []}
@@ -248,8 +272,28 @@ def calculate_match_score(matches_skill, verified, distance_km, rating, rate_sco
     )
 
 
+def completed_job_counts(worker_ids):
+    """How many jobs each worker has finished, in one grouped query rather
+    than one per candidate -- the match list renders this for every card."""
+    from apps.jobs.models import JobApplication
+
+    rows = (
+        JobApplication.objects.filter(worker_id__in=worker_ids, status=JobApplication.STATUS_COMPLETED)
+        .values("worker_id")
+        .annotate(total=models.Count("id"))
+    )
+    return {row["worker_id"]: row["total"] for row in rows}
+
+
 def build_match_results(job, worker_profiles):
-    max_distance_km = float(job.max_distance_km) if job.max_distance_km else None
+    # geographic_boundary='unlimited' must bypass the distance filter here
+    # the same way recommendations._within_radius() does for the AI path --
+    # otherwise the two rankers can disagree about the same job whenever
+    # max_distance_km wasn't (or couldn't be) kept in sync with the boundary
+    # label.
+    is_unlimited = job.geographic_boundary == DISTANCE_UNLIMITED
+    max_distance_km = None if is_unlimited else (float(job.max_distance_km) if job.max_distance_km else None)
+    finished_jobs = completed_job_counts([profile.user_id for profile in worker_profiles])
     results = []
     for profile in worker_profiles:
         skills = profile.skills or []
@@ -274,6 +318,12 @@ def build_match_results(job, worker_profiles):
             {
                 "worker_id": profile.user_id,
                 "worker_username": profile.user.username,
+                "worker_name": profile.user.get_full_name().strip() or profile.user.username,
+                "worker_location_label": profile.location_label or "",
+                "worker_bio": profile.bio or "",
+                "worker_profile_photo_url": profile.profile_photo.url if profile.profile_photo else "",
+                "worker_rating_count": profile.rating_count or 0,
+                "worker_completed_jobs": finished_jobs.get(profile.user_id, 0),
                 "skills": skills,
                 "matches_skill": matches_skill,
                 "verification_status": profile.verification_status,

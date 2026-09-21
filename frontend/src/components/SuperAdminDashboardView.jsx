@@ -13,6 +13,10 @@ import {
 } from "recharts";
 import { DashboardSidebar, MetricCard } from "./DashboardLayout";
 import SuperAdminHeatMap from "./SuperAdminHeatMap";
+import ReportsView from "./ReportsView";
+import AdminComplaintsQueue from "./AdminComplaintsQueue";
+import AdminCredentialsQueue from "./AdminCredentialsQueue";
+import UserManagementView from "./UserManagementView";
 import {
   ANALYTICS_CHART_COLORS,
   PHILIPPINES_MAP_CENTER,
@@ -31,6 +35,7 @@ export default function SuperAdminDashboardView({
   openVerificationRequest,
   pendingVerificationRequests,
   postedJobs,
+  refreshProfilesFromBackend,
   registeredHouseholds,
   registeredWorkers,
   rejectedVerificationRequests,
@@ -161,12 +166,32 @@ export default function SuperAdminDashboardView({
   ];
   const tabs = [
     {
+      id: "dashboard",
+      label: "Dashboard",
+    },
+    {
       id: "verification",
       label: "Verification Queue",
     },
     {
+      id: "credentials",
+      label: "Worker Credentials",
+    },
+    {
+      id: "users",
+      label: "User Management",
+    },
+    {
       id: "analytics",
       label: "Analytics",
+    },
+    {
+      id: "reports",
+      label: "Reports",
+    },
+    {
+      id: "complaints",
+      label: "Reported Issues",
     },
     {
       id: "adminmgmt",
@@ -255,9 +280,49 @@ export default function SuperAdminDashboardView({
               }}
             />
             <div className="worker-content">
-              {superAdminSection === "analytics" && (
+              {superAdminSection === "dashboard" && (
+                <>
+                  <div className="superadmin-analytics mt-3">
+                    <section className="analytics-overview" aria-label="Platform overview">
+                      <div className="analytics-overview-head">
+                        <div>
+                          <span>Employment Activity</span>
+                          <h2>Operational snapshot</h2>
+                        </div>
+                        <p>
+                          Live counts across accounts, employment activity, verification status, and worker
+                          reputation.
+                        </p>
+                      </div>
+
+                      <div className="analytics-overview-grid">
+                        {analyticsOverviewGroups.map((group) => (
+                          <article className="analytics-overview-panel" key={group.title}>
+                            <div className="analytics-overview-panel-head">
+                              <h3>{group.title}</h3>
+                              <p>{group.note}</p>
+                            </div>
+                            <div className="analytics-overview-metrics">
+                              {group.items.map((item) => (
+                                <div
+                                  className={`analytics-overview-metric ${
+                                    item.wide ? "wide" : ""
+                                  } ${item.tone ? `tone-${item.tone}` : ""}`}
+                                  key={`${group.title}-${item.label}`}
+                                >
+                                  <span>{item.label}</span>
+                                  <strong>{item.value}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+
                 <div className="profile-card mt-3">
-                  <div className="profile-card-head">Enhanced Dashboard Analytics</div>
+                  <div className="profile-card-head">Hiring Performance</div>
                   <div className="p-4">
                     {/* Metric Cards */}
                     <div className="row g-3 mb-4">
@@ -312,7 +377,7 @@ export default function SuperAdminDashboardView({
                                   <XAxis dataKey="month" />
                                   <YAxis />
                                   <Tooltip />
-                                  <Line type="monotone" dataKey="applications" stroke="#4CAF50" strokeWidth={2} />
+                                  <Line type="monotone" dataKey="applications" stroke="#2d7a4f" strokeWidth={2} />
                                 </LineChart>
                               </ResponsiveContainer>
                             ) : (
@@ -336,7 +401,7 @@ export default function SuperAdminDashboardView({
                                   <XAxis dataKey="serviceType" angle={-45} textAnchor="end" height={100} />
                                   <YAxis />
                                   <Tooltip />
-                                  <Bar dataKey="count" fill="#4CAF50" />
+                                  <Bar dataKey="count" fill="#2d7a4f" />
                                 </BarChart>
                               </ResponsiveContainer>
                             ) : (
@@ -358,7 +423,7 @@ export default function SuperAdminDashboardView({
                                   <XAxis dataKey="month" />
                                   <YAxis />
                                   <Tooltip />
-                                  <Bar dataKey="count" fill="#2196F3" />
+                                  <Bar dataKey="count" fill="#2d7a4f" />
                                 </BarChart>
                               </ResponsiveContainer>
                             ) : (
@@ -370,6 +435,32 @@ export default function SuperAdminDashboardView({
                     </div>
                   </div>
                 </div>
+                </>
+              )}
+              {superAdminSection === "reports" && (
+                <ReportsView
+                  postedJobs={postedJobs}
+                  registeredHouseholds={registeredHouseholds}
+                  registeredWorkers={registeredWorkers}
+                />
+              )}
+              {superAdminSection === "complaints" && (
+                <AdminComplaintsQueue
+                  currentUser={currentUser}
+                  postedJobs={postedJobs}
+                  registeredHouseholds={registeredHouseholds}
+                  registeredWorkers={registeredWorkers}
+                />
+              )}
+              {superAdminSection === "credentials" && <AdminCredentialsQueue />}
+              {superAdminSection === "users" && (
+                <UserManagementView
+                  currentUser={currentUser}
+                  postedJobs={postedJobs}
+                  refreshProfilesFromBackend={refreshProfilesFromBackend}
+                  registeredHouseholds={registeredHouseholds}
+                  registeredWorkers={registeredWorkers}
+                />
               )}
               {superAdminSection === "verification" && (
                 <div className="profile-card mt-3">
@@ -594,42 +685,6 @@ export default function SuperAdminDashboardView({
               {superAdminSection === "analytics" && (
                 <>
                   <div className="superadmin-analytics mt-3">
-                    <section className="analytics-overview" aria-label="Analytics overview">
-                      <div className="analytics-overview-head">
-                        <div>
-                          <span>Platform Analytics</span>
-                          <h2>Operational snapshot</h2>
-                        </div>
-                        <p>
-                          Monitor account growth, employment activity, verification status, and worker reputation.
-                        </p>
-                      </div>
-
-                      <div className="analytics-overview-grid">
-                        {analyticsOverviewGroups.map((group) => (
-                          <article className="analytics-overview-panel" key={group.title}>
-                            <div className="analytics-overview-panel-head">
-                              <h3>{group.title}</h3>
-                              <p>{group.note}</p>
-                            </div>
-                            <div className="analytics-overview-metrics">
-                              {group.items.map((item) => (
-                                <div
-                                  className={`analytics-overview-metric ${
-                                    item.wide ? "wide" : ""
-                                  } ${item.tone ? `tone-${item.tone}` : ""}`}
-                                  key={`${group.title}-${item.label}`}
-                                >
-                                  <span>{item.label}</span>
-                                  <strong>{item.value}</strong>
-                                </div>
-                              ))}
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-
                     <div className="profile-card analytics-card">
                       <div className="profile-card-head analytics-heatmap-head">
                         <span>Barangay Heat Map</span>

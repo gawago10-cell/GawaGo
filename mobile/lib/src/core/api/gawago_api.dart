@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -99,6 +100,30 @@ class GawaGoApi {
     return result;
   }
 
+  static Future<void> requestPasswordReset(String email) async {
+    await post(
+      '/accounts/forgot-password/',
+      authenticated: false,
+      body: {'email': email.trim()},
+    );
+  }
+
+  static Future<void> resetPassword({
+    required String email,
+    required String token,
+    required String newPassword,
+  }) async {
+    await post(
+      '/accounts/reset-password/',
+      authenticated: false,
+      body: {
+        'email': email.trim(),
+        'token': token.trim(),
+        'new_password': newPassword,
+      },
+    );
+  }
+
   static Future<Map<String, dynamic>> get(
     String path, {
     bool authenticated = true,
@@ -109,18 +134,81 @@ class GawaGoApi {
     return _asMap(data);
   }
 
+  /// Fetches a binary file from an authenticated endpoint (e.g. a
+  /// verification document) with the bearer token attached -- a plain
+  /// `Image.network(url)` has no way to send that header, so an
+  /// IsAuthenticated file route needs this instead of `get`/`getList`,
+  /// which both assume a JSON body.
+  static Future<Uint8List> getBytes(
+    String path, {
+    bool authenticated = true,
+  }) async {
+    http.Response response;
+    try {
+      response = await _client
+          .get(_uri(path), headers: _headers(authenticated))
+          .timeout(ApiConfig.timeout);
+    } on TimeoutException {
+      throw const ApiException(
+        'The request timed out. Check your connection and try again.',
+        type: ApiErrorType.network,
+      );
+    } on http.ClientException catch (error) {
+      throw ApiException(error.message, type: ApiErrorType.network);
+    } on SocketException {
+      throw const ApiException(
+        'No internet connection. Check your network and try again.',
+        type: ApiErrorType.network,
+      );
+    }
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    }
+    if (response.statusCode == 401) {
+      await SessionStorage.expire();
+    }
+    Map<String, dynamic> body = const {};
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map<String, dynamic>) body = decoded;
+    } catch (_) {
+      // Non-JSON error body (e.g. an HTML 404 page) -- fall through to the
+      // generic message below.
+    }
+    throw ApiException(
+      _errorMessage(body),
+      statusCode: response.statusCode,
+      type: _errorType(response.statusCode),
+    );
+  }
+
+  // DRF paginates list endpoints at 20 records per page. Reading only
+  // `results` from the first page silently drops everything past it once a
+  // collection outgrows one page -- follow `next` until it is null, the way
+  // the web client's fetchAllRecords does.
+  static const int _maxListPages = 100;
+
   static Future<List<dynamic>> getList(
     String path, {
     bool authenticated = true,
   }) async {
-    final data = await _send(
-      () => _client.get(_uri(path), headers: _headers(authenticated)),
-    );
-    if (data is List<dynamic>) return data;
-    if (data is Map<String, dynamic> && data['results'] is List<dynamic>) {
-      return data['results'] as List<dynamic>;
+    final records = <dynamic>[];
+    Uri uri = _uri(path);
+    for (var page = 0; page < _maxListPages; page++) {
+      final data = await _send(
+        () => _client.get(uri, headers: _headers(authenticated)),
+      );
+      if (data is List<dynamic>) return data;
+      if (data is Map<String, dynamic> && data['results'] is List<dynamic>) {
+        records.addAll(data['results'] as List<dynamic>);
+        final next = data['next'];
+        if (next is! String || next.isEmpty) return records;
+        uri = Uri.parse(next);
+        continue;
+      }
+      throw const ApiException('API response was expected to be a list.');
     }
-    throw const ApiException('API response was expected to be a list.');
+    return records;
   }
 
   static Future<Map<String, dynamic>> post(
@@ -162,22 +250,28 @@ class GawaGoApi {
     );
   }
 
+  // All three multipart methods route through _send() (like every other
+  // method here) instead of calling _client.send() directly, so a dropped
+  // connection during an upload gets the same friendly, classified
+  // ApiException as everything else -- it used to surface as a raw
+  // SocketException/TimeoutException string that friendlyApiError doesn't
+  // know how to clean up.
   static Future<Map<String, dynamic>> multipartPost(
     String path, {
     required Map<String, String> fields,
     required Map<String, String> files,
   }) async {
-    final request = http.MultipartRequest('POST', _uri(path));
-    request.headers.addAll(_headers(true)..remove('Content-Type'));
-    request.fields.addAll(fields);
-    for (final entry in files.entries) {
-      request.files.add(
-        await http.MultipartFile.fromPath(entry.key, entry.value),
-      );
-    }
-    final streamed = await _client.send(request).timeout(ApiConfig.timeout);
-    final response = await http.Response.fromStream(streamed);
-    return _asMap(await _decodeResponse(response));
+    final data = await _send(() async {
+      final request = http.MultipartRequest('POST', _uri(path));
+      request.headers.addAll(_headers(true)..remove('Content-Type'));
+      request.fields.addAll(fields);
+      for (final entry in files.entries) {
+        request.files.add(await _multipartFile(entry.key, entry.value));
+      }
+      final streamed = await _client.send(request);
+      return http.Response.fromStream(streamed);
+    });
+    return _asMap(data);
   }
 
   static Future<Map<String, dynamic>> multipartPostMany(
@@ -186,15 +280,17 @@ class GawaGoApi {
     required String fileField,
     required List<String> filePaths,
   }) async {
-    final request = http.MultipartRequest('POST', _uri(path));
-    request.headers.addAll(_headers(true)..remove('Content-Type'));
-    request.fields.addAll(fields);
-    for (final path in filePaths) {
-      request.files.add(await http.MultipartFile.fromPath(fileField, path));
-    }
-    final streamed = await _client.send(request).timeout(ApiConfig.timeout);
-    final response = await http.Response.fromStream(streamed);
-    return _asMap(await _decodeResponse(response));
+    final data = await _send(() async {
+      final request = http.MultipartRequest('POST', _uri(path));
+      request.headers.addAll(_headers(true)..remove('Content-Type'));
+      request.fields.addAll(fields);
+      for (final path in filePaths) {
+        request.files.add(await _multipartFile(fileField, path));
+      }
+      final streamed = await _client.send(request);
+      return http.Response.fromStream(streamed);
+    });
+    return _asMap(data);
   }
 
   static Future<Map<String, dynamic>> multipartPatch(
@@ -202,17 +298,38 @@ class GawaGoApi {
     required Map<String, String> fields,
     required Map<String, String> files,
   }) async {
-    final request = http.MultipartRequest('PATCH', _uri(path));
-    request.headers.addAll(_headers(true)..remove('Content-Type'));
-    request.fields.addAll(fields);
-    for (final entry in files.entries) {
-      request.files.add(
-        await http.MultipartFile.fromPath(entry.key, entry.value),
+    final data = await _send(() async {
+      final request = http.MultipartRequest('PATCH', _uri(path));
+      request.headers.addAll(_headers(true)..remove('Content-Type'));
+      request.fields.addAll(fields);
+      for (final entry in files.entries) {
+        request.files.add(await _multipartFile(entry.key, entry.value));
+      }
+      final streamed = await _client.send(request);
+      return http.Response.fromStream(streamed);
+    });
+    return _asMap(data);
+  }
+
+  /// Builds one upload part from a picked file's path.
+  ///
+  /// On web there is no filesystem behind that path -- file_selector hands
+  /// back a blob: URL -- so MultipartFile.fromPath throws. XFile reads both
+  /// shapes, so going through its bytes keeps uploads working on web and
+  /// native alike.
+  static Future<http.MultipartFile> _multipartFile(
+    String field,
+    String path,
+  ) async {
+    final file = XFile(path);
+    if (kIsWeb) {
+      return http.MultipartFile.fromBytes(
+        field,
+        await file.readAsBytes(),
+        filename: file.name.isEmpty ? 'upload' : file.name,
       );
     }
-    final streamed = await _client.send(request).timeout(ApiConfig.timeout);
-    final response = await http.Response.fromStream(streamed);
-    return _asMap(await _decodeResponse(response));
+    return http.MultipartFile.fromPath(field, path);
   }
 
   static Future<Map<String, dynamic>> delete(String path) async {
@@ -286,11 +403,29 @@ class GawaGoApi {
     if (response.statusCode == 401) {
       await SessionStorage.expire();
     }
+    final type = _errorType(response.statusCode);
     throw ApiException(
-      _errorMessage(body),
+      type == ApiErrorType.rateLimited
+          ? _rateLimitMessage(body)
+          : _errorMessage(body),
       statusCode: response.statusCode,
-      type: _errorType(response.statusCode),
+      type: type,
     );
+  }
+
+  // DRF sends "Request was throttled. Expected available in 42 seconds." --
+  // accurate but reads like a server log, so surface the wait time plainly.
+  static String _rateLimitMessage(dynamic body) {
+    final detail = body is Map<String, dynamic>
+        ? body['detail']?.toString()
+        : null;
+    final seconds = detail == null
+        ? null
+        : RegExp(r'(\d+)\s*second').firstMatch(detail)?.group(1);
+    if (seconds != null) {
+      return 'Too many attempts. Please wait $seconds seconds and try again.';
+    }
+    return 'Too many attempts. Please wait a moment and try again.';
   }
 
   static String _errorMessage(dynamic body) {
@@ -321,6 +456,7 @@ class GawaGoApi {
     if (statusCode == 400 || statusCode == 422) {
       return ApiErrorType.validation;
     }
+    if (statusCode == 429) return ApiErrorType.rateLimited;
     if (statusCode >= 500) return ApiErrorType.server;
     return ApiErrorType.unknown;
   }

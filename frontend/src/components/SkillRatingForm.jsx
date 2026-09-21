@@ -1,19 +1,45 @@
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/apiClient";
+import { readResponseData } from "../utils/apiUtils";
+import { getApiErrorMessage } from "../utils/normalizers";
+import { SKILLS } from "../constants/appConstants";
 
 export default function SkillRatingForm({
   jobId,
   workerId,
   workerName,
   jobTitle,
+  jobSkill,
   onSubmitSuccess,
   onCancel,
 }) {
   const [skills, setSkills] = useState([]);
   const [skillRatings, setSkillRatings] = useState({});
+  const [extraSkills, setExtraSkills] = useState([]);
+  const [extraSkillChoice, setExtraSkillChoice] = useState("");
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  const addExtraSkill = (name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    const alreadyListed = [
+      ...skills.map((skill) => skill.skill_name),
+      ...extraSkills.map((skill) => skill.name),
+    ].some((existing) => existing.toLowerCase() === trimmed.toLowerCase());
+    if (alreadyListed) return;
+    setExtraSkills((prev) => [...prev, { tempId: `extra-${Date.now()}-${Math.random()}`, name: trimmed }]);
+  };
+
+  const removeExtraSkill = (tempId) => {
+    setExtraSkills((prev) => prev.filter((skill) => skill.tempId !== tempId));
+    setSkillRatings((prev) => {
+      const next = { ...prev };
+      delete next[tempId];
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetchWorkerSkills();
@@ -22,13 +48,28 @@ export default function SkillRatingForm({
   const fetchWorkerSkills = async () => {
     try {
       setLoading(true);
-      const response = await apiRequest(`/accounts/profiles/${workerId}/portfolio/`, "GET");
-      setSkills(response.skills || []);
+      const response = await apiRequest(`accounts/profiles/${workerId}/portfolio/`, { auth: true });
+      const data = await readResponseData(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, "Unable to load worker skills."));
+      }
+      const workerSkills = data?.skills || [];
+      setSkills(workerSkills);
       const initialRatings = {};
-      (response.skills || []).forEach((skill) => {
+      workerSkills.forEach((skill) => {
         initialRatings[skill.id] = 5;
       });
       setSkillRatings(initialRatings);
+      // The job's own service type is always rateable, even if the worker never
+      // added it to their portfolio -- otherwise you can't rate the very work
+      // you hired them for.
+      const seedSkill = (jobSkill || "").trim();
+      const alreadyListed = workerSkills.some(
+        (skill) => (skill.skill_name || "").toLowerCase() === seedSkill.toLowerCase(),
+      );
+      if (seedSkill && !alreadyListed) {
+        setExtraSkills([{ tempId: `extra-job-skill-${jobId}`, name: seedSkill }]);
+      }
     } catch (error) {
       console.error("Failed to fetch worker skills:", error);
     } finally {
@@ -52,21 +93,29 @@ export default function SkillRatingForm({
 
     try {
       setSubmitting(true);
+      const extraSkillByTempId = new Map(extraSkills.map((skill) => [skill.tempId, skill.name]));
       for (const [skillId, rating] of Object.entries(skillRatings)) {
         if (rating) {
-          await apiRequest(`/accounts/jobs/${jobId}/skill-ratings/`, "POST", {
-            job: jobId,
-            skill: skillId,
-            rating: rating,
-            feedback: feedback,
+          const extraName = extraSkillByTempId.get(skillId);
+          const body = extraName
+            ? { skill_name: extraName, worker_id: workerId, rating, feedback }
+            : { skill: skillId, rating, feedback };
+          const response = await apiRequest(`accounts/jobs/${jobId}/skill-ratings/`, {
+            method: "POST",
+            auth: true,
+            body,
           });
+          const data = await readResponseData(response);
+          if (!response.ok) {
+            throw new Error(getApiErrorMessage(data, "Unable to submit skill ratings."));
+          }
         }
       }
       alert("Skills rated successfully!");
       if (onSubmitSuccess) onSubmitSuccess();
     } catch (error) {
       console.error("Failed to submit ratings:", error);
-      alert("Failed to submit ratings");
+      alert(error.message || "Failed to submit ratings");
     } finally {
       setSubmitting(false);
     }
@@ -74,14 +123,6 @@ export default function SkillRatingForm({
 
   if (loading) {
     return <div className="text-center py-5">Loading worker skills...</div>;
-  }
-
-  if (skills.length === 0) {
-    return (
-      <div className="alert alert-info">
-        {workerName} hasn't added any skills to their portfolio yet.
-      </div>
-    );
   }
 
   return (
@@ -261,6 +302,87 @@ export default function SkillRatingForm({
             </div>
           </div>
         ))}
+
+        {extraSkills.map((skill) => (
+          <div key={skill.tempId} className="skill-rating-item">
+            <div className="skill-rating-label">
+              <div>
+                {skill.name}
+                <span className="skill-level-badge" style={{ marginLeft: "0.5rem" }}>
+                  New
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeExtraSkill(skill.tempId)}
+                style={{ background: "none", border: "none", color: "var(--gg-dark-3)", cursor: "pointer" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rating-stars">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <span
+                  key={star}
+                  className={`star ${skillRatings[skill.tempId] >= star ? "active" : ""}`}
+                  onClick={() => handleRatingChange(skill.tempId, star)}
+                >
+                  ★
+                </span>
+              ))}
+            </div>
+            <div className="rating-value">
+              {skillRatings[skill.tempId]
+                ? `${skillRatings[skill.tempId]}/5 stars`
+                : "Not rated"}
+            </div>
+          </div>
+        ))}
+
+        {skills.length === 0 && extraSkills.length === 0 && (
+          <div className="alert alert-info">
+            {workerName} hasn't added any skills to their portfolio yet. Add one below to rate the work they
+            actually did on this job.
+          </div>
+        )}
+
+        <div className="form-group">
+          <label>Add another skill to rate</label>
+          <div className="d-flex gap-2">
+            <input
+              type="text"
+              className="form-control"
+              list="skill-rating-form-options"
+              placeholder="e.g. Electrical Work"
+              value={extraSkillChoice}
+              onChange={(event) => setExtraSkillChoice(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addExtraSkill(extraSkillChoice);
+                  setExtraSkillChoice("");
+                }
+              }}
+            />
+            <datalist id="skill-rating-form-options">
+              {SKILLS.filter((skillName) => skillName !== "Other").map((skillName) => (
+                <option key={skillName} value={skillName} />
+              ))}
+            </datalist>
+            <button
+              type="button"
+              className="btn-cancel"
+              style={{ flex: "0 0 auto" }}
+              onClick={() => {
+                addExtraSkill(extraSkillChoice);
+                setExtraSkillChoice("");
+              }}
+            >
+              + Add
+            </button>
+          </div>
+        </div>
 
         <div className="form-group">
           <label htmlFor="feedback">Optional Feedback</label>

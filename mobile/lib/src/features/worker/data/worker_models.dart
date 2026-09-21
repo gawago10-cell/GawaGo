@@ -1,5 +1,6 @@
 class WorkerProfile {
   const WorkerProfile({
+    required this.userId,
     required this.username,
     required this.email,
     required this.firstName,
@@ -16,10 +17,15 @@ class WorkerProfile {
     required this.profilePhotoUrl,
     required this.verificationStatus,
     required this.displayRating,
+    required this.ratingCount,
+    required this.reputationTier,
+    required this.ratingTrend,
     required this.availabilityWindows,
-    required this.weeklyAvailability,
   });
 
+  /// The auth user id -- needed to query this worker's own job history,
+  /// which the jobs endpoint filters by user id rather than username.
+  final int userId;
   final String username;
   final String email;
   final String firstName;
@@ -36,8 +42,31 @@ class WorkerProfile {
   final String profilePhotoUrl;
   final String verificationStatus;
   final String displayRating;
+
+  /// How many households have rated this worker -- the "Jobs Done" figure.
+  final int ratingCount;
+
+  /// Earned standing: new | established | trusted | elite.
+  final String reputationTier;
+
+  /// Direction of recent ratings: improving | declining | neutral.
+  final String ratingTrend;
   final List<AvailabilityWindow> availabilityWindows;
-  final List<WeeklyAvailability> weeklyAvailability;
+
+  /// Badge text for the current tier, matching the web labels.
+  String get reputationLabel => switch (reputationTier) {
+    'elite' => '⭐ Elite',
+    'trusted' => '✓ Trusted',
+    'established' => '◆ Established',
+    _ => '◇ New',
+  };
+
+  /// Trend badge text, or empty when the trend is neutral (nothing to show).
+  String get ratingTrendLabel => switch (ratingTrend) {
+    'improving' => '📈 Improving',
+    'declining' => '📉 Declining',
+    _ => '',
+  };
 
   String get fullName {
     final name = '$firstName $lastName'.trim();
@@ -48,6 +77,7 @@ class WorkerProfile {
     final user = _map(json['user']);
     final profile = _map(json['profile']);
     return WorkerProfile(
+      userId: _integer(profile['user_id'] ?? user['id']),
       username: _text(user['username']),
       email: _text(user['email']),
       firstName: _text(user['first_name']),
@@ -64,12 +94,12 @@ class WorkerProfile {
       profilePhotoUrl: _text(profile['profile_photo_url']),
       verificationStatus: _text(profile['verification_status'], 'unverified'),
       displayRating: _text(profile['display_rating'], 'No ratings yet'),
+      ratingCount: _integer(profile['rating_count']),
+      reputationTier: _text(profile['reputation_tier'], 'new'),
+      ratingTrend: _text(profile['rating_trend'], 'neutral'),
       availabilityWindows: _list(
         profile['availability_windows'],
       ).map((item) => AvailabilityWindow.fromJson(_map(item))).toList(),
-      weeklyAvailability: _list(
-        profile['weekly_availability'],
-      ).map((item) => WeeklyAvailability.fromJson(_map(item))).toList(),
     );
   }
 }
@@ -101,48 +131,27 @@ class AvailabilityWindow {
   };
 }
 
-class WeeklyAvailability {
-  const WeeklyAvailability({
-    required this.weekday,
-    required this.label,
-    required this.startTime,
-    required this.endTime,
-  });
-
-  final int weekday;
-  final String label;
-  final String startTime;
-  final String endTime;
-
-  factory WeeklyAvailability.fromJson(Map<String, dynamic> json) {
-    return WeeklyAvailability(
-      weekday: _integer(json['weekday']),
-      label: _text(json['weekday_label']),
-      startTime: _text(json['start_time']),
-      endTime: _text(json['end_time']),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'weekday': weekday,
-    'start_time': startTime,
-    'end_time': endTime,
-    'is_available': true,
-  };
-}
-
 class WorkerJob {
   const WorkerJob({
     required this.id,
     required this.title,
     required this.householdUsername,
     required this.householdName,
+    required this.householdVerificationStatus,
     required this.jobType,
     required this.requiredSkill,
     required this.schedule,
+    required this.scheduleType,
+    required this.preferredDate,
+    required this.preferredTime,
+    required this.jobStartDate,
+    required this.jobEndDate,
+    required this.estimatedWorkingDays,
     required this.description,
     required this.locationLabel,
     required this.serviceRate,
+    required this.workerSlots,
+    required this.hiredCount,
     required this.status,
     required this.distanceKm,
     required this.latitude,
@@ -160,12 +169,23 @@ class WorkerJob {
   final String title;
   final String householdUsername;
   final String householdName;
+
+  /// The poster's verification standing, badged on the job card.
+  final String householdVerificationStatus;
   final String jobType;
   final String requiredSkill;
   final String schedule;
+  final String scheduleType;
+  final String preferredDate;
+  final String preferredTime;
+  final String jobStartDate;
+  final String jobEndDate;
+  final int? estimatedWorkingDays;
   final String description;
   final String locationLabel;
   final double serviceRate;
+  final int workerSlots;
+  final int hiredCount;
   final String status;
   final double? distanceKm;
   final double? latitude;
@@ -185,12 +205,21 @@ class WorkerJob {
       title: _text(json['title']),
       householdUsername: _text(json['household_username']),
       householdName: _text(json['household_name']),
+      householdVerificationStatus: _text(json['household_verification_status']),
       jobType: _text(json['job_type']),
       requiredSkill: _text(json['required_skill']),
       schedule: _text(json['schedule']),
+      scheduleType: _text(json['schedule_type'] ?? ''),
+      preferredDate: _text(json['preferred_date'] ?? ''),
+      preferredTime: _text(json['preferred_time'] ?? ''),
+      jobStartDate: _text(json['job_start_date'] ?? ''),
+      jobEndDate: _text(json['job_end_date'] ?? ''),
+      estimatedWorkingDays: _optionalInteger(json['estimated_working_days']),
       description: _text(json['description']),
       locationLabel: _text(json['location_label']),
       serviceRate: _number(json['service_rate']) ?? 0,
+      workerSlots: _integer(json['workers_needed'] ?? json['worker_slots']),
+      hiredCount: _integer(json['hired_count']),
       status: _text(json['status']),
       distanceKm: _number(json['route_distance_km']),
       latitude: _number(json['latitude']),
@@ -208,6 +237,54 @@ class WorkerJob {
       application: application is Map<String, dynamic>
           ? WorkerApplication.fromJson(application)
           : null,
+    );
+  }
+}
+
+/// One AI-ranked job from GET /matching/recommended-jobs/ -- the worker-side
+/// mirror of the household's RecommendedWorker, scored by the same engine.
+class RecommendedJob {
+  const RecommendedJob({
+    required this.job,
+    required this.aiScore,
+    required this.skillSimilarity,
+    required this.distanceKm,
+    required this.skillContribution,
+    required this.proximityContribution,
+    required this.exactSkillMatch,
+  });
+
+  final WorkerJob job;
+
+  /// Content-based match score in [0, 1], with the two weighted terms that
+  /// sum to it.
+  final double aiScore;
+  final double skillSimilarity;
+  final double? distanceKm;
+  final double skillContribution;
+  final double proximityContribution;
+  final bool exactSkillMatch;
+
+  int get matchPercent => (aiScore * 100).round();
+
+  /// Share of the score that came from skill fit, as a whole percentage.
+  /// Null when nothing could be scored, so the UI can hide the breakdown
+  /// rather than draw an empty bar.
+  int? get skillSharePercent {
+    final total = skillContribution + proximityContribution;
+    if (total <= 0) return null;
+    return ((skillContribution / total) * 100).round();
+  }
+
+  factory RecommendedJob.fromJson(Map<String, dynamic> json) {
+    return RecommendedJob(
+      job: WorkerJob.fromJson(_map(json['job'])),
+      aiScore: _number(json['ai_score']) ?? 0,
+      skillSimilarity: _number(json['skill_similarity']) ?? 0,
+      distanceKm: _number(json['distance_km']),
+      skillContribution: _number(json['skill_contribution']) ?? 0,
+      proximityContribution: _number(json['proximity_contribution']) ?? 0,
+      exactSkillMatch: json['exact_skill_match'] == true,
     );
   }
 }
@@ -238,6 +315,10 @@ class GawaGoReview {
     required this.rating,
     required this.feedback,
     required this.createdAt,
+    this.qualityOfWork,
+    this.punctuality,
+    this.communication,
+    this.professionalism,
   });
 
   final int id;
@@ -251,6 +332,21 @@ class GawaGoReview {
   final String feedback;
   final String createdAt;
 
+  /// Optional 1-5 breakdown behind the overall rating. Null when the
+  /// reviewer only gave an overall score.
+  final int? qualityOfWork;
+  final int? punctuality;
+  final int? communication;
+  final int? professionalism;
+
+  /// The supplied metrics as label/value pairs, for rendering a breakdown.
+  List<(String, int)> get metricBreakdown => [
+    if (qualityOfWork != null) ('Quality of Work', qualityOfWork!),
+    if (punctuality != null) ('Punctuality', punctuality!),
+    if (communication != null) ('Communication', communication!),
+    if (professionalism != null) ('Professionalism', professionalism!),
+  ];
+
   factory GawaGoReview.fromJson(Map<String, dynamic> json) {
     return GawaGoReview(
       id: _integer(json['id']),
@@ -260,9 +356,16 @@ class GawaGoReview {
       targetName: _text(json['target_name']),
       jobId: json['job'] == null ? null : _integer(json['job']),
       jobTitle: _text(json['job_title']),
-      rating: _number(json['rating']),
+      // `rating` is null on a metrics-only review; `overall_rating` is the
+      // backend's own fallback average of quality/punctuality/communication/
+      // professionalism for that case (reviews/serializers.py).
+      rating: _number(json['rating']) ?? _number(json['overall_rating']),
       feedback: _text(json['feedback']),
       createdAt: _text(json['created_at']),
+      qualityOfWork: _optionalInteger(json['quality_of_work']),
+      punctuality: _optionalInteger(json['punctuality']),
+      communication: _optionalInteger(json['communication']),
+      professionalism: _optionalInteger(json['professionalism']),
     );
   }
 
@@ -314,6 +417,8 @@ class WorkerApplication {
     required this.jobDescription,
     required this.householdUsername,
     required this.householdName,
+    required this.householdPhone,
+    required this.householdEmail,
     required this.locationLabel,
     required this.serviceRate,
     required this.distanceKm,
@@ -321,6 +426,8 @@ class WorkerApplication {
     required this.canRequestCompletion,
     required this.canReview,
     required this.status,
+    required this.statusStage,
+    required this.statusLabel,
     required this.note,
     required this.appliedAt,
   });
@@ -337,6 +444,11 @@ class WorkerApplication {
   final String jobDescription;
   final String householdUsername;
   final String householdName;
+
+  /// Empty until this worker is hired for the job -- the serializer only
+  /// releases the household's contact details at that point.
+  final String householdPhone;
+  final String householdEmail;
   final String locationLabel;
   final double serviceRate;
   final double? distanceKm;
@@ -344,6 +456,13 @@ class WorkerApplication {
   final bool canRequestCompletion;
   final bool canReview;
   final String status;
+
+  /// Canonical stage/label from apps/jobs/statuses.py -- combines this
+  /// application's own status with its job's status the same way for every
+  /// client, so web and mobile can never show different words for the same
+  /// record (e.g. a completed job no longer reading "Hired" here).
+  final String statusStage;
+  final String statusLabel;
   final String note;
   final String appliedAt;
 
@@ -361,6 +480,8 @@ class WorkerApplication {
       jobDescription: _text(json['job_description']),
       householdUsername: _text(json['household_username']),
       householdName: _text(json['household_name']),
+      householdPhone: _text(json['household_phone']),
+      householdEmail: _text(json['household_email']),
       locationLabel: _text(json['location_label']),
       serviceRate: _number(json['service_rate']) ?? 0,
       distanceKm: _number(json['route_distance_km']),
@@ -368,6 +489,8 @@ class WorkerApplication {
       canRequestCompletion: json['can_request_completion'] == true,
       canReview: json['can_review'] == true,
       status: _text(json['status']),
+      statusStage: _text(json['status_stage']),
+      statusLabel: _text(json['status_label']),
       note: _text(json['note']),
       appliedAt: _text(json['applied_at']),
     );
@@ -501,6 +624,175 @@ class VerificationRequest {
   }
 }
 
+/// A worker's public portfolio: the rated skills, certificates and
+/// before/after work samples that the web profile page shows under
+/// "Skills & Expertise", "Certifications" and "Work Samples".
+class WorkerPortfolio {
+  const WorkerPortfolio({
+    required this.skills,
+    required this.certifications,
+    required this.workSamples,
+  });
+
+  final List<PortfolioSkill> skills;
+  final List<WorkerCertificate> certifications;
+  final List<WorkSample> workSamples;
+
+  static const empty = WorkerPortfolio(
+    skills: [],
+    certifications: [],
+    workSamples: [],
+  );
+
+  factory WorkerPortfolio.fromJson(Map<String, dynamic> json) {
+    return WorkerPortfolio(
+      skills: _list(
+        json['skills'],
+      ).map((item) => PortfolioSkill.fromJson(_map(item))).toList(),
+      certifications: _list(
+        json['certifications'],
+      ).map((item) => WorkerCertificate.fromJson(_map(item))).toList(),
+      workSamples: _list(
+        json['portfolio_items'],
+      ).map((item) => WorkSample.fromJson(_map(item))).toList(),
+    );
+  }
+}
+
+/// One declared skill with its household-rated average. Distinct from the
+/// plain skill names on the profile: those drive matching, these carry a
+/// proficiency the worker sets and a rating only households can move.
+class PortfolioSkill {
+  const PortfolioSkill({
+    required this.id,
+    required this.skillName,
+    required this.proficiency,
+    required this.averageRating,
+    required this.ratingCount,
+  });
+
+  final int id;
+  final String skillName;
+  final String proficiency;
+  final double? averageRating;
+  final int ratingCount;
+
+  static const proficiencyOptions = ['beginner', 'intermediate', 'expert'];
+
+  String get proficiencyLabel => switch (proficiency) {
+    'expert' => 'Expert',
+    'intermediate' => 'Intermediate',
+    _ => 'Beginner',
+  };
+
+  factory PortfolioSkill.fromJson(Map<String, dynamic> json) {
+    return PortfolioSkill(
+      id: _integer(json['id']),
+      skillName: _text(json['skill_name']),
+      proficiency: _text(json['proficiency'], 'beginner'),
+      averageRating: _number(json['average_rating']),
+      ratingCount: _integer(json['rating_count']),
+    );
+  }
+}
+
+/// A certificate the worker uploaded. Admins verify these, so the worker
+/// only ever sets the descriptive fields and the file.
+class WorkerCertificate {
+  const WorkerCertificate({
+    required this.id,
+    required this.certificateType,
+    required this.certificateTypeLabel,
+    required this.certificateName,
+    required this.issuer,
+    required this.issueDate,
+    required this.expiryDate,
+    required this.fileUrl,
+    required this.isVerified,
+    required this.verificationStatus,
+  });
+
+  final int id;
+  final String certificateType;
+  final String certificateTypeLabel;
+  final String certificateName;
+  final String issuer;
+  final String issueDate;
+  final String expiryDate;
+  final String fileUrl;
+  final bool isVerified;
+  final String verificationStatus;
+
+  /// Server-side choices, paired with the labels the admin queue shows.
+  static const typeOptions = <String, String>{
+    'tesda': 'TESDA Certificate',
+    'license': 'Professional License',
+    'credential': 'Professional Credential',
+    'certification': 'Professional Certification',
+    'other': 'Other',
+  };
+
+  /// Certificates can be PDFs, which no Image widget can render.
+  bool get isImage {
+    final lower = fileUrl.toLowerCase().split('?').first;
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif');
+  }
+
+  factory WorkerCertificate.fromJson(Map<String, dynamic> json) {
+    return WorkerCertificate(
+      id: _integer(json['id']),
+      certificateType: _text(json['certificate_type'], 'certification'),
+      certificateTypeLabel: _text(json['certificate_type_label']),
+      certificateName: _text(json['certificate_name']),
+      issuer: _text(json['issuer']),
+      issueDate: _text(json['issue_date'] ?? ''),
+      expiryDate: _text(json['expiry_date'] ?? ''),
+      fileUrl: _text(json['certificate_file_url'] ?? ''),
+      isVerified: json['is_verified'] == true,
+      verificationStatus: _text(json['verification_status'], 'pending'),
+    );
+  }
+}
+
+/// A before/after pair showing off one finished job.
+class WorkSample {
+  const WorkSample({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.imageUrl,
+    required this.beforeImageUrl,
+    required this.afterImageUrl,
+  });
+
+  final int id;
+  final String title;
+  final String description;
+  final String imageUrl;
+  final String beforeImageUrl;
+  final String afterImageUrl;
+
+  /// `image` is the only required upload server-side; before/after are
+  /// optional, so fall back to it when a sample was saved without them.
+  String get beforeOrFallback =>
+      beforeImageUrl.isNotEmpty ? beforeImageUrl : imageUrl;
+
+  factory WorkSample.fromJson(Map<String, dynamic> json) {
+    return WorkSample(
+      id: _integer(json['id']),
+      title: _text(json['title']),
+      description: _text(json['description']),
+      imageUrl: _text(json['image_url'] ?? ''),
+      beforeImageUrl: _text(json['before_image_url'] ?? ''),
+      afterImageUrl: _text(json['after_image_url'] ?? ''),
+    );
+  }
+}
+
 Map<String, dynamic> _map(dynamic value) =>
     value is Map<String, dynamic> ? value : <String, dynamic>{};
 List<dynamic> _list(dynamic value) => value is List ? value : const [];
@@ -513,5 +805,7 @@ double? _number(dynamic value) => value == null
     : double.tryParse(value.toString());
 int _integer(dynamic value) =>
     value is int ? value : int.tryParse(value?.toString() ?? '') ?? 0;
+int? _optionalInteger(dynamic value) =>
+    value == null ? null : int.tryParse(value.toString());
 List<String> _strings(dynamic value) =>
     _list(value).map((item) => item.toString()).toList();

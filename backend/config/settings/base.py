@@ -2,6 +2,9 @@ import os
 import sys
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
+from django.core.exceptions import ImproperlyConfigured
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -15,9 +18,20 @@ load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR / "backend" / ".env")
 load_dotenv(BASE_DIR / "frontend" / ".env")
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "change-me-for-local-development")
+_INSECURE_DEFAULT_SECRET_KEY = "change-me-for-local-development"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _INSECURE_DEFAULT_SECRET_KEY)
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
+
+# config.settings.production already refuses to boot without a real secret
+# key, but nothing stops a deployment from pointing DJANGO_SETTINGS_MODULE at
+# this base module directly with debug off. create_jwt_token HMACs with
+# SECRET_KEY, so the well-known placeholder above would let anyone forge a
+# token for any user_id -- refuse the same way production.py does, here too.
+if not DEBUG and SECRET_KEY == _INSECURE_DEFAULT_SECRET_KEY:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be set to a real value when DJANGO_DEBUG is not True."
+    )
 ALLOWED_HOSTS = [host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()]
 
 INSTALLED_APPS = [
@@ -37,6 +51,7 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.common",
     "apps.complaints",
+    "apps.reports",
 ]
 
 REST_FRAMEWORK = {
@@ -48,6 +63,10 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "10/min",
+        "password_reset": "5/min",
+    },
 }
 
 MIDDLEWARE = [
@@ -59,6 +78,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.common.middleware.ContentSecurityPolicyMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -135,19 +155,51 @@ if USE_SQLITE_FOR_TESTS or USE_SQLITE_FOR_DEV:
         }
     }
 else:
-    configure_mysql_driver()
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.mysql",
-            "NAME": os.environ.get("DB_NAME", ""),
-            "USER": os.environ.get("DB_USER", ""),
-            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
-            "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
-            "PORT": os.environ.get("DB_PORT", "3306"),
+    DB_ENGINE = os.environ.get("DJANGO_DB_ENGINE", "mysql").strip().lower()
+    if DB_ENGINE == "postgresql":
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.environ.get("DB_NAME", ""),
+                "USER": os.environ.get("DB_USER", ""),
+                "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+                "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
+                "PORT": os.environ.get("DB_PORT", "5432"),
+            }
         }
-    }
+    elif DB_ENGINE == "mysql":
+        configure_mysql_driver()
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.mysql",
+                "NAME": os.environ.get("DB_NAME", ""),
+                "USER": os.environ.get("DB_USER", ""),
+                "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+                "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
+                "PORT": os.environ.get("DB_PORT", "3306"),
+            }
+        }
+    else:
+        raise ValueError("DJANGO_DB_ENGINE must be one of: mysql, postgresql")
 
-CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
+    if origin.strip()
+]
+
+# The mobile app sends this on every request (mobile/lib/src/core/api/gawago_api.dart)
+# to skip ngrok's interstitial warning page when testing against a tunneled backend.
+# Native Android/iOS ignore CORS entirely, but Flutter web enforces it like any browser,
+# so without this the preflight for every request fails before it reaches a view.
+CORS_ALLOW_HEADERS = list(default_headers) + ["ngrok-skip-browser-warning"]
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Manila"
@@ -166,6 +218,10 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@gawago.local")
+# Without this, Django's SMTP backend falls back to the OS socket default
+# (minutes, not seconds), so an unreachable mail host hangs whatever request
+# triggered the email -- e.g. complete_job sends one inline per hired worker.
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT_SECONDS", "10"))
 PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_MINUTES", "10"))
 OPENROUTESERVICE_API_KEY = os.environ.get("OPENROUTESERVICE_API_KEY") or os.environ.get(
     "VITE_OPENROUTESERVICE_API_KEY",

@@ -31,4 +31,27 @@ void main() {
     expect(applicationStatusLabel('completed'), 'Hired');
     expect(applicationStatusLabel('closed'), 'Closed');
   });
+
+  test('recent timestamps read as "just now"', () {
+    expect(_ago(const Duration(seconds: 5)), 'just now');
+  });
+
+  test('time-ago walks up to the largest unit that still fits', () {
+    expect(_ago(const Duration(minutes: 3)), '3 minutes ago');
+    expect(_ago(const Duration(hours: 5)), '5 hours ago');
+    expect(_ago(const Duration(days: 3)), '3 days ago');
+  });
+
+  test('singular time-ago units drop the plural s', () {
+    expect(_ago(const Duration(minutes: 1, seconds: 3)), '1 minute ago');
+    expect(_ago(const Duration(hours: 1, minutes: 2)), '1 hour ago');
+  });
+
+  test('an unparseable timestamp yields an empty time-ago label', () {
+    expect(formatTimeAgo(''), '');
+    expect(formatTimeAgo('not a date'), '');
+  });
 }
+
+String _ago(Duration elapsed) =>
+    formatTimeAgo(DateTime.now().toUtc().subtract(elapsed).toIso8601String());

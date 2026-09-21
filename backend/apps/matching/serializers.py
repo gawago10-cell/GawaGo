@@ -24,6 +24,12 @@ class MatchRequestSerializer(serializers.Serializer):
 class MatchResultSerializer(serializers.Serializer):
     worker_id = serializers.IntegerField()
     worker_username = serializers.CharField()
+    worker_name = serializers.CharField()
+    worker_location_label = serializers.CharField(allow_blank=True)
+    worker_bio = serializers.CharField(allow_blank=True)
+    worker_profile_photo_url = serializers.SerializerMethodField()
+    worker_rating_count = serializers.IntegerField()
+    worker_completed_jobs = serializers.IntegerField()
     skills = serializers.ListField(child=serializers.CharField())
     matches_skill = serializers.BooleanField()
     verification_status = serializers.CharField()
@@ -38,3 +44,18 @@ class MatchResultSerializer(serializers.Serializer):
     available_at_requested_time = serializers.BooleanField()
     rate_score = serializers.FloatField()
     worker_rate = serializers.CharField(allow_blank=True)
+    ai_score = serializers.FloatField()
+    skill_similarity = serializers.FloatField()
+    skill_contribution = serializers.FloatField()
+    proximity_contribution = serializers.FloatField()
+    exact_skill_match = serializers.BooleanField()
+
+    def get_worker_profile_photo_url(self, obj):
+        # build_match_results() stores the storage-relative URL; the mobile app
+        # resolves images against its own API host, so hand both clients an
+        # absolute one whenever the request is in context.
+        url = obj.get("worker_profile_photo_url") or ""
+        if not url:
+            return ""
+        request = self.context.get("request")
+        return request.build_absolute_uri(url) if request else url

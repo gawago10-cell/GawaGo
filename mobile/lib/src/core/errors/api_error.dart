@@ -3,6 +3,7 @@ enum ApiErrorType {
   unauthorized,
   forbidden,
   validation,
+  rateLimited,
   server,
   unknown,
 }

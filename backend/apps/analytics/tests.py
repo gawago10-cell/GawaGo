@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -6,7 +7,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.accounts.models import UserProfile
-from apps.analytics.services import build_dashboard_metrics
+from apps.analytics.services import _build_rating_distribution, build_dashboard_metrics
 from apps.common.models import VerificationRequest
 from apps.jobs.models import JobApplication, JobPosting
 
@@ -102,6 +103,25 @@ class DashboardMetricsServiceTests(TestCase):
         self.assertEqual(metrics["analytics"]["summary"]["rejectedVerifications"], 1)
         self.assertEqual(metrics["analytics"]["summary"]["averageWorkerRating"], "4.50")
 
+    def test_average_worker_rating_is_weighted_by_review_count(self):
+        # A plain Avg("average_rating") across profiles would give this
+        # worker (1 review) the same weight as self.worker (2 reviews at
+        # 4.50), producing (4.50 + 2.00) / 2 = 3.25. Weighted by rating_count
+        # instead: (4.50*2 + 2.00*1) / 3 = 3.666...
+        heavily_reviewed_low_rated = User.objects.create_user(username="low-rated-worker", password="password")
+        UserProfile.objects.create(
+            user=heavily_reviewed_low_rated,
+            role=UserProfile.ROLE_WORKER,
+            verification_status="verified",
+            average_rating=Decimal("2.00"),
+            rating_count=1,
+            location_label="Demo Street, Alitao, Tayabas City",
+        )
+
+        metrics = build_dashboard_metrics()
+
+        self.assertEqual(metrics["analytics"]["summary"]["averageWorkerRating"], "3.67")
+
     def test_dashboard_metrics_include_chart_and_table_datasets(self):
         analytics = build_dashboard_metrics()["analytics"]
 
@@ -126,7 +146,35 @@ class DashboardMetricsServiceTests(TestCase):
         self.assertEqual(current_pricing_trend["averageRate"], 800.0)
         self.assertEqual(heat_map_alitao["jobs"], 1)
         self.assertEqual(heat_map_alitao["pendingVerifications"], 1)
-        self.assertEqual(analytics["ratingDistribution"][1]["count"], 1)
+        # 4.50 rounds up (half-up, not Python's banker's rounding) into the
+        # "5 stars" bucket at index 0.
+        self.assertEqual(analytics["ratingDistribution"][0]["count"], 1)
+
+
+class RatingDistributionRoundingTests(TestCase):
+    """roadmap audit LOW #31: Python's round() rounds half-to-even, so 4.5
+    and 2.5 bucketed down and a sub-0.5 rating vanished from the chart
+    entirely."""
+
+    @staticmethod
+    def _profile(rating, count=1):
+        return SimpleNamespace(average_rating=Decimal(str(rating)), rating_count=count)
+
+    def _counts_by_stars(self, ratings):
+        distribution = _build_rating_distribution([self._profile(rating) for rating in ratings])
+        return {int(item["stars"].split()[0]): item["count"] for item in distribution}
+
+    def test_half_point_ratings_round_up_not_to_even(self):
+        counts = self._counts_by_stars([4.5, 2.5])
+        self.assertEqual(counts[5], 1)
+        self.assertEqual(counts[3], 1)
+        self.assertEqual(counts[4], 0)
+        self.assertEqual(counts[2], 0)
+
+    def test_a_sub_half_star_rating_is_clamped_into_the_1_star_bucket_instead_of_vanishing(self):
+        counts = self._counts_by_stars([0.3])
+        self.assertEqual(counts[1], 1)
+        self.assertEqual(sum(counts.values()), 1)
 
 
 class DashboardMetricsPermissionTests(TestCase):
@@ -139,7 +187,7 @@ class DashboardMetricsPermissionTests(TestCase):
     def test_dashboard_metrics_requires_authentication(self):
         response = self.client.get(self.url)
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
     def test_dashboard_metrics_rejects_non_staff_users(self):
         self.client.force_authenticate(user=self.user)

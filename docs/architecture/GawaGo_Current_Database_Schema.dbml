@@ -1,13 +1,20 @@
 // GawaGo current database schema for dbdiagram.io
 // Source of truth: Django models in backend/apps plus Django auth/admin/session tables.
-// Generated from code review on 2026-06-19.
+// Generated from code review on 2026-06-19. Last reconciled against the models
+// on 2026-09-16 (portfolio, dispute-resolution, and security tables added;
+// accounts_workerweeklyavailability removed).
 
 Project GawaGo {
-  database_type: "MySQL"
+  database_type: "PostgreSQL"
   Note: '''
-    This DBML follows the current Django backend models.
+    This DBML follows the current Django backend models: 8 Django framework
+    tables plus 20 GawaGo application tables.
+
     Analytics are computed from operational tables and do not currently have
     dedicated persisted analytics models.
+
+    Deployment runs on PostgreSQL (DJANGO_DB_ENGINE=postgresql); MySQL remains
+    supported by the settings module, and the test suite forces SQLite.
   '''
 }
 
@@ -103,12 +110,20 @@ Table accounts_userprofile {
   hourly_rate decimal(10,2)
   daily_rate decimal(10,2)
   verification_status varchar(20) [not null, note: "pending, approved, rejected"]
+  primary_id_type varchar(50) [not null, note: "national_id, passport, drivers_license, voter_id, tin, umid, postal_id, other"]
   location_label varchar(255) [not null]
   latitude decimal(10,7)
   longitude decimal(10,7)
   profile_photo varchar(100)
   average_rating decimal(3,2)
   rating_count int [not null]
+  reputation_tier varchar(20) [not null, note: "new, established, trusted, elite -- earned standing from review history."]
+  rating_trend varchar(20) [not null, note: "improving, declining, neutral -- recent ratings vs older ones."]
+  credentials_updated_at datetime [note: "Bumped on password change so every JWT issued earlier (which carries iat) is rejected at once."]
+  is_blocked boolean [not null, note: "Admin suspension. Deliberately NOT auth_user.is_active, which login would silently reactivate."]
+  blocked_at datetime
+  blocked_reason text [not null]
+  blocked_until datetime [note: "Null while blocked means permanent; a future datetime is a timed suspension that lifts itself."]
 }
 
 Table accounts_workeravailability {
@@ -124,20 +139,8 @@ Table accounts_workeravailability {
   }
 }
 
-Table accounts_workerweeklyavailability {
-  id bigint [pk, increment]
-  worker_id int [not null, ref: > auth_user.id]
-  weekday smallint [not null, note: "0=Monday through 6=Sunday."]
-  start_time time [not null]
-  end_time time [not null]
-  is_available boolean [not null]
-
-  indexes {
-    (worker_id, weekday, start_time, end_time) [unique]
-  }
-
-  Note: "Django also enforces weekday between 0 and 6 with a check constraint."
-}
+// accounts_workerweeklyavailability was dropped in accounts migration 0009.
+// Worker availability is date-specific only (accounts_workeravailability).
 
 Table accounts_passwordresetrequest {
   id bigint [pk, increment]
@@ -164,6 +167,133 @@ Table accounts_signupverificationrequest {
   verified_at datetime
 }
 
+// --- Identity documents -------------------------------------------------
+// Separate from common_verificationrequest, which is the flow the shipped
+// UI actually uses. This multi-ID-type table is backend-only for now.
+
+Table accounts_verificationdocument {
+  id bigint [pk, increment]
+  user_id int [not null, ref: > auth_user.id]
+  id_type varchar(50) [not null, note: "national_id, passport, drivers_license, voter_id, tin, umid, postal_id, other"]
+  id_number varchar(255) [not null]
+  document_file varchar(100) [not null]
+  is_primary boolean [not null]
+  verification_status varchar(20) [not null, note: "pending, approved, rejected"]
+  verified_by_id int [ref: > auth_user.id, note: "Admin who reviewed it; SET_NULL so review history survives account deletion."]
+  verification_notes text [not null]
+  verified_at datetime
+  created_at datetime [not null]
+  updated_at datetime [not null]
+}
+
+// --- Worker portfolio ---------------------------------------------------
+
+Table accounts_workerportfolio {
+  id bigint [pk, increment]
+  worker_id int [not null, unique, ref: - auth_user.id]
+  bio text [not null]
+  years_experience int [not null]
+  created_at datetime [not null]
+  updated_at datetime [not null]
+}
+
+Table accounts_workerskill {
+  id bigint [pk, increment]
+  worker_id int [not null, ref: > auth_user.id]
+  skill_name varchar(120) [not null]
+  proficiency varchar(20) [not null, note: "beginner, intermediate, expert"]
+  average_rating decimal(3,2) [note: "Rolling average of accounts_skillrating rows for this skill."]
+  rating_count int [not null]
+  created_at datetime [not null]
+  updated_at datetime [not null]
+
+  indexes {
+    (worker_id, skill_name) [unique]
+  }
+}
+
+Table accounts_workercertification {
+  id bigint [pk, increment]
+  worker_id int [not null, ref: > auth_user.id]
+  certificate_type varchar(50) [not null, note: "tesda, license, credential, certification, other"]
+  certificate_name varchar(255) [not null]
+  issuer varchar(255) [not null]
+  issue_date date
+  expiry_date date
+  certificate_file varchar(100)
+  is_verified boolean [not null, note: "Set when verification_status becomes approved."]
+  verification_status varchar(20) [not null, note: "pending, approved, rejected"]
+  verified_by_id int [ref: > auth_user.id]
+  verification_notes text [not null]
+  verified_at datetime
+  created_at datetime [not null]
+  updated_at datetime [not null]
+}
+
+Table accounts_workerportfolioitem {
+  id bigint [pk, increment]
+  worker_id int [not null, ref: > auth_user.id]
+  title varchar(255) [not null]
+  description text [not null]
+  image varchar(100) [not null]
+  before_image varchar(100)
+  after_image varchar(100)
+  created_at datetime [not null]
+}
+
+Table accounts_skillrating {
+  id bigint [pk, increment]
+  job_id bigint [not null, ref: > jobs_jobposting.id]
+  household_id int [not null, ref: > auth_user.id, note: "Rater; must own the job."]
+  worker_id int [not null, ref: > auth_user.id, note: "Rated worker; derived from the skill, never client-supplied."]
+  skill_id bigint [not null, ref: > accounts_workerskill.id]
+  rating decimal(2,1) [not null, note: "1-5, enforced by the serializer."]
+  feedback text [not null]
+  created_at datetime [not null]
+
+  indexes {
+    (job_id, household_id, worker_id, skill_id) [unique]
+  }
+}
+
+// --- Dispute resolution -------------------------------------------------
+
+Table complaints_complaint {
+  id bigint [pk, increment]
+  complainant_id int [not null, ref: > auth_user.id, note: "Who filed the report."]
+  respondent_id int [ref: > auth_user.id, note: "Who it is about; derived server-side from the job, never client-supplied."]
+  job_id bigint [ref: > jobs_jobposting.id]
+  complaint_type varchar(50) [not null, note: "payment_issue, quality_of_work, no_show, safety_concern, behavior, other"]
+  description text [not null]
+  status varchar(20) [not null, note: "submitted, under_review, resolved, closed"]
+  resolution text
+  admin_notes text
+  created_at datetime [not null]
+  updated_at datetime [not null]
+
+  Note: "complaint_type is metadata for the reviewing admin -- there is no per-type automation."
+}
+
+Table complaints_complaintevidence {
+  id bigint [pk, increment]
+  complaint_id bigint [not null, ref: > complaints_complaint.id]
+  image varchar(100) [not null]
+  uploaded_at datetime [not null]
+  order int [not null]
+
+  Note: "Max 5 photos per report, extension-validated like job images."
+}
+
+// --- Security -----------------------------------------------------------
+
+Table common_revokedtoken {
+  id bigint [pk, increment]
+  jti varchar(64) [not null, unique, note: "JWT id blacklisted before its natural expiry (e.g. on logout)."]
+  user_id int [not null, ref: > auth_user.id]
+  expires_at datetime [not null, note: "Matches the token's own exp; stale rows are cleaned opportunistically."]
+  revoked_at datetime [not null]
+}
+
 Table jobs_jobposting {
   id bigint [pk, increment]
   household_id int [not null, ref: > auth_user.id, note: "The user who posted the household job."]
@@ -178,9 +308,14 @@ Table jobs_jobposting {
   location_label varchar(255) [not null]
   latitude decimal(10,7) [not null]
   longitude decimal(10,7) [not null]
-  service_rate decimal(10,2) [not null]
+  service_rate decimal(10,2) [not null, note: "Must be >= 0."]
   worker_slots int [not null]
   status varchar(20) [not null, note: "open, assigned, completion_requested, completed, cancelled"]
+  job_start_date date
+  job_end_date date [note: "Validated to fall after job_start_date."]
+  estimated_working_days int [note: "Must be >= 1 when supplied."]
+  max_distance_km double [not null, note: "Hard distance limit for matching; must be >= 0.1."]
+  geographic_boundary varchar(20) [not null, note: "Named radius preset, e.g. 1km."]
   created_at datetime [not null]
   completed_at datetime
 }
@@ -215,7 +350,11 @@ Table reviews_review {
   target_role varchar(20) [not null, note: "household, worker"]
   job_id bigint [ref: > jobs_jobposting.id]
   job_title varchar(255) [not null]
-  rating decimal(2,1)
+  rating decimal(2,1) [note: "Overall score, 1-5."]
+  quality_of_work int [note: "1-5. The four metric columns are optional; overall_rating averages whichever are supplied."]
+  punctuality int [note: "1-5."]
+  communication int [note: "1-5."]
+  professionalism int [note: "1-5."]
   feedback text [not null]
   created_at datetime [not null]
 
@@ -293,15 +432,23 @@ TableGroup "Django platform tables" {
 TableGroup "GawaGo business tables" {
   accounts_userprofile
   accounts_workeravailability
-  accounts_workerweeklyavailability
   accounts_passwordresetrequest
   accounts_signupverificationrequest
+  accounts_verificationdocument
+  accounts_workerportfolio
+  accounts_workerskill
+  accounts_workercertification
+  accounts_workerportfolioitem
+  accounts_skillrating
   jobs_jobposting
   jobs_jobimage
   jobs_jobapplication
   reviews_review
   notifications_notification
   common_verificationrequest
+  common_revokedtoken
+  complaints_complaint
+  complaints_complaintevidence
   matching_routedistancecache
 }
 

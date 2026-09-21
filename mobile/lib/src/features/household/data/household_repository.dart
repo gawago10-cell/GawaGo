@@ -69,9 +69,16 @@ class HouseholdRepository {
     await GawaGoApi.patch('/jobs/$jobId/', body: {'status': status});
   }
 
-  Future<List<RecommendedWorker>> getRecommendedWorkers(int jobId) async {
+  /// Smart Matching's rule order is the default; `rank: 'ai'` opts into the
+  /// content-based re-ranking instead. Kept as a parameter so neither
+  /// ranking replaces the other.
+  Future<List<RecommendedWorker>> getRecommendedWorkers(
+    int jobId, {
+    String? rank,
+  }) async {
+    final rankParam = rank == null ? '' : '&rank=$rank';
     final response = await GawaGoApi.get(
-      '/matching/recommended-workers/?job_id=$jobId',
+      '/matching/recommended-workers/?job_id=$jobId$rankParam',
     );
     final results = response['results'] is List
         ? response['results'] as List
@@ -79,11 +86,17 @@ class HouseholdRepository {
     return results.map((item) => RecommendedWorker.fromJson(item)).toList();
   }
 
+  /// The four detail scores are optional: null means "not rated" and is
+  /// simply left out of the request rather than sent as a zero.
   Future<void> reviewWorker(
     HouseholdJob job,
     HouseholdApplication application, {
     required double rating,
     required String feedback,
+    int? qualityOfWork,
+    int? punctuality,
+    int? communication,
+    int? professionalism,
   }) async {
     await GawaGoApi.post(
       '/reviews/',
@@ -93,8 +106,33 @@ class HouseholdRepository {
         'job_title': job.title,
         'rating': rating,
         'feedback': feedback,
+        'quality_of_work': ?qualityOfWork,
+        'punctuality': ?punctuality,
+        'communication': ?communication,
+        'professionalism': ?professionalism,
       },
     );
+  }
+
+  /// Another worker's public portfolio -- the rated skills, certificates and
+  /// work samples a household reads before hiring. Distinct from the worker's
+  /// own `/accounts/me/portfolio/`, which only serves the signed-in user.
+  Future<WorkerPortfolio> getWorkerPortfolio(int workerUserId) async {
+    return WorkerPortfolio.fromJson(
+      await GawaGoApi.get('/accounts/profiles/$workerUserId/portfolio/'),
+    );
+  }
+
+  /// That worker's completed jobs, newest first.
+  Future<List<WorkerJobHistoryEntry>> getWorkerJobHistory(
+    int workerUserId,
+  ) async {
+    final uri = Uri(
+      path: '/jobs/',
+      queryParameters: {'worker': '$workerUserId', 'status': 'completed'},
+    );
+    final data = await GawaGoApi.getList(uri.toString());
+    return data.map((item) => WorkerJobHistoryEntry.fromJson(item)).toList();
   }
 
   Future<List<GawaGoReview>> getReceivedReviews() async {

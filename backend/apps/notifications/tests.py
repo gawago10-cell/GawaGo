@@ -33,7 +33,7 @@ class NotificationPermissionTests(TestCase):
             {"username": self.recipient.username},
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
 
     def test_authenticated_user_only_lists_own_notifications(self):
         self.client.force_authenticate(user=self.recipient)
@@ -166,3 +166,24 @@ class NotificationPermissionTests(TestCase):
         self.assertEqual(notification_payload["actor_username"], self.other_user.username)
         self.assertEqual(notification_payload["action_url"], "/worker/jobs/11")
         self.assertTrue(notification_payload["requires_action"])
+
+
+class EmailTimeoutSettingTests(TestCase):
+    """A missing EMAIL_TIMEOUT lets Django's SMTP backend fall back to the OS
+    socket default (minutes), so an unreachable mail host hangs whatever
+    request triggered the email -- e.g. complete_job sends one inline per
+    hired worker. Django's SMTP backend reads settings.EMAIL_TIMEOUT
+    directly, so asserting the setting is what actually wires the fix in."""
+
+    def test_email_timeout_is_configured(self):
+        from django.conf import settings
+
+        self.assertIsNotNone(settings.EMAIL_TIMEOUT)
+        self.assertLessEqual(settings.EMAIL_TIMEOUT, 30)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend", EMAIL_TIMEOUT=10)
+    def test_smtp_backend_picks_up_the_configured_timeout(self):
+        from django.core.mail import get_connection
+
+        connection = get_connection()
+        self.assertEqual(connection.timeout, 10)

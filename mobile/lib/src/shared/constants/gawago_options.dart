@@ -1,17 +1,7 @@
 const List<String> gawagoSkills = [
   'House Cleaning',
-  'Cooking',
   'Laundry',
-  'Childcare',
-  'Elder Care',
-  'Gardening',
-  'Electrical Work',
-  'Plumbing',
-  'Carpentry',
-  'Painting',
-  'Aircon Repair/Cleaning',
-  'Welding',
-  'Driving',
+  'Cooking',
   'Other',
 ];
 

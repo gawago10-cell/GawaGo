@@ -3,6 +3,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.common.fields import RoundedCoordinateField
@@ -99,6 +101,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
     verification_request = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
     availability_windows = serializers.SerializerMethodField()
+    date_joined = serializers.DateTimeField(source="user.date_joined", read_only=True)
+    # Account-suspension state -- admin-only (see PublicUserProfileSerializer,
+    # which strips these), surfaced for the User Management screen.
+    is_blocked = serializers.SerializerMethodField()
+    blocked_until = serializers.DateTimeField(read_only=True)
+    blocked_reason = serializers.CharField(read_only=True)
+    # Lets User Management exclude admin/superadmin accounts from the
+    # household/worker directory -- an admin's own UserProfile.role is
+    # usually just "worker" by default, so role alone can't tell them apart.
+    is_staff = serializers.BooleanField(source="user.is_staff", read_only=True)
 
     class Meta:
         model = UserProfile
@@ -129,7 +141,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "rating_trend",
             "verification_request",
             "availability_windows",
+            "date_joined",
+            "is_blocked",
+            "blocked_until",
+            "blocked_reason",
+            "is_staff",
         ]
+
+    def get_is_blocked(self, obj):
+        # refresh_block_status() lazily lifts an expired timed suspension, so
+        # this reads the account's real current state rather than a possibly
+        # stale flag.
+        return obj.refresh_block_status()
         read_only_fields = ["display_rating"]
 
     def get_full_name(self, obj):
@@ -187,6 +210,10 @@ class PublicUserProfileSerializer(UserProfileSerializer):
                 "latitude",
                 "longitude",
                 "availability_windows",
+                "is_blocked",
+                "blocked_until",
+                "blocked_reason",
+                "is_staff",
             }
         ]
 
@@ -211,6 +238,13 @@ class RegisterSerializer(serializers.Serializer):
     location_label = serializers.CharField(required=False, allow_blank=True)
     latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
     longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
 
 
     def validate(self, attrs):
@@ -304,16 +338,29 @@ class WorkerSkillSerializer(serializers.ModelSerializer):
 class WorkerCertificationSerializer(serializers.ModelSerializer):
     certificate_file_url = serializers.SerializerMethodField()
     verified_by_username = serializers.CharField(source="verified_by.username", read_only=True, allow_null=True)
+    # The admin review queue lists certificates across all workers, so it
+    # needs to say whose each one is -- and enough about them (name,
+    # location, tenure) to render the review card without a second request.
+    worker_username = serializers.CharField(source="worker.username", read_only=True)
+    worker_name = serializers.SerializerMethodField()
+    worker_location_label = serializers.CharField(source="worker.profile.location_label", read_only=True, default="")
+    worker_member_since = serializers.DateTimeField(source="worker.date_joined", read_only=True)
+    certificate_type_label = serializers.CharField(source="get_certificate_type_display", read_only=True)
 
     class Meta:
         model = WorkerCertification
         fields = [
-            "id", "certificate_type", "certificate_name", "issuer", "issue_date", "expiry_date",
+            "id", "worker_username", "worker_name", "worker_location_label", "worker_member_since",
+            "certificate_type", "certificate_type_label", "certificate_name", "issuer", "issue_date", "expiry_date",
             "certificate_file", "certificate_file_url", "is_verified", "verification_status",
             "verified_by", "verified_by_username", "verification_notes", "verified_at", "created_at"
         ]
-        read_only_fields = ["id", "is_verified", "verification_status", "verified_by", "verified_by_username",
-                           "verification_notes", "verified_at", "created_at"]
+        read_only_fields = ["id", "worker_username", "worker_name", "worker_location_label", "worker_member_since",
+                           "certificate_type_label", "is_verified", "verification_status", "verified_by",
+                           "verified_by_username", "verification_notes", "verified_at", "created_at"]
+
+    def get_worker_name(self, obj):
+        return obj.worker.get_full_name().strip() or obj.worker.username
 
     def get_certificate_file_url(self, obj):
         if not obj.certificate_file:
@@ -357,10 +404,27 @@ class WorkerPortfolioItemSerializer(serializers.ModelSerializer):
 
 
 class SkillRatingSerializer(serializers.ModelSerializer):
+    skill = serializers.PrimaryKeyRelatedField(queryset=WorkerSkill.objects.all(), required=False)
+    # Ratings feed WorkerSkill.average_rating, so an out-of-range value would
+    # skew a worker's displayed score. Matches ReviewCreateSerializer's 1-5.
+    rating = serializers.DecimalField(max_digits=2, decimal_places=1, min_value=1, max_value=5)
+    # Lets a household rate a skill the worker performed but never added to
+    # their portfolio (e.g. hired as a plumber, also fixed a light fixture).
+    # The view resolves this into a real WorkerSkill, creating one if needed.
+    skill_name = serializers.CharField(write_only=True, required=False, max_length=120)
+
     class Meta:
         model = SkillRating
-        fields = ["id", "job", "skill", "rating", "feedback", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = ["id", "job", "worker", "skill", "skill_name", "rating", "feedback", "created_at"]
+        # job comes from the URL and worker from the rated skill, so neither
+        # is accepted from the request body -- a household must not be able
+        # to attribute a rating to an unrelated job or worker.
+        read_only_fields = ["id", "job", "worker", "created_at"]
+
+    def validate(self, attrs):
+        if not attrs.get("skill") and not (attrs.get("skill_name") or "").strip():
+            raise serializers.ValidationError({"skill": "Provide an existing skill id or a skill_name."})
+        return attrs
 
 
 class VerificationDocumentSerializer(serializers.ModelSerializer):
@@ -382,16 +446,30 @@ class VerificationDocumentSerializer(serializers.ModelSerializer):
         if value.size > self.MAX_DOCUMENT_BYTES:
             raise serializers.ValidationError("Keep the document under 10 MB.")
         return value
+    # The admin review queue lists documents across all users -- and enough
+    # about each one (name, location, tenure) to render the review card
+    # without a second request.
+    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_name = serializers.SerializerMethodField()
+    user_location_label = serializers.CharField(source="user.profile.location_label", read_only=True, default="")
+    user_member_since = serializers.DateTimeField(source="user.date_joined", read_only=True)
+    id_type_label = serializers.CharField(source="get_id_type_display", read_only=True)
 
     class Meta:
         model = VerificationDocument
         fields = [
-            "id", "user", "id_type", "id_number", "document_file", "is_primary",
+            "id", "user", "user_username", "user_name", "user_location_label", "user_member_since",
+            "id_type", "id_type_label", "id_number",
+            "document_file", "is_primary",
             "verification_status", "verified_by", "verified_by_username",
             "verification_notes", "verified_at", "created_at", "updated_at"
         ]
-        read_only_fields = ["id", "user", "verification_status", "verified_by", "verified_by_username",
-                           "verification_notes", "verified_at", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "user_username", "user_name", "user_location_label",
+                           "user_member_since", "id_type_label", "verification_status", "verified_by",
+                           "verified_by_username", "verification_notes", "verified_at", "created_at", "updated_at"]
+
+    def get_user_name(self, obj):
+        return obj.user.get_full_name().strip() or obj.user.username
 
 
 class WorkerPortfolioSerializer(serializers.ModelSerializer):

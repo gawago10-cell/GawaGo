@@ -1,20 +1,22 @@
 """
-AI-based Job Recommendation Engine (content-based filtering).
+AI-based recommendation engine (content-based filtering), used in both
+directions:
 
-Recommends OPEN job postings to a WORKER by comparing the worker's
-skill profile against each job's required skill using TF-IDF +
-cosine similarity, then blending that with a proximity score computed
+  * get_recommended_jobs()    -- ranks OPEN jobs for a WORKER (pull).
+  * get_recommended_workers() -- ranks WORKERS for a household's JOB (push).
+
+Both compare a worker's skill profile against a job's required skill using
+TF-IDF + cosine similarity, then blend that with a proximity score computed
 from real road distance (reusing the existing Smart Matching distance
-pipeline in apps.matching.services). See get_recommended_jobs() below
-for the full algorithm writeup.
+pipeline in apps.matching.services). Because the score is symmetric in
+(job, worker), both directions share the same weights and the same
+explainability breakdown via _build_score_result().
 """
 
 from django.contrib.auth.models import User
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 from apps.jobs.models import JobPosting
-from apps.matching.services import get_road_route_for_match, normalize_skill_label
+from apps.matching.services import DISTANCE_UNLIMITED, get_road_route_for_match, normalize_skill_label
 
 # Relative importance of skill fit vs. proximity in the final score.
 # A skill mismatch makes a job irrelevant regardless of distance, so
@@ -22,7 +24,19 @@ from apps.matching.services import get_road_route_for_match, normalize_skill_lab
 SKILL_WEIGHT = 0.7
 PROXIMITY_WEIGHT = 0.3
 
-DISTANCE_UNLIMITED = "unlimited"
+
+def _tfidf():
+    """Import scikit-learn on first use rather than at module import.
+
+    apps.MatchingConfig.ready() pulls this module in for the signal hooks, so
+    a module-level sklearn import made *every* management command -- runserver
+    included -- sit through a ~20s import before doing anything. Only a call
+    that actually scores something should pay that.
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    return TfidfVectorizer, cosine_similarity
 
 
 def _worker_skill_document(profile):
@@ -31,7 +45,7 @@ def _worker_skill_document(profile):
     Skills are normalized with the same normalize_skill_label() used by
     the existing rule-based Smart Matching feature, so both algorithms
     agree on what counts as "the same skill" (aliases, casing, etc).
-    A worker has at most 4 skills, so this document is always short.
+    A worker has at most 3 skills, so this document is always short.
     """
     skills = profile.skills or []
     return " ".join(normalize_skill_label(skill) for skill in skills)
@@ -99,21 +113,36 @@ def score_job_for_worker(job, profile):
     if profile is None or not profile.has_location:
         return None
 
-    worker_document = _worker_skill_document(profile)
-    if not worker_document.strip():
-        return None
-
-    job_document = _job_skill_document(job)
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform([worker_document, job_document])
-    skill_similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-
     route = get_road_route_for_match(job, profile)
     distance_km = route["distance_km"]
     if not _within_radius(job, distance_km):
         return None
 
-    return _build_score_result(job, profile, float(skill_similarity), distance_km)
+    return score_pair_with_distance(job, profile, distance_km)
+
+
+def score_pair_with_distance(job, profile, distance_km):
+    """The scoring half of score_job_for_worker(), for callers that already
+    resolved the road distance themselves.
+
+    Serializers resolve a route once per row (and may be restricted to the
+    cache-only lookup on collection endpoints); routing them back through
+    score_job_for_worker() would silently re-resolve it live, one outbound
+    request per row.
+    """
+    if profile is None:
+        return None
+
+    worker_document = _worker_skill_document(profile)
+    if not worker_document.strip():
+        return None
+
+    TfidfVectorizer, cosine_similarity = _tfidf()
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform([worker_document, _job_skill_document(job)])
+    skill_similarity = float(cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0])
+
+    return _build_score_result(job, profile, skill_similarity, distance_km)
 
 
 def _build_score_result(job, profile, skill_similarity, distance_km):
@@ -195,6 +224,7 @@ def get_recommended_jobs(worker: User, limit: int = 20):
 
     job_documents = [_job_skill_document(job) for job in open_jobs]
 
+    TfidfVectorizer, cosine_similarity = _tfidf()
     vectorizer = TfidfVectorizer()
     tfidf_matrix = vectorizer.fit_transform([worker_document] + job_documents)
     worker_vector = tfidf_matrix[0:1]
@@ -211,6 +241,73 @@ def get_recommended_jobs(worker: User, limit: int = 20):
 
         results.append({
             "job": job,
+            **_build_score_result(job, profile, float(skill_similarity), distance_km),
+        })
+
+    results.sort(key=lambda r: r["ai_score"], reverse=True)
+    return results[:limit]
+
+
+def get_recommended_workers(job, worker_profiles, limit: int = 20):
+    """Return workers ranked for `job` by the same content-based score
+    get_recommended_jobs() applies in the opposite direction.
+
+    This is the household-facing half of AI matching: after a household
+    posts a job, it sees candidate workers ranked by TF-IDF skill
+    similarity blended with road-route proximity, each carrying the same
+    explainability breakdown a worker sees on a recommended job.
+
+    The single TfidfVectorizer is fit across the job's document plus every
+    candidate worker's document, so IDF weighting reflects how common a
+    skill is across the current candidate pool -- a worker whose skill is
+    rare among candidates scores higher on it than one whose skill
+    everybody lists.
+
+    Workers with no location or no listed skills cannot be scored and are
+    dropped, as are workers outside the job's configured search radius
+    (the same hard filter, not a ranking penalty, that _within_radius
+    applies on the pull side).
+
+    Args:
+        job: the JobPosting to rank workers for.
+        worker_profiles: candidate UserProfile instances (the caller owns
+            the queryset so it can apply its own role/staff filtering).
+        limit: max number of recommendations to return.
+
+    Returns:
+        list[dict]: {"profile", "ai_score", "skill_similarity",
+        "distance_km", "skill_contribution", "proximity_contribution",
+        "exact_skill_match"} sorted by ai_score descending.
+    """
+    job_document = _job_skill_document(job)
+    if not job_document.strip():
+        return []
+
+    candidates = [
+        profile
+        for profile in worker_profiles
+        if profile.has_location and _worker_skill_document(profile).strip()
+    ]
+    if not candidates:
+        return []
+
+    worker_documents = [_worker_skill_document(profile) for profile in candidates]
+
+    TfidfVectorizer, cosine_similarity = _tfidf()
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform([job_document] + worker_documents)
+    similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0]
+
+    results = []
+    for profile, skill_similarity in zip(candidates, similarities):
+        route = get_road_route_for_match(job, profile)
+        distance_km = route["distance_km"]
+
+        if not _within_radius(job, distance_km):
+            continue
+
+        results.append({
+            "profile": profile,
             **_build_score_result(job, profile, float(skill_similarity), distance_km),
         })
 

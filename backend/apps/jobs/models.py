@@ -101,3 +101,44 @@ class JobApplication(models.Model):
 
     def __str__(self) -> str:
         return f"{self.worker.username} -> {self.job.title}"
+
+
+class JobStatusEvent(models.Model):
+    ENTITY_JOB = "job"
+    ENTITY_APPLICATION = "application"
+    ENTITY_CHOICES = [
+        (ENTITY_JOB, "Job"),
+        (ENTITY_APPLICATION, "Application"),
+    ]
+
+    job = models.ForeignKey(JobPosting, on_delete=models.CASCADE, related_name="status_events")
+    application = models.ForeignKey(
+        JobApplication,
+        on_delete=models.CASCADE,
+        related_name="status_events",
+        null=True,
+        blank=True,
+    )
+    entity = models.CharField(max_length=20, choices=ENTITY_CHOICES)
+    from_status = models.CharField(max_length=20, blank=True, default="")
+    to_status = models.CharField(max_length=20)
+    # Null when a transition is not attributable to a signed-in user, such as
+    # the scheduled task that closes out unreviewed jobs.
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="job_status_events",
+        null=True,
+        blank=True,
+    )
+    note = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(fields=["job", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.entity} {self.from_status or '-'} -> {self.to_status}"

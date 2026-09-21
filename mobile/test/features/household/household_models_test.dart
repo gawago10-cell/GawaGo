@@ -100,4 +100,104 @@ void main() {
     expect(worker.workerLongitude, 121.58);
     expect(worker.routePoints.length, 2);
   });
+
+  test('applicant cards carry the ranking facts the list sorts on', () {
+    final application = HouseholdApplication.fromJson({
+      'id': 11,
+      'worker': 7,
+      'worker_username': 'worker1',
+      'worker_name': 'Maria Santos',
+      'worker_rating_count': 4,
+      'worker_completed_jobs': 6,
+      'worker_match_score': 0.82,
+      'applied_at': '2026-09-15T01:19:00+08:00',
+      'status': 'pending',
+    });
+
+    expect(application.workerId, 7);
+    expect(application.workerRatingCount, 4);
+    expect(application.workerCompletedJobs, 6);
+    expect(application.workerMatchScore, 0.82);
+    expect(application.appliedAt, '2026-09-15T01:19:00+08:00');
+  });
+
+  test('an unscored applicant reports a null match score', () {
+    final application = HouseholdApplication.fromJson({
+      'id': 12,
+      'worker': 8,
+      'worker_username': 'worker2',
+      'status': 'pending',
+    });
+
+    expect(application.workerMatchScore, isNull);
+    expect(application.workerCompletedJobs, 0);
+  });
+
+  test('recommended workers parse the AI score and its breakdown', () {
+    final worker = RecommendedWorker.fromJson({
+      'worker_id': 7,
+      'worker_username': 'worker1',
+      'worker_name': 'Maria Santos',
+      'worker_location_label': 'Poblacion',
+      'worker_bio': 'Reliable cleaner.',
+      'worker_profile_photo_url': 'http://example.test/photo.png',
+      'worker_rating_count': 3,
+      'worker_completed_jobs': 5,
+      'ai_score': 0.76,
+      'skill_contribution': 0.6,
+      'proximity_contribution': 0.2,
+      'exact_skill_match': true,
+    });
+
+    expect(worker.displayName, 'Maria Santos');
+    expect(worker.aiScore, 0.76);
+    expect(worker.completedJobs, 5);
+    expect(worker.exactSkillMatch, isTrue);
+    // 0.6 of a 0.8 total, rounded to a whole percent.
+    expect(worker.skillSharePercent, 75);
+  });
+
+  test('displayName falls back to the username and an unexplained '
+      'match reports no skill share', () {
+    final worker = RecommendedWorker.fromJson({
+      'worker_id': 9,
+      'worker_username': 'worker9',
+      'worker_name': '',
+    });
+
+    expect(worker.displayName, 'worker9');
+    expect(worker.skillSharePercent, isNull);
+  });
+
+  test('job history prefers the confirmed completion date', () {
+    final entry = WorkerJobHistoryEntry.fromJson({
+      'id': 7,
+      'title': 'Kitchen Deep Clean',
+      'job_type': 'House Cleaning',
+      'household_name': 'household1',
+      'completed_at': '2026-09-14T14:19:51+08:00',
+      'job_start_date': '2026-09-20',
+      'job_end_date': '2026-09-21',
+    });
+
+    expect(entry.title, 'Kitchen Deep Clean');
+    expect(entry.householdName, 'household1');
+    expect(entry.periodLabel, 'Completed 2026-09-14');
+  });
+
+  test('job history falls back to the scheduled period, then to nothing', () {
+    final scheduled = WorkerJobHistoryEntry.fromJson({
+      'id': 8,
+      'title': 'Garden Maintenance',
+      'job_start_date': '2026-08-01',
+      'job_end_date': '2026-08-03',
+    });
+    expect(scheduled.periodLabel, '2026-08-01 to 2026-08-03');
+
+    final undated = WorkerJobHistoryEntry.fromJson({
+      'id': 9,
+      'title': 'Grocery Errand Run',
+    });
+    expect(undated.periodLabel, '');
+  });
 }

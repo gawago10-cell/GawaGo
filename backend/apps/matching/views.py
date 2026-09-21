@@ -5,13 +5,21 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import UserProfile
 from apps.jobs.models import JobPosting
-from apps.matching.recommendations import get_recommended_jobs
+from apps.matching.recommendations import get_recommended_jobs, get_recommended_workers
 from apps.matching.serializers import (
     MatchRequestSerializer,
     MatchResultSerializer,
     RecommendedJobSerializer,
 )
 from apps.matching.services import build_match_results
+
+# Ranking modes for RecommendedWorkersView. The two are complementary, not
+# alternatives to each other: "smart" is the deterministic rule ordering
+# (skill, then verification, then distance, then rating/rate) that households
+# browse a job's candidates with, while "ai" is the content-based score used
+# to surface strong matches right after a job is posted.
+RANK_SMART = "smart"
+RANK_AI = "ai"
 
 
 class RecommendedJobsView(APIView):
@@ -40,19 +48,35 @@ class RecommendedJobsView(APIView):
 
 
 class RecommendedWorkersView(APIView):
+    """GET|POST /api/matching/recommended-workers/?job_id=N[&rank=ai]
+
+    Returns candidate workers for a household's job. Every result carries
+    both the rule-based Smart Matching signals (verification, rating, rate,
+    road distance) and the content-based AI score with the same
+    explainability breakdown the worker-facing recommendations expose.
+
+    `rank` selects the ordering only: the default "smart" preserves the
+    documented Smart Matching priority order, and "ai" re-ranks by ai_score
+    for the post-a-job recommendation screen.
+    """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         serializer = MatchRequestSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
-        return self._build_response(request, serializer.validated_data["job_id"])
+        return self._build_response(
+            request, serializer.validated_data["job_id"], request.query_params.get("rank")
+        )
 
     def post(self, request):
         serializer = MatchRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        return self._build_response(request, serializer.validated_data["job_id"])
+        return self._build_response(
+            request, serializer.validated_data["job_id"], request.data.get("rank")
+        )
 
-    def _build_response(self, request, job_id):
+    def _build_response(self, request, job_id, rank):
         try:
             job = JobPosting.objects.get(pk=job_id)
         except JobPosting.DoesNotExist:
@@ -69,17 +93,65 @@ class RecommendedWorkersView(APIView):
                 {"detail": "Only the job owner or staff can view recommended workers for this job."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        workers = (
+        workers = list(
             UserProfile.objects.select_related("user")
             .prefetch_related("user__availability_windows")
             .filter(role=UserProfile.ROLE_WORKER, user__is_staff=False)
         )
-        results = build_match_results(job, list(workers))
+        match_results = build_match_results(job, workers)
+        if rank == RANK_AI:
+            # Only Smart Matching's "AI Matched Workers" view reads the score
+            # breakdown, so the (expensive, content-based) scoring pass only
+            # runs when that view actually asked for it.
+            results = _merge_ai_scores(job, workers, match_results)
+            results.sort(key=lambda result: result["ai_score"], reverse=True)
+        else:
+            results = _default_ai_fields(match_results)
         return Response(
             {
                 "job_id": job.id,
                 "job_title": job.title,
                 "required_skill": job.required_skill,
-                "results": MatchResultSerializer(results, many=True).data,
+                "rank": rank if rank == RANK_AI else RANK_SMART,
+                "results": MatchResultSerializer(results, many=True, context={"request": request}).data,
             }
         )
+
+
+def _default_ai_fields(match_results):
+    """The zero-score defaults _merge_ai_scores() gives an unrankable worker,
+    applied to every result -- for rank=smart, where nothing reads the AI
+    breakdown, so there's no reason to pay for the scoring pass at all.
+    """
+    for result in match_results:
+        result["ai_score"] = 0.0
+        result["skill_similarity"] = 0.0
+        result["skill_contribution"] = 0.0
+        result["proximity_contribution"] = 0.0
+        result["exact_skill_match"] = False
+    return match_results
+
+
+def _merge_ai_scores(job, worker_profiles, match_results):
+    """Attach the AI score + explainability breakdown to each Smart Matching
+    result, without changing their order.
+
+    Workers the content-based scorer cannot rank (no location, no listed
+    skills, or outside the job's radius) keep their Smart Matching fields
+    but score 0, so they still appear -- the household keeps the final
+    hiring choice either way.
+    """
+    ai_by_worker = {
+        result["profile"].user_id: result
+        for result in get_recommended_workers(job, worker_profiles, limit=len(worker_profiles))
+    }
+
+    for result in match_results:
+        scored = ai_by_worker.get(result["worker_id"])
+        result["ai_score"] = scored["ai_score"] if scored else 0.0
+        result["skill_similarity"] = scored["skill_similarity"] if scored else 0.0
+        result["skill_contribution"] = scored["skill_contribution"] if scored else 0.0
+        result["proximity_contribution"] = scored["proximity_contribution"] if scored else 0.0
+        result["exact_skill_match"] = scored["exact_skill_match"] if scored else False
+
+    return match_results

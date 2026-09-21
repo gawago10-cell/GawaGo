@@ -48,6 +48,25 @@ export function formatExperience(years) {
   return `${numericYears} ${numericYears === 1 ? "year" : "years"}`;
 }
 
+/**
+ * "Santos Residence" -> "SR". Falls back to the first two characters when the
+ * name is a single word, so a bare username still reads as a monogram.
+ */
+export function getHouseholdInitials(name) {
+  const parts = String(name || "")
+    .trim()
+    .split(/[\s_-]+/)
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return "H";
+  }
+  if (parts.length === 1) {
+    const single = parts[0];
+    return (single.length === 1 ? single : single.slice(0, 2)).toUpperCase();
+  }
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
 export function formatLocation(barangay, streetAddress) {
   return [barangay, streetAddress].filter(Boolean).join(", ") || "Location not set";
 }
@@ -64,6 +83,48 @@ export function formatDistance(distanceKm, fallbackLabel = "") {
     return `${numericDistance.toFixed(1)} km away`;
   }
   return fallbackLabel || "Distance not available";
+}
+
+export function formatTimeAgo(value) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
+  if (seconds < 60) {
+    return "just now";
+  }
+  const units = [
+    ["minute", 60],
+    ["hour", 60],
+    ["day", 24],
+    ["month", 30],
+    ["year", 12],
+  ];
+  let amount = seconds;
+  let label = "second";
+  for (const [nextLabel, size] of units) {
+    if (amount < size) {
+      break;
+    }
+    amount = Math.floor(amount / size);
+    label = nextLabel;
+  }
+  return `${amount} ${label}${amount === 1 ? "" : "s"} ago`;
+}
+
+/** The numeric part of a display_rating ("4.90" -> 4.9), or null when the
+ * worker has no ratings yet -- star rows need a number, not the label. */
+export function parseRatingValue(ratingLabel) {
+  const match = String(ratingLabel ?? "").match(/\d+(\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[0]);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export function getWorkerPhoto(worker) {

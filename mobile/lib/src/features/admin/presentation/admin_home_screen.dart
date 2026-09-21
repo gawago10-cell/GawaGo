@@ -6,12 +6,16 @@ import '../../../core/theme/gawago_colors.dart';
 import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
 import '../../../shared/widgets/async_state.dart';
+import '../../../shared/widgets/report_view.dart';
 import '../../../shared/widgets/responsive_metric_grid.dart';
 import '../../../shared/widgets/status_card.dart';
+import '../../complaints/data/complaint_repository.dart';
+import '../../complaints/presentation/admin_complaints_queue.dart';
+import '../../reports/data/report_repository.dart';
 import '../data/admin_models.dart';
 import '../data/admin_repository.dart';
 
-enum _AdminPage { dashboard, verifications }
+enum _AdminPage { dashboard, verifications, complaints, reports }
 
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({
@@ -51,6 +55,18 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         selected: _page == _AdminPage.verifications,
         onTap: () => setState(() => _page = _AdminPage.verifications),
       ),
+      GawaGoDrawerDestination(
+        icon: Icons.flag_outlined,
+        label: 'Reported Issues',
+        selected: _page == _AdminPage.complaints,
+        onTap: () => setState(() => _page = _AdminPage.complaints),
+      ),
+      GawaGoDrawerDestination(
+        icon: Icons.assessment_outlined,
+        label: 'Reports',
+        selected: _page == _AdminPage.reports,
+        onTap: () => setState(() => _page = _AdminPage.reports),
+      ),
     ];
 
     return Theme(
@@ -65,6 +81,12 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           _AdminPage.dashboard => _AdminDashboard(repository: _repository),
           _AdminPage.verifications => _VerificationQueue(
             repository: _repository,
+          ),
+          _AdminPage.complaints => const AdminComplaintsQueue(
+            repository: ComplaintRepository(),
+          ),
+          _AdminPage.reports => const ReportView(
+            repository: ReportRepository(),
           ),
         },
       ),
@@ -378,7 +400,10 @@ class _VerificationQueueState extends State<_VerificationQueue> {
       context: context,
       isScrollControlled: true,
       backgroundColor: GawaGoColors.surface,
-      builder: (_) => _VerificationReviewSheet(request: request),
+      builder: (_) => _VerificationReviewSheet(
+        request: request,
+        repository: widget.repository,
+      ),
     );
     if (result == null || !mounted) return;
     try {
@@ -498,9 +523,13 @@ class _VerificationDecision {
 }
 
 class _VerificationReviewSheet extends StatefulWidget {
-  const _VerificationReviewSheet({required this.request});
+  const _VerificationReviewSheet({
+    required this.request,
+    required this.repository,
+  });
 
   final AdminVerificationRequest request;
+  final AdminRepository repository;
 
   @override
   State<_VerificationReviewSheet> createState() =>
@@ -514,6 +543,46 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
   void dispose() {
     _note.dispose();
     super.dispose();
+  }
+
+  /// Uploaded IDs live behind an authenticated route, so they are pulled as
+  /// bytes and shown from memory -- Image.network cannot send the token.
+  Future<void> _viewDocument(String path, String label) async {
+    showDialog<void>(
+      context: context,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final bytes = await widget.repository.getVerificationDocumentBytes(path);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (_) => Dialog(
+          child: InteractiveViewer(
+            child: Image.memory(
+              bytes,
+              errorBuilder: (context, error, stackTrace) => const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  "This file can't be previewed as an image. It was "
+                  'downloaded successfully -- review it on web instead.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
+    }
   }
 
   void _finish(String action) {
@@ -573,10 +642,25 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
                     : request.skills.join(', '),
               ),
               const Divider(height: 26),
-              _Fact(label: 'Primary document', value: request.primaryDocument),
-              _Fact(
+              _DocumentFact(
+                label: 'Primary document',
+                filename: request.primaryDocument,
+                onView: request.primaryDocument.isEmpty
+                    ? null
+                    : () => _viewDocument(
+                        request.primaryDocumentPath,
+                        'Primary document',
+                      ),
+              ),
+              _DocumentFact(
                 label: 'Secondary document',
-                value: request.secondaryDocument,
+                filename: request.secondaryDocument,
+                onView: request.secondaryDocument.isEmpty
+                    ? null
+                    : () => _viewDocument(
+                        request.secondaryDocumentPath,
+                        'Secondary document',
+                      ),
               ),
               _Fact(
                 label: 'Applicant notes',
@@ -622,6 +706,40 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A document row: the filename plus a View action that opens the file.
+class _DocumentFact extends StatelessWidget {
+  const _DocumentFact({
+    required this.label,
+    required this.filename,
+    required this.onView,
+  });
+
+  final String label;
+  final String filename;
+  final VoidCallback? onView;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: _Fact(label: label, value: filename),
+          ),
+          if (onView != null)
+            TextButton.icon(
+              onPressed: onView,
+              icon: const Icon(Icons.visibility_outlined, size: 18),
+              label: const Text('View'),
+            ),
+        ],
       ),
     );
   }

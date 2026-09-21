@@ -55,3 +55,23 @@ class Complaint(models.Model):
 
     def __str__(self) -> str:
         return f"Complaint #{self.id}: {self.get_complaint_type_display()} by {self.complainant.username}"
+
+
+def complaint_evidence_path(instance, filename):
+    return f"complaint_evidence/{instance.complaint_id}/{filename}"
+
+
+class ComplaintEvidence(models.Model):
+    """A photo attached to a report so an admin can see what happened rather
+    than judging from the description alone."""
+
+    complaint = models.ForeignKey(Complaint, on_delete=models.CASCADE, related_name="evidence")
+    image = models.ImageField(upload_to=complaint_evidence_path)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["order", "uploaded_at"]
+
+    def __str__(self) -> str:
+        return f"Evidence for complaint #{self.complaint_id}"

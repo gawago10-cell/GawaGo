@@ -131,10 +131,13 @@ class HouseholdJob {
 class HouseholdApplication {
   const HouseholdApplication({
     required this.id,
+    required this.workerId,
     required this.workerUsername,
     required this.workerName,
     required this.locationLabel,
     required this.status,
+    required this.statusStage,
+    required this.statusLabel,
     required this.note,
     required this.distanceKm,
     required this.workerLatitude,
@@ -147,14 +150,25 @@ class HouseholdApplication {
     required this.workerSkills,
     required this.workerHourlyRate,
     required this.workerDailyRate,
+    required this.workerRatingCount,
+    required this.workerCompletedJobs,
+    required this.workerMatchScore,
+    required this.appliedAt,
     required this.routePoints,
   });
 
   final int id;
+  final int workerId;
   final String workerUsername;
   final String workerName;
   final String locationLabel;
   final String status;
+
+  /// Canonical stage/label from apps/jobs/statuses.py -- see the matching
+  /// fields on WorkerApplication for why this replaces mapping the raw
+  /// status locally.
+  final String statusStage;
+  final String statusLabel;
   final String note;
   final double? distanceKm;
   final double? workerLatitude;
@@ -167,6 +181,13 @@ class HouseholdApplication {
   final List<String> workerSkills;
   final double? workerHourlyRate;
   final double? workerDailyRate;
+  final int workerRatingCount;
+  final int workerCompletedJobs;
+
+  /// Smart Matching's rule-based score for this applicant; null when the
+  /// backend returned no score to rank by.
+  final double? workerMatchScore;
+  final String appliedAt;
   final List<RoutePoint> routePoints;
 
   String get workerRateLabel {
@@ -182,10 +203,13 @@ class HouseholdApplication {
   factory HouseholdApplication.fromJson(Map<String, dynamic> json) {
     return HouseholdApplication(
       id: _integer(json['id']),
+      workerId: _integer(json['worker']),
       workerUsername: _text(json['worker_username']),
       workerName: _text(json['worker_name']),
       locationLabel: _text(json['worker_location_label']),
       status: _text(json['status']),
+      statusStage: _text(json['status_stage']),
+      statusLabel: _text(json['status_label']),
       note: _text(json['note']),
       distanceKm: _number(json['route_distance_km']),
       workerLatitude: _number(json['worker_latitude']),
@@ -200,9 +224,70 @@ class HouseholdApplication {
       ).map((item) => item.toString()).toList(),
       workerHourlyRate: _number(json['worker_hourly_rate']),
       workerDailyRate: _number(json['worker_daily_rate']),
+      workerRatingCount: _integer(json['worker_rating_count']),
+      workerCompletedJobs: _integer(json['worker_completed_jobs']),
+      workerMatchScore: _number(json['worker_match_score']),
+      appliedAt: _text(json['applied_at']),
       routePoints: _list(
         json['route_points'],
       ).map(RoutePoint.fromJson).whereType<RoutePoint>().toList(),
+    );
+  }
+}
+
+/// One finished job on a worker's public employment record, as a household
+/// reads it off that worker's profile before hiring.
+class WorkerJobHistoryEntry {
+  const WorkerJobHistoryEntry({
+    required this.id,
+    required this.title,
+    required this.jobType,
+    required this.householdName,
+    required this.locationLabel,
+    required this.completedAt,
+    required this.jobStartDate,
+    required this.jobEndDate,
+  });
+
+  final int id;
+  final String title;
+  final String jobType;
+  final String householdName;
+  final String locationLabel;
+  final String completedAt;
+  final String jobStartDate;
+  final String jobEndDate;
+
+  /// Prefers the confirmed completion date; older records predate that field
+  /// being set, so fall back to the scheduled period and then to nothing
+  /// rather than printing a placeholder date.
+  String get periodLabel {
+    if (completedAt.isNotEmpty) {
+      final parsed = DateTime.tryParse(completedAt);
+      if (parsed != null) {
+        final local = parsed.toLocal();
+        return 'Completed ${local.year}-'
+            '${local.month.toString().padLeft(2, '0')}-'
+            '${local.day.toString().padLeft(2, '0')}';
+      }
+    }
+    if (jobStartDate.isNotEmpty && jobEndDate.isNotEmpty) {
+      return '$jobStartDate to $jobEndDate';
+    }
+    if (jobStartDate.isNotEmpty) return jobStartDate;
+    return '';
+  }
+
+  factory WorkerJobHistoryEntry.fromJson(Map<String, dynamic> json) {
+    return WorkerJobHistoryEntry(
+      id: _integer(json['id']),
+      title: _text(json['title']),
+      jobType: _text(json['job_type']),
+      householdName: _text(json['household_name']),
+      locationLabel: _text(json['location_label']),
+      completedAt: _text(json['completed_at'] ?? ''),
+      jobStartDate: _text(json['job_start_date'] ?? ''),
+      jobEndDate: _text(json['job_end_date'] ?? ''),
     );
   }
 }
@@ -211,6 +296,12 @@ class RecommendedWorker {
   const RecommendedWorker({
     required this.id,
     required this.username,
+    required this.name,
+    required this.locationLabel,
+    required this.bio,
+    required this.profilePhotoUrl,
+    required this.ratingCount,
+    required this.completedJobs,
     required this.skills,
     required this.verificationStatus,
     required this.distanceLabel,
@@ -221,10 +312,20 @@ class RecommendedWorker {
     required this.workerLatitude,
     required this.workerLongitude,
     required this.routePoints,
+    required this.aiScore,
+    required this.skillContribution,
+    required this.proximityContribution,
+    required this.exactSkillMatch,
   });
 
   final int id;
   final String username;
+  final String name;
+  final String locationLabel;
+  final String bio;
+  final String profilePhotoUrl;
+  final int ratingCount;
+  final int completedJobs;
   final List<String> skills;
   final String verificationStatus;
   final String distanceLabel;
@@ -235,11 +336,31 @@ class RecommendedWorker {
   final double? workerLatitude;
   final double? workerLongitude;
   final List<RoutePoint> routePoints;
+  final double aiScore;
+  final double skillContribution;
+  final double proximityContribution;
+  final bool exactSkillMatch;
+
+  String get displayName => name.isNotEmpty ? name : username;
+
+  /// Skill's share of the AI score, as a whole percent; null when the
+  /// recommender returned no contribution breakdown to explain.
+  int? get skillSharePercent {
+    final total = skillContribution + proximityContribution;
+    if (total <= 0) return null;
+    return (skillContribution / total * 100).round();
+  }
 
   factory RecommendedWorker.fromJson(Map<String, dynamic> json) {
     return RecommendedWorker(
       id: _integer(json['worker_id']),
       username: _text(json['worker_username']),
+      name: _text(json['worker_name']),
+      locationLabel: _text(json['worker_location_label']),
+      bio: _text(json['worker_bio']),
+      profilePhotoUrl: _text(json['worker_profile_photo_url']),
+      ratingCount: _integer(json['worker_rating_count']),
+      completedJobs: _integer(json['worker_completed_jobs']),
       skills: _list(json['skills']).map((item) => item.toString()).toList(),
       verificationStatus: _text(json['verification_status']),
       distanceLabel: _text(json['distance_label']),
@@ -252,6 +373,10 @@ class RecommendedWorker {
       routePoints: _list(
         json['route_points'],
       ).map(RoutePoint.fromJson).whereType<RoutePoint>().toList(),
+      aiScore: _number(json['ai_score']) ?? 0,
+      skillContribution: _number(json['skill_contribution']) ?? 0,
+      proximityContribution: _number(json['proximity_contribution']) ?? 0,
+      exactSkillMatch: json['exact_skill_match'] == true,
     );
   }
 }

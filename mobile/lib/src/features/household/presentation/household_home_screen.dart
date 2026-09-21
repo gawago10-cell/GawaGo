@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -14,12 +16,16 @@ import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
-import '../../../shared/widgets/job_image_gallery.dart';
 import '../../../shared/widgets/location_route_map.dart';
 import '../../../shared/widgets/notification_badge.dart';
+import '../../../shared/widgets/my_complaints_view.dart';
 import '../../../shared/widgets/persistent_action_bar.dart';
+import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/rate_review_dialog.dart';
+import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
 import '../../../shared/widgets/status_card.dart';
+import '../../../shared/widgets/worker_cards.dart';
 import '../../worker/data/worker_models.dart';
 import '../data/household_models.dart';
 import '../data/household_repository.dart';
@@ -28,6 +34,7 @@ enum _Page {
   dashboard,
   postJob,
   jobs,
+  myReports,
   profile,
   reviews,
   verification,
@@ -53,6 +60,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
     _Page.dashboard,
     _Page.postJob,
     _Page.jobs,
+    _Page.myReports,
     _Page.notifications,
   ];
 
@@ -200,24 +208,18 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
       _Page.dashboard => _Dashboard(
         repository: _repository,
         onNavigate: _select,
-        onOpenServiceReview: _openServiceReview,
       ),
       _Page.postJob => _PostJob(
         repository: _repository,
         onCancel: () => _select(_Page.dashboard),
-        onCreated: () {
-          _changed();
-          setState(() {
-            _page = _Page.jobs;
-            _visitedPages.add(_Page.jobs);
-          });
-        },
+        onCreated: _openJobMatches,
       ),
       _Page.jobs => _MyJobs(
         repository: _repository,
         onChanged: _changed,
         onPostNew: () => _select(_Page.postJob),
       ),
+      _Page.myReports => _HouseholdMyReports(repository: _repository),
       _Page.profile => _Profile(repository: _repository, onSaved: _changed),
       _Page.reviews => ReviewHistory(
         receivedLoader: _repository.getReceivedReviews,
@@ -248,30 +250,33 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
     );
   }
 
-  Future<void> _openServiceReview(int id) async {
+  /// Straight from posting into AI-matched workers for the new job. Landing
+  /// on My Jobs first buried the recommendations three taps deep, which is
+  /// exactly when they are most useful.
+  Future<void> _openJobMatches(HouseholdJob job) async {
+    _changed();
+    setState(() {
+      _page = _Page.jobs;
+      _visitedPages.add(_Page.jobs);
+    });
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _ServiceReview(
+        builder: (_) => _JobMatches(
           repository: _repository,
-          jobId: id,
+          job: job,
           onChanged: _changed,
+          onOpenJob: _openJob,
         ),
       ),
     );
-    _changed();
   }
 }
 
 class _Dashboard extends StatefulWidget {
-  const _Dashboard({
-    required this.repository,
-    required this.onNavigate,
-    required this.onOpenServiceReview,
-  });
+  const _Dashboard({required this.repository, required this.onNavigate});
 
   final HouseholdRepository repository;
   final ValueChanged<_Page> onNavigate;
-  final ValueChanged<int> onOpenServiceReview;
 
   @override
   State<_Dashboard> createState() => _DashboardState();
@@ -289,7 +294,178 @@ class _DashboardState extends State<_Dashboard> {
   }
 
   void _reload() {
-    setState(() => _future = _load());
+    // A block body, not `() => _future = _load()` -- an arrow body would
+    // make the closure itself return the Future being assigned, which
+    // Flutter's setState() explicitly rejects at runtime ("setState()
+    // callback argument returned a Future").
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
+  }
+
+  Future<void> _openJobDetail(int jobId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _JobDetail(
+          repository: widget.repository,
+          jobId: jobId,
+          onChanged: _reload,
+        ),
+      ),
+    );
+    _reload();
+  }
+
+  Future<void> _browseWorkers(HouseholdJob job) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _JobMatches(
+          repository: widget.repository,
+          job: job,
+          onChanged: _reload,
+          onOpenJob: _openJobDetail,
+        ),
+      ),
+    );
+    _reload();
+  }
+
+  Future<void> _confirmCompletion(HouseholdJob job) async {
+    final confirmed = await _confirmDialog(
+      context,
+      title: 'Confirm this job as completed?',
+      message: "This can't be undone.",
+    );
+    if (!confirmed) return;
+    try {
+      await widget.repository.updateJobStatus(job.id, 'completed');
+      _reload();
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _cancelJob(HouseholdJob job) async {
+    final confirmed = await _confirmDialog(
+      context,
+      title: 'Cancel this job?',
+      message: "This can't be undone.",
+      destructive: true,
+    );
+    if (!confirmed) return;
+    try {
+      await widget.repository.updateJobStatus(job.id, 'cancelled');
+      _reload();
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _rateWorker(HouseholdJob job) async {
+    final worker = _selectedWorker(job);
+    if (worker == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No worker is assigned to this job yet.')),
+      );
+      return;
+    }
+    final submitted = await showRateReviewDialog(
+      context: context,
+      workerName: worker.workerName,
+      workerInitial: _initial(worker.workerName),
+      workerVerified:
+          worker.workerVerificationStatus.toLowerCase() == 'verified',
+      onSubmit:
+          ({
+            required rating,
+            required feedback,
+            qualityOfWork,
+            punctuality,
+            communication,
+            professionalism,
+          }) => widget.repository.reviewWorker(
+            job,
+            worker,
+            rating: rating,
+            feedback: feedback,
+            qualityOfWork: qualityOfWork,
+            punctuality: punctuality,
+            communication: communication,
+            professionalism: professionalism,
+          ),
+    );
+    if (submitted) {
+      _reload();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Review submitted.')));
+      }
+    }
+  }
+
+  Future<void> _viewApplicants(HouseholdJob job) {
+    return showApplicantsDialog(
+      context: context,
+      job: job,
+      repository: widget.repository,
+      onChanged: _reload,
+      onOpenApplicant: (application) => _openApplicantDetail(job, application),
+    );
+  }
+
+  /// "View Profile" on an applicant card opens that worker's profile, not the
+  /// job it was reached from -- the job is already on screen behind it.
+  Future<void> _openApplicantDetail(
+    HouseholdJob job,
+    HouseholdApplication application,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _ApplicantDetail(
+          job: job,
+          application: application,
+          repository: widget.repository,
+          onChanged: _reload,
+        ),
+      ),
+    );
+    _reload();
+  }
+
+  /// "Report" on a completed job opens the complaint form directly. The job
+  /// detail screen has its own copy of this, but a household should not have
+  /// to go looking for it.
+  Future<void> _reportJob(HouseholdJob job) async {
+    final submitted = await showReportIssueDialog(
+      context: context,
+      jobId: job.id,
+      jobTitle: job.title,
+      isHousehold: true,
+      applicants: job.applications
+          .map(
+            (application) => ReportApplicantOption(
+              workerId: application.workerId,
+              label: application.workerName.isEmpty
+                  ? application.workerUsername
+                  : application.workerName,
+            ),
+          )
+          .toList(),
+    );
+    if (!submitted || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Report submitted. Our admin team will review it.'),
+      ),
+    );
   }
 
   @override
@@ -303,86 +479,106 @@ class _DashboardState extends State<_Dashboard> {
         if (!snapshot.hasData) return const AppLoadingState();
         final profile = snapshot.data!.$1;
         final jobs = snapshot.data!.$2;
-        final pendingApplicants = jobs.fold<int>(
-          0,
-          (total, job) =>
-              total +
-              job.applications
-                  .where((application) => application.status == 'pending')
-                  .length,
-        );
-        final inProgressJobs = jobs.where(_isInProgressDashboardJob).length;
-        final cancelledJobs = jobs
-            .where((job) => _normalizedJobStatus(job.status) == 'cancelled')
-            .length;
-        final completedJobs = jobs
-            .where((job) => _normalizedJobStatus(job.status) == 'completed')
-            .length;
-        final recentJobs = jobs.toList();
+        // Mirrors web's inProcessHouseholdJobs/pendingHouseholdReviewJobs
+        // split (AppViews.jsx): a job lives in exactly one of "in process"
+        // or history, moving over the moment it's Completed or Cancelled.
+        final inProcessJobs = jobs.where(_isInProgressDashboardJob).toList();
+        final pendingReviewJobs = jobs
+            .where(
+              (job) =>
+                  _normalizedJobStatus(job.status) == 'completed' &&
+                  job.canReview,
+            )
+            .toList();
         return RefreshIndicator(
           onRefresh: () async => _reload(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
             children: [
               _HouseholdWelcomeBanner(profile: profile),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: _HouseholdStatCard(
-                      label: 'In Progress',
-                      value: '$inProgressJobs',
-                      icon: Icons.pending_actions_outlined,
-                      highlighted: true,
+              const SizedBox(height: 6),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  'Jobs that are still in motion — waiting on applicants, '
+                  'in progress, or waiting on you.',
+                  style: TextStyle(
+                    color: GawaGoColors.textMuted,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => widget.onNavigate(_Page.postJob),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Post a New Job'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: GawaGoColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _HouseholdStatCard(
-                      label: 'Cancelled',
-                      value: '$cancelledJobs',
-                      icon: Icons.cancel_outlined,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _HouseholdStatCard(
-                      label: 'Completed',
-                      value: '$completedJobs',
-                      icon: Icons.task_alt_outlined,
-                    ),
-                  ),
-                ],
+                ),
               ),
               const SizedBox(height: 22),
               Text(
-                'Recent Post Jobs',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: GawaGoColors.ink,
+                'IN PROCESS · ${inProcessJobs.length}',
+                style: const TextStyle(
+                  color: Color(0xFF7C8A7F),
+                  fontSize: 12,
                   fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
                 ),
               ),
               const SizedBox(height: 12),
-              if (recentJobs.isEmpty)
+              if (inProcessJobs.isEmpty)
                 _HouseholdEmptyJobsCard(
                   onTap: () => widget.onNavigate(_Page.postJob),
                 )
               else
-                ...recentJobs.map(
+                ...inProcessJobs.map(
                   (job) => Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: _RecentPostedJobCard(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _InProcessJobCard(
                       job: job,
-                      onTap: () => widget.onOpenServiceReview(job.id),
+                      onBrowseWorkers: () => _browseWorkers(job),
+                      onViewApplicants: () => _viewApplicants(job),
+                      onConfirmCompletion: () => _confirmCompletion(job),
+                      onCancel: () => _cancelJob(job),
                     ),
                   ),
                 ),
-              if (pendingApplicants > 0) ...[
-                const SizedBox(height: 4),
-                _HouseholdNoticeCard(
-                  message:
-                      '$pendingApplicants pending ${pendingApplicants == 1 ? 'application' : 'applications'} need review.',
-                  onTap: () => widget.onNavigate(_Page.jobs),
+              if (pendingReviewJobs.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'COMPLETED · ${pendingReviewJobs.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF7C8A7F),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...pendingReviewJobs.map(
+                  (job) => Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _PendingReviewJobCard(
+                      job: job,
+                      onRate: () => _rateWorker(job),
+                      onReport: () => _reportJob(job),
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -391,6 +587,35 @@ class _DashboardState extends State<_Dashboard> {
       },
     );
   }
+}
+
+Future<bool> _confirmDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  bool destructive = false,
+}) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(title),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          style: destructive
+              ? FilledButton.styleFrom(backgroundColor: const Color(0xFFB3413A))
+              : null,
+          child: const Text('Confirm'),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
 }
 
 class _HouseholdWelcomeBanner extends StatelessWidget {
@@ -429,208 +654,497 @@ class _HouseholdWelcomeBanner extends StatelessWidget {
   }
 }
 
-class _HouseholdStatCard extends StatelessWidget {
-  const _HouseholdStatCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    this.highlighted = false,
+enum _ProcessTone { review, assigned, applicants, open }
+
+/// One "IN PROCESS" card on the household Dashboard -- mirrors web's
+/// .household-process-card (AppViews.jsx / main.css) icon-coded status,
+/// assigned-worker row, and per-status action, instead of the old flat
+/// label/value row card.
+class _InProcessJobCard extends StatelessWidget {
+  const _InProcessJobCard({
+    required this.job,
+    required this.onBrowseWorkers,
+    required this.onViewApplicants,
+    required this.onConfirmCompletion,
+    required this.onCancel,
   });
 
-  final String label;
-  final String value;
-  final IconData icon;
-  final bool highlighted;
+  final HouseholdJob job;
+  final VoidCallback onBrowseWorkers;
+  final VoidCallback onViewApplicants;
+  final VoidCallback onConfirmCompletion;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
-    final labelColor = highlighted ? Colors.white : const Color(0xFF566279);
-    final valueColor = highlighted ? Colors.white : const Color(0xFF001A4A);
+    final pendingCount = job.applications
+        .where((application) => application.status == 'pending')
+        .length;
+    final assignedApp = _selectedWorker(job);
+    final isAssigned =
+        assignedApp != null &&
+        (assignedApp.status == 'hired' || assignedApp.status == 'completed');
+    final needsConfirmation =
+        _normalizedJobStatus(job.status) == 'completion requested';
+    final hasApplicants = !needsConfirmation && !isAssigned && pendingCount > 0;
+    // A sent hire request is still an open thread on this job: without its own
+    // state the card would claim nobody applied the moment the household
+    // asked someone.
+    final requestedCount = job.applications
+        .where((application) => application.status == 'hire_requested')
+        .length;
+    final awaitingReply =
+        !needsConfirmation &&
+        !isAssigned &&
+        !hasApplicants &&
+        requestedCount > 0;
+
+    final tone = needsConfirmation
+        ? _ProcessTone.review
+        : isAssigned || awaitingReply
+        ? _ProcessTone.assigned
+        : hasApplicants
+        ? _ProcessTone.applicants
+        : _ProcessTone.open;
+
+    final (Color bg, Color fg, IconData icon) = switch (tone) {
+      _ProcessTone.review => (
+        const Color(0xFFE8F5E9),
+        GawaGoColors.primary,
+        Icons.check_circle_outline,
+      ),
+      _ProcessTone.assigned => (
+        const Color(0xFFFDEFDC),
+        const Color(0xFFC07C12),
+        Icons.access_time_rounded,
+      ),
+      _ProcessTone.applicants => (
+        const Color(0xFFF1E9FB),
+        const Color(0xFF6A3FA0),
+        Icons.groups_outlined,
+      ),
+      _ProcessTone.open => (
+        const Color(0xFFE8F0FB),
+        const Color(0xFF2F6BB0),
+        Icons.search_rounded,
+      ),
+    };
+
+    final statusLabel = needsConfirmation
+        ? 'Marked done — confirm to finish'
+        : isAssigned
+        ? 'In progress'
+        : hasApplicants
+        ? '$pendingCount applicant${pendingCount == 1 ? '' : 's'} waiting'
+        : awaitingReply
+        ? '$requestedCount request${requestedCount == 1 ? '' : 's'} sent — '
+              'waiting for a reply'
+        : 'Just posted — no applicants yet';
+
+    final workerName = assignedApp?.workerName ?? '';
+    final isVerified =
+        (assignedApp?.workerVerificationStatus ?? '').toLowerCase() ==
+        'verified';
+
     return Container(
-      constraints: const BoxConstraints(minHeight: 108),
-      padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: highlighted ? GawaGoColors.primary : Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: highlighted
-            ? null
-            : Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: needsConfirmation
+              ? GawaGoColors.primary
+              : const Color(0xFFD8D0C3),
+          width: needsConfirmation ? 1.6 : 1.2,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: labelColor, size: 18),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontSize: 34,
-              fontWeight: FontWeight.w900,
-              height: 1,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            textAlign: TextAlign.left,
-            maxLines: 2,
-            overflow: TextOverflow.visible,
-            style: TextStyle(
-              color: labelColor,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w800,
-              height: 1.15,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RecentPostedJobCard extends StatelessWidget {
-  const _RecentPostedJobCard({required this.job, required this.onTap});
-
-  final HouseholdJob job;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _JobInfoRow(label: 'Type', value: job.jobType),
-              _JobInfoRow(label: 'Barangay', value: _barangay(job)),
-              _JobInfoRow(label: 'Rate', value: _rateLabel(job)),
-              _JobInfoRow(
-                label: 'Status',
-                valueWidget: Align(
-                  alignment: Alignment.centerLeft,
-                  child: _OpenStatusPill(status: job.status),
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(10),
                 ),
+                child: Icon(icon, size: 18, color: fg),
               ),
-              _JobInfoRow(
-                label: 'Applications',
-                value: '${job.applications.length}',
-                showDivider: false,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      job.title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: GawaGoColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: fg,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            statusLabel,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: GawaGoColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _JobInfoRow extends StatelessWidget {
-  const _JobInfoRow({
-    required this.label,
-    this.value,
-    this.valueWidget,
-    this.showDivider = true,
-  });
-
-  final String label;
-  final String? value;
-  final Widget? valueWidget;
-  final bool showDivider;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 52),
-      decoration: BoxDecoration(
-        border: showDivider
-            ? const Border(bottom: BorderSide(color: Color(0xFFD8D0C3)))
-            : null,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 118,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 15,
+                backgroundColor: assignedApp != null
+                    ? GawaGoColors.primary
+                    : const Color(0xFFF3F0E8),
+                child: assignedApp != null
+                    ? Text(
+                        _initial(workerName),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.question_mark,
+                        size: 14,
+                        color: Color(0xFF9A9384),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      assignedApp != null ? workerName : 'No worker hired yet',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                        color: assignedApp != null
+                            ? GawaGoColors.ink
+                            : const Color(0xFF7C7C72),
+                      ),
+                    ),
+                    if (assignedApp != null)
+                      Text(
+                        isVerified ? 'Verified' : 'Not Yet Verified',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: GawaGoColors.textMuted,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            [
+              _rateLabel(job),
+              job.locationLabel.trim().isEmpty
+                  ? 'Location not set'
+                  : _barangay(job),
+              if ((job.jobStartDate ?? '').isNotEmpty)
+                job.jobEndDate != null && job.jobEndDate!.isNotEmpty
+                    ? '${job.jobStartDate} to ${job.jobEndDate}'
+                    : job.jobStartDate!,
+            ].join(' · '),
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: GawaGoColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (needsConfirmation)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: onConfirmCompletion,
+                style: FilledButton.styleFrom(
+                  backgroundColor: GawaGoColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text('Confirm Completion'),
+              ),
+            )
+          else if (isAssigned)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F4EC),
+                borderRadius: BorderRadius.circular(10),
+              ),
               child: Text(
-                label.toUpperCase(),
+                "You'll be notified once ${workerName.isEmpty ? 'the worker' : workerName} marks this done.",
                 style: const TextStyle(
-                  color: Color(0xFF355444),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.4,
+                  fontSize: 12.5,
+                  color: GawaGoColors.textMuted,
+                ),
+              ),
+            )
+          else ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: hasApplicants || awaitingReply
+                    ? onViewApplicants
+                    : onBrowseWorkers,
+                icon: Icon(
+                  hasApplicants || awaitingReply
+                      ? Icons.groups_outlined
+                      : Icons.search,
+                  size: 16,
+                ),
+                label: Text(
+                  hasApplicants || awaitingReply
+                      ? 'View Applicants'
+                      : 'Browse Workers',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: GawaGoColors.ink,
+                  side: const BorderSide(color: GawaGoColors.ink, width: 1.4),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 11, 12, 11),
-              child:
-                  valueWidget ??
-                  Text(
-                    value ?? '',
-                    style: const TextStyle(
-                      color: Color(0xFF001A4A),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                      height: 1.2,
-                    ),
+            if (!hasApplicants) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F4EC),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  awaitingReply
+                      ? "We'll let you know as soon as they accept or decline."
+                      : "We'll notify you as soon as a worker applies.",
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: GawaGoColors.textMuted,
                   ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Center(
+              child: TextButton(
+                onPressed: onCancel,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFB3413A),
+                  padding: EdgeInsets.zero,
+                ),
+                child: const Text(
+                  'Cancel Job',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+                ),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _OpenStatusPill extends StatelessWidget {
-  const _OpenStatusPill({required this.status});
+/// A completed-but-unreviewed job on the Dashboard -- mirrors web's
+/// "Completed" reminder section (AppViews.jsx, roadmap item "Show View
+/// Details on My Jobs for completed-but-unreviewed jobs"). It doesn't leave
+/// My Jobs though: that page is the complete record, rated or not.
+class _PendingReviewJobCard extends StatelessWidget {
+  const _PendingReviewJobCard({
+    required this.job,
+    required this.onRate,
+    required this.onReport,
+  });
 
-  final String status;
+  final HouseholdJob job;
+  final VoidCallback onRate;
+  final VoidCallback onReport;
 
   @override
   Widget build(BuildContext context) {
-    final normalizedStatus = _normalizedJobStatus(status);
-    final isPositive =
-        normalizedStatus == 'open' ||
-        normalizedStatus == 'completed' ||
-        normalizedStatus == 'cancelled';
+    final assignedApp = _selectedWorker(job);
+    final workerName = assignedApp?.workerName ?? '';
     return Container(
-      constraints: const BoxConstraints(minHeight: 30),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isPositive ? const Color(0xFFE7F5E9) : const Color(0xFFF4F1EB),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: isPositive ? const Color(0xFF9BD9A9) : const Color(0xFFD8D0C3),
-          width: 1.4,
-        ),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
       ),
-      child: Text(
-        formatStatus(status),
-        style: TextStyle(
-          color: isPositive ? const Color(0xFF25853E) : const Color(0xFF566279),
-          fontSize: 15,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.5,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.check_circle_outline,
+                  size: 18,
+                  color: GawaGoColors.primary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      job.title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: GawaGoColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: const BoxDecoration(
+                            color: GawaGoColors.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'Completed · Rate your worker',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: GawaGoColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 15,
+                backgroundColor: assignedApp != null
+                    ? GawaGoColors.primary
+                    : const Color(0xFFF3F0E8),
+                child: Text(
+                  assignedApp != null ? _initial(workerName) : '?',
+                  style: TextStyle(
+                    color: assignedApp != null
+                        ? Colors.white
+                        : const Color(0xFF9A9384),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  assignedApp != null
+                      ? workerName
+                      : 'Worker record unavailable',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                    color: GawaGoColors.ink,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '${_rateLabel(job)} · '
+            '${job.locationLabel.trim().isEmpty ? "Location not set" : _barangay(job)}',
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: GawaGoColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: assignedApp != null ? onRate : null,
+                  icon: const Icon(Icons.star_rounded, size: 16),
+                  label: const Text('Rate & Review'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: GawaGoColors.deepGreen,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              TextButton.icon(
+                onPressed: onReport,
+                icon: const Icon(Icons.flag_outlined, size: 16),
+                label: const Text('Report'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFB3413A),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -664,29 +1178,6 @@ class _JobStatusPill extends StatelessWidget {
           fontWeight: FontWeight.w900,
           letterSpacing: 0.5,
         ),
-      ),
-    );
-  }
-}
-
-class _HouseholdNoticeCard extends StatelessWidget {
-  const _HouseholdNoticeCard({required this.message, required this.onTap});
-
-  final String message;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      icon: const Icon(Icons.info_outline),
-      label: Text(message),
-      style: OutlinedButton.styleFrom(
-        alignment: Alignment.centerLeft,
-        foregroundColor: GawaGoColors.panelGreen,
-        side: const BorderSide(color: Color(0xFFBBD8C4)),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
     );
   }
@@ -763,15 +1254,13 @@ String _normalizedJobStatus(String status) => status
     .replaceAll(RegExp(r'[_-]+'), ' ')
     .replaceAll(RegExp(r'\s+'), ' ');
 
+// Matches web's inProcessHouseholdJobs (AppViews.jsx): a job lives in
+// exactly one of "in process" or history, moving over the moment it's
+// Completed or Cancelled -- open jobs belong here too, not just assigned
+// ones, since they still need the household's attention.
 bool _isInProgressDashboardJob(HouseholdJob job) {
-  return switch (_normalizedJobStatus(job.status)) {
-    'assigned' ||
-    'already found a worker' ||
-    'in progress' ||
-    'completion requested' ||
-    'waiting for household confirmation' => true,
-    _ => false,
-  };
+  final status = _normalizedJobStatus(job.status);
+  return status != 'completed' && status != 'cancelled';
 }
 
 HouseholdApplication? _selectedWorker(HouseholdJob job) {
@@ -817,7 +1306,7 @@ class _PostJob extends StatefulWidget {
   });
 
   final HouseholdRepository repository;
-  final VoidCallback onCreated;
+  final ValueChanged<HouseholdJob> onCreated;
   final VoidCallback onCancel;
 
   @override
@@ -838,6 +1327,15 @@ class _PostJobState extends State<_PostJob> {
   String _scheduleType = 'One-Time';
   String _rateType = 'Per Day';
   String _geographicBoundary = '1km';
+  // Mirrors the `distanceKmMap` in the web client's useGawaGoActions.js so
+  // both clients send the same hard distance limit for the same radius label.
+  static const Map<String, double> _geographicBoundaryDistanceKm = {
+    '1km': 1.0,
+    '2km': 2.0,
+    '5km': 5.0,
+    '10km': 10.0,
+    'unlimited': 999999,
+  };
   DateTime? _date;
   TimeOfDay? _time;
   DateTime? _startDate;
@@ -846,6 +1344,12 @@ class _PostJobState extends State<_PostJob> {
   final List<String> _imagePaths = [];
   bool _posting = false;
 
+  // Mirrors the web client's JobImageUpload (maxImages=5, maxFileSize=5MB) --
+  // the backend enforces neither, so without this mobile could post jobs
+  // with an unbounded number of arbitrarily large images.
+  static const int _maxJobImages = 5;
+  static const int _maxJobImageBytes = 5 * 1024 * 1024;
+
   Future<void> _pickImages() async {
     const group = XTypeGroup(
       label: 'Job reference images',
@@ -853,12 +1357,34 @@ class _PostJobState extends State<_PostJob> {
     );
     final files = await openFiles(acceptedTypeGroups: [group]);
     if (files.isEmpty) return;
-    final combined = {..._imagePaths, ...files.map((file) => file.path)};
+
+    final oversized = <String>[];
+    final accepted = <String>[];
+    for (final file in files) {
+      if (await File(file.path).length() > _maxJobImageBytes) {
+        oversized.add(file.name);
+      } else {
+        accepted.add(file.path);
+      }
+    }
+
+    final combined = {..._imagePaths, ...accepted}.toList();
+    final overflow = combined.length - _maxJobImages;
+    if (overflow > 0) {
+      combined.removeRange(combined.length - overflow, combined.length);
+    }
+
     setState(() {
       _imagePaths
         ..clear()
         ..addAll(combined);
     });
+
+    if (oversized.isNotEmpty) {
+      _message('${oversized.join(', ')}: exceeds 5 MB and was not added.');
+    } else if (overflow > 0) {
+      _message('You can only upload up to $_maxJobImages images.');
+    }
   }
 
   Future<void> _locate() async {
@@ -894,14 +1420,16 @@ class _PostJobState extends State<_PostJob> {
       _message('Complete all required job, schedule, rate, and map fields.');
       return;
     }
-    if (_startDate != null && _endDate != null && !_endDate!.isAfter(_startDate!)) {
+    if (_startDate != null &&
+        _endDate != null &&
+        !_endDate!.isAfter(_startDate!)) {
       _message('Job end date must be after the job start date.');
       return;
     }
     setState(() => _posting = true);
     try {
       final locationLabel = '${_barangay!}, ${_location.text.trim()}';
-      await widget.repository.createJob({
+      final created = await widget.repository.createJob({
         'title': _title.text.trim(),
         'job_type': _skill,
         'required_skill': _skill,
@@ -923,9 +1451,13 @@ class _PostJobState extends State<_PostJob> {
         if (int.tryParse(_workingDays.text) != null)
           'estimated_working_days': int.parse(_workingDays.text),
         'geographic_boundary': _geographicBoundary,
+        // Without this the backend defaults max_distance_km to 1.0 no matter
+        // what radius is picked here, so a "10km" job only ever matched
+        // workers within 1 km. Mirrors the mapping in the web client.
+        'max_distance_km':
+            _geographicBoundaryDistanceKm[_geographicBoundary] ?? 1.0,
       }, imagePaths: _imagePaths);
-      widget.onCreated();
-      if (mounted) _message('Job posted successfully.');
+      widget.onCreated(created);
     } catch (error) {
       if (mounted) _message(friendlyApiError(error));
     } finally {
@@ -1061,7 +1593,8 @@ class _PostJobState extends State<_PostJob> {
                         onRateTypeChanged: (value) =>
                             setState(() => _rateType = value ?? _rateType),
                         onGeographicBoundaryChanged: (value) => setState(
-                          () => _geographicBoundary = value ?? _geographicBoundary,
+                          () => _geographicBoundary =
+                              value ?? _geographicBoundary,
                         ),
                         onPickDate: () async {
                           final value = await showDatePicker(
@@ -1781,6 +2314,22 @@ class _PostJobImagesBox extends StatelessWidget {
   }
 }
 
+class _HouseholdMyReports extends StatelessWidget {
+  const _HouseholdMyReports({required this.repository});
+
+  final HouseholdRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<HouseholdProfile>(
+      future: repository.getProfile(),
+      builder: (context, snapshot) {
+        return MyComplaintsView(currentUsername: snapshot.data?.username);
+      },
+    );
+  }
+}
+
 class _MyJobs extends StatefulWidget {
   const _MyJobs({
     required this.repository,
@@ -1798,141 +2347,306 @@ class _MyJobs extends StatefulWidget {
 
 class _MyJobsState extends State<_MyJobs> {
   String _filter = 'all';
+  late Future<(List<HouseholdJob>, List<GawaGoReview>)> _future = _load();
+
+  Future<(List<HouseholdJob>, List<GawaGoReview>)> _load() async {
+    final values = await Future.wait([
+      widget.repository.getMyJobs(),
+      widget.repository.getGivenReviews(),
+    ]);
+    return (values[0] as List<HouseholdJob>, values[1] as List<GawaGoReview>);
+  }
+
+  void _reload() {
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  Future<void> _openJobDetail(int jobId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _JobDetail(
+          repository: widget.repository,
+          jobId: jobId,
+          onChanged: widget.onChanged,
+        ),
+      ),
+    );
+    widget.onChanged();
+    _reload();
+  }
+
+  Future<void> _rateWorker(HouseholdJob job) async {
+    final worker = _selectedWorker(job);
+    if (worker == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No worker is assigned to this job yet.')),
+      );
+      return;
+    }
+    final submitted = await showRateReviewDialog(
+      context: context,
+      workerName: worker.workerName,
+      workerInitial: _initial(worker.workerName),
+      workerVerified:
+          worker.workerVerificationStatus.toLowerCase() == 'verified',
+      onSubmit:
+          ({
+            required rating,
+            required feedback,
+            qualityOfWork,
+            punctuality,
+            communication,
+            professionalism,
+          }) => widget.repository.reviewWorker(
+            job,
+            worker,
+            rating: rating,
+            feedback: feedback,
+            qualityOfWork: qualityOfWork,
+            punctuality: punctuality,
+            communication: communication,
+            professionalism: professionalism,
+          ),
+    );
+    if (submitted) {
+      widget.onChanged();
+      _reload();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Review submitted.')));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<HouseholdJob>>(
-      future: widget.repository.getMyJobs(),
+    return FutureBuilder<(List<HouseholdJob>, List<GawaGoReview>)>(
+      future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return AppErrorState(
-            error: snapshot.error,
-            onRetry: () => (context as Element).markNeedsBuild(),
-          );
+          return AppErrorState(error: snapshot.error, onRetry: _reload);
         }
         if (!snapshot.hasData) return const AppLoadingState();
-        if (snapshot.data!.isEmpty) {
-          return const AppEmptyState(message: 'No jobs posted yet.');
-        }
-        final jobs = snapshot.data!;
-        final visible = jobs.where((job) {
-          if (_filter == 'all') return _isActiveHouseholdJob(job);
-          if (_filter == 'open') return job.status == 'open';
-          if (_filter == 'completed') return job.status == 'completed';
-          return true;
-        }).toList();
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-          children: [
-            const Text(
-              'My Jobs',
-              style: TextStyle(
-                color: GawaGoColors.ink,
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
+        final jobs = snapshot.data!.$1;
+        final givenReviews = snapshot.data!.$2;
+        // Mirrors web's historyHouseholdJobs (AppViews.jsx): the complete
+        // record of every finished job, rated or not -- still-active jobs
+        // live on the Dashboard instead.
+        final historyJobs = jobs
+            .where(
+              (job) =>
+                  _normalizedJobStatus(job.status) == 'completed' ||
+                  _normalizedJobStatus(job.status) == 'cancelled',
+            )
+            .toList();
+        final completedJobs = historyJobs
+            .where((job) => _normalizedJobStatus(job.status) == 'completed')
+            .toList();
+        final cancelledJobs = historyJobs
+            .where((job) => _normalizedJobStatus(job.status) == 'cancelled')
+            .toList();
+        final ratingsGiven = givenReviews
+            .map((review) => review.rating)
+            .whereType<double>()
+            .toList();
+        final avgRatingGiven = ratingsGiven.isEmpty
+            ? null
+            : ratingsGiven.reduce((a, b) => a + b) / ratingsGiven.length;
+        final totalSpent = completedJobs.fold<double>(
+          0,
+          (sum, job) => sum + job.serviceRate,
+        );
+        final visible = switch (_filter) {
+          'completed' => completedJobs,
+          'cancelled' => cancelledJobs,
+          _ => historyJobs,
+        };
+
+        return RefreshIndicator(
+          onRefresh: () async => _reload(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+            children: [
+              const Text(
+                'My Jobs',
+                style: TextStyle(
+                  color: GawaGoColors.ink,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+              const SizedBox(height: 4),
+              const Text(
+                'Your complete job history — every completed and cancelled '
+                'job in one place.',
+                style: TextStyle(
+                  color: GawaGoColors.textMuted,
+                  fontSize: 12.5,
+                  height: 1.35,
+                ),
               ),
-              child: Column(
-                children: [
-                  _MyJobsTabs(
-                    selected: _filter,
-                    onChanged: (value) => setState(() => _filter = value),
-                  ),
-                  const SizedBox(height: 12),
-                  if (visible.isEmpty)
-                    _NoActiveJobsCard(
-                      filter: _filter,
-                      onPostNew: widget.onPostNew,
-                    )
-                  else
-                    ...visible.map(
-                      (job) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _MyJobCard(
-                          job: job,
-                          onViewDetails: () async {
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => _JobDetail(
-                                  repository: widget.repository,
-                                  jobId: job.id,
-                                  onChanged: widget.onChanged,
-                                ),
-                              ),
-                            );
-                            widget.onChanged();
-                            if (mounted) setState(() {});
-                          },
+              const SizedBox(height: 16),
+              _HistoryStatCard(
+                icon: Icons.check_circle_outline,
+                iconColor: GawaGoColors.primary,
+                background: const Color(0xFFDFF5E3),
+                value: '${completedJobs.length}',
+                label: 'Jobs Completed',
+              ),
+              const SizedBox(height: 10),
+              _HistoryStatCard(
+                icon: Icons.attach_money_rounded,
+                iconColor: const Color(0xFF8A6A00),
+                background: const Color(0xFFFBF0C8),
+                value: 'PHP ${totalSpent.toStringAsFixed(2)}',
+                label: 'Total Spent',
+              ),
+              const SizedBox(height: 10),
+              _HistoryStatCard(
+                icon: Icons.star_rounded,
+                iconColor: const Color(0xFF6A3FA0),
+                background: const Color(0xFFE6DEFA),
+                value: avgRatingGiven == null
+                    ? '—'
+                    : avgRatingGiven.toStringAsFixed(1),
+                label: 'Avg Rating Given',
+              ),
+              const SizedBox(height: 18),
+              _MyJobsTabs(
+                selected: _filter,
+                allCount: historyJobs.length,
+                completedCount: completedJobs.length,
+                cancelledCount: cancelledJobs.length,
+                onChanged: (value) => setState(() => _filter = value),
+              ),
+              const SizedBox(height: 14),
+              if (historyJobs.isEmpty)
+                _Card(
+                  child: Column(
+                    children: [
+                      const Text(
+                        'No finished jobs yet.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: GawaGoColors.ink,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Once a job is completed or cancelled, it will show '
+                        'up here. Still-active jobs live on your Dashboard.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: GawaGoColors.textMuted,
+                          fontSize: 13.5,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: widget.onPostNew,
+                        icon: const Icon(Icons.post_add),
+                        label: const Text('Post a New Job'),
+                      ),
+                    ],
+                  ),
+                )
+              else if (visible.isEmpty)
+                const _Card(
+                  child: Text(
+                    'Nothing matches this filter yet.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: GawaGoColors.textMuted),
+                  ),
+                )
+              else
+                ...visible.map(
+                  (job) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _HistoryJobCard(
+                      job: job,
+                      review: givenReviews
+                          .where((review) => review.jobId == job.id)
+                          .firstOrNull,
+                      onRate: () => _rateWorker(job),
+                      onViewDetails: () => _openJobDetail(job.id),
                     ),
-                ],
-              ),
-            ),
-          ],
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );
   }
 }
 
-bool _isActiveHouseholdJob(HouseholdJob job) {
-  return switch (job.status.trim().toLowerCase()) {
-    'open' || 'assigned' || 'in_progress' || 'completion_requested' => true,
-    _ => false,
-  };
-}
+class _HistoryStatCard extends StatelessWidget {
+  const _HistoryStatCard({
+    required this.icon,
+    required this.iconColor,
+    required this.background,
+    required this.value,
+    required this.label,
+  });
 
-class _NoActiveJobsCard extends StatelessWidget {
-  const _NoActiveJobsCard({required this.filter, required this.onPostNew});
-
-  final String filter;
-  final VoidCallback onPostNew;
+  final IconData icon;
+  final Color iconColor;
+  final Color background;
+  final String value;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    final isActiveView = filter == 'all' || filter == 'open';
-    return _Card(
-      child: Column(
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
         children: [
-          Text(
-            isActiveView ? 'No active jobs' : 'No $filter jobs',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: iconColor,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 19, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: GawaGoColors.ink,
+                  ),
+                ),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: GawaGoColors.textMuted,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            isActiveView
-                ? 'Completed and cancelled jobs are available in your dashboard recent jobs.'
-                : 'Nothing matches this job status yet.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF355444),
-              fontSize: 15,
-              height: 1.35,
-            ),
-          ),
-          if (isActiveView) ...[
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: onPostNew,
-              icon: const Icon(Icons.post_add),
-              label: const Text('Post a New Job'),
-            ),
-          ],
         ],
       ),
     );
@@ -1940,9 +2654,18 @@ class _NoActiveJobsCard extends StatelessWidget {
 }
 
 class _MyJobsTabs extends StatelessWidget {
-  const _MyJobsTabs({required this.selected, required this.onChanged});
+  const _MyJobsTabs({
+    required this.selected,
+    required this.allCount,
+    required this.completedCount,
+    required this.cancelledCount,
+    required this.onChanged,
+  });
 
   final String selected;
+  final int allCount;
+  final int completedCount;
+  final int cancelledCount;
   final ValueChanged<String> onChanged;
 
   @override
@@ -1954,20 +2677,23 @@ class _MyJobsTabs extends StatelessWidget {
       children: [
         _MyJobsTabButton(
           label: 'All Jobs',
+          count: allCount,
           value: 'all',
           selected: selected == 'all',
           onChanged: onChanged,
         ),
         _MyJobsTabButton(
-          label: 'Open',
-          value: 'open',
-          selected: selected == 'open',
+          label: 'Completed',
+          count: completedCount,
+          value: 'completed',
+          selected: selected == 'completed',
           onChanged: onChanged,
         ),
         _MyJobsTabButton(
-          label: 'Completed',
-          value: 'completed',
-          selected: selected == 'completed',
+          label: 'Cancelled',
+          count: cancelledCount,
+          value: 'cancelled',
+          selected: selected == 'cancelled',
           onChanged: onChanged,
         ),
       ],
@@ -1978,12 +2704,14 @@ class _MyJobsTabs extends StatelessWidget {
 class _MyJobsTabButton extends StatelessWidget {
   const _MyJobsTabButton({
     required this.label,
+    required this.count,
     required this.value,
     required this.selected,
     required this.onChanged,
   });
 
   final String label;
+  final int count;
   final String value;
   final bool selected;
   final ValueChanged<String> onChanged;
@@ -2008,133 +2736,269 @@ class _MyJobsTabButton extends StatelessWidget {
             letterSpacing: 0,
           ),
         ),
-        child: Text(label),
+        child: Text('$label $count'),
       ),
     );
   }
 }
 
-class _MyJobCard extends StatelessWidget {
-  const _MyJobCard({required this.job, required this.onViewDetails});
+/// One finished-job row on My Jobs -- mirrors web's .household-history-card
+/// (AppViews.jsx / main.css): a status pill, either a "no worker was hired"
+/// note (cancelled) or the assigned worker's avatar/name/rating/tags plus
+/// the rate and, once given, the household's own star rating.
+class _HistoryJobCard extends StatelessWidget {
+  const _HistoryJobCard({
+    required this.job,
+    required this.review,
+    required this.onRate,
+    required this.onViewDetails,
+  });
 
   final HouseholdJob job;
+  final GawaGoReview? review;
+  final VoidCallback onRate;
   final VoidCallback onViewDetails;
 
   @override
   Widget build(BuildContext context) {
-    final pending = job.applications
-        .where((application) => application.status == 'pending')
-        .length;
+    final isCancelled = _normalizedJobStatus(job.status) == 'cancelled';
+    final assignedApp = _selectedWorker(job);
+    final workerName = assignedApp?.workerName ?? '';
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _JobStatusPill(status: job.status),
-          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  job.title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: GawaGoColors.ink,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: isCancelled
+                      ? const Color(0xFFFBE2E2)
+                      : const Color(0xFFDFF5E3),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  formatStatus(job.status),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: isCancelled
+                        ? const Color(0xFFB3413A)
+                        : GawaGoColors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
           Text(
-            job.title,
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0,
-            ),
+            '${job.jobType} · ${_jobScheduleDisplay(job)} · '
+            '${job.locationLabel.trim().isEmpty ? "Location not set" : _barangay(job)}',
+            style: const TextStyle(fontSize: 12, color: GawaGoColors.textMuted),
           ),
-          const SizedBox(height: 14),
-          _InlineJobMeta(label: 'Offer Rate:', value: _rateLabel(job)),
-          _InlineJobMeta(label: 'Schedule:', value: _jobScheduleDisplay(job)),
-          _InlineJobMeta(
-            label: 'Applicants:',
-            value: '${job.applications.length}',
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: FilledButton(
-              onPressed: onViewDetails,
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF4CAF74),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          const SizedBox(height: 12),
+          if (isCancelled)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F0E8),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.close,
+                    size: 15,
+                    color: Color(0xFF9A9384),
+                  ),
                 ),
-                textStyle: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'No worker was hired',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: GawaGoColors.ink,
+                        ),
+                      ),
+                      const Text(
+                        'Job was cancelled before a worker was assigned.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: GawaGoColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+              ],
+            )
+          else ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 15,
+                  backgroundColor: assignedApp != null
+                      ? GawaGoColors.primary
+                      : const Color(0xFFF3F0E8),
+                  child: Text(
+                    assignedApp != null ? _initial(workerName) : '?',
+                    style: TextStyle(
+                      color: assignedApp != null
+                          ? Colors.white
+                          : const Color(0xFF9A9384),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              assignedApp != null
+                                  ? workerName
+                                  : 'Worker record unavailable',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.5,
+                                color: GawaGoColors.ink,
+                              ),
+                            ),
+                          ),
+                          if ((assignedApp?.workerVerificationStatus ?? '')
+                                  .toLowerCase() ==
+                              'verified') ...[
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.check_circle,
+                              size: 14,
+                              color: GawaGoColors.primary,
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (assignedApp != null)
+                        Text(
+                          assignedApp.workerRatingLabel,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: GawaGoColors.textMuted,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Text(
+                  _rateLabel(job),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: GawaGoColors.ink,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (review != null) ...[
+              Row(
+                children: [
+                  ...List.generate(5, (index) {
+                    final starRating = (review!.rating ?? 0).round();
+                    return Icon(
+                      index < starRating
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      size: 16,
+                      color: const Color(0xFFE0A82E),
+                    );
+                  }),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${(review!.rating ?? 0).toStringAsFixed(1)}/5',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: GawaGoColors.ink,
+                    ),
+                  ),
+                ],
               ),
-              child: const Text('View Details'),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFCFF5FF),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF81E5F1)),
-            ),
-            child: Text(
-              'Hiring progress: ${job.hiredCount}/${job.workerSlots} worker(s) hired. Pending applications: $pending.',
-              style: const TextStyle(
-                color: Color(0xFF00505D),
-                fontSize: 13,
-                height: 1.35,
-                letterSpacing: 0,
+              if (review!.feedback.trim().isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '"${review!.feedback}"',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: GawaGoColors.textMuted,
+                  ),
+                ),
+              ],
+            ] else if (job.canReview)
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onRate,
+                  icon: const Icon(Icons.star_border_rounded, size: 16),
+                  label: const Text('Rate Worker'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: GawaGoColors.ink,
+                    side: const BorderSide(color: GawaGoColors.ink, width: 1.4),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              )
+            else
+              TextButton(
+                onPressed: onViewDetails,
+                style: TextButton.styleFrom(
+                  foregroundColor: GawaGoColors.primary,
+                  padding: EdgeInsets.zero,
+                  alignment: Alignment.centerLeft,
+                ),
+                child: const Text('View Details'),
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InlineJobMeta extends StatelessWidget {
-  const _InlineJobMeta({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 108,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF5F687A),
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Color(0xFF001A4A),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
+          ],
         ],
       ),
     );
@@ -2213,9 +3077,13 @@ class _JobDetailState extends State<_JobDetail> {
               _CompletionReviewPanel(
                 job: job,
                 busy: _busy,
-                onConfirmCompleted:
-                    job.status == 'completion_requested' ||
-                        job.status == 'assigned'
+                // 'assigned' means the worker hasn't marked the job done yet
+                // -- only 'completion_requested' means the worker actually
+                // asked the household to confirm. Web only offers this for
+                // completion_requested; the backend permits assigned to skip
+                // straight to completed, but that isn't a household action
+                // to expose before the worker has requested it.
+                onConfirmCompleted: job.status == 'completion_requested'
                     ? () => _run(
                         () => widget.repository.updateJobStatus(
                           job.id,
@@ -2228,6 +3096,7 @@ class _JobDetailState extends State<_JobDetail> {
               _ApplicantsPanel(
                 job: job,
                 repository: widget.repository,
+                onChanged: _reload,
                 onOpenApplicant: (application) async {
                   await Navigator.of(context).push(
                     MaterialPageRoute(
@@ -2247,6 +3116,38 @@ class _JobDetailState extends State<_JobDetail> {
                 job: job,
                 repository: widget.repository,
                 onChanged: _reload,
+              ),
+              const SizedBox(height: 26),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                  onPressed: () async {
+                    final submitted = await showReportIssueDialog(
+                      context: context,
+                      jobId: job.id,
+                      jobTitle: job.title,
+                      isHousehold: true,
+                      applicants: job.applications
+                          .map(
+                            (application) => ReportApplicantOption(
+                              workerId: application.workerId,
+                              label: application.workerName.isEmpty
+                                  ? application.workerUsername
+                                  : application.workerName,
+                            ),
+                          )
+                          .toList(),
+                    );
+                    if (submitted && context.mounted) {
+                      _message(
+                        'Report submitted. Our admin team will review it.',
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.flag_outlined),
+                  label: const Text('Report an Issue'),
+                ),
               ),
             ],
           );
@@ -2424,6 +3325,11 @@ class _CompletionReviewPanel extends StatelessWidget {
             _WarningBox(
               message:
                   'No worker is assigned yet, so completion controls are not available.',
+            )
+          else if (job.status == 'assigned')
+            const _WarningBox(
+              message:
+                  "You'll be notified once the worker marks this job done.",
             ),
           const SizedBox(height: 14),
           const Divider(color: Color(0xFFD8CDBB)),
@@ -2454,14 +3360,17 @@ class _ApplicantsPanel extends StatelessWidget {
     required this.job,
     required this.repository,
     required this.onOpenApplicant,
+    required this.onChanged,
   });
 
   final HouseholdJob job;
   final HouseholdRepository repository;
   final ValueChanged<HouseholdApplication> onOpenApplicant;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
+    final applicants = _visibleApplicants(job);
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2485,15 +3394,20 @@ class _ApplicantsPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          if (job.applications.isEmpty)
+          if (applicants.isEmpty)
             const _DashedEmptyBox(message: 'No worker applications yet.')
           else
-            ...job.applications.map(
+            ...applicants.map(
               (application) => Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: _ApplicantRow(
+                child: _buildApplicantCard(
+                  context: context,
+                  job: job,
+                  repository: repository,
                   application: application,
-                  onTap: () => onOpenApplicant(application),
+                  topMatchId: _topApplicantId(applicants),
+                  onOpenApplicant: onOpenApplicant,
+                  onChanged: onChanged,
                 ),
               ),
             ),
@@ -2501,6 +3415,257 @@ class _ApplicantsPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The "Applicants" modal the dashboard opens: every worker waiting on a
+/// response for one job, with the three responses on each card.
+Future<void> showApplicantsDialog({
+  required BuildContext context,
+  required HouseholdJob job,
+  required HouseholdRepository repository,
+  required ValueChanged<HouseholdApplication> onOpenApplicant,
+  required VoidCallback onChanged,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) {
+      final applicants = _visibleApplicants(job);
+      final topMatchId = _topApplicantId(applicants);
+      return Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(18, 16, 10, 16),
+              color: GawaGoColors.deepGreen,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'APPLICANTS',
+                          style: TextStyle(
+                            color: GawaGoColors.primaryLight,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.1,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          job.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${applicants.length} applicant'
+                          '${applicants.length == 1 ? '' : 's'} waiting · '
+                          'review and respond below',
+                          style: const TextStyle(
+                            color: GawaGoColors.mutedText,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            if (applicants.isNotEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                color: GawaGoColors.cream,
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: applicants
+                      .map(
+                        (application) => Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            WorkerPhoto(
+                              photoUrl: application.workerProfilePhotoUrl,
+                              name: application.workerName,
+                              size: 26,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              application.workerName.split(' ').first,
+                              style: const TextStyle(
+                                color: GawaGoColors.textMuted,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            Flexible(
+              child: applicants.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        'No workers have applied to this job yet.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: GawaGoColors.textMuted),
+                      ),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.all(14),
+                      itemCount: applicants.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) => _buildApplicantCard(
+                        context: context,
+                        job: job,
+                        repository: repository,
+                        application: applicants[index],
+                        topMatchId: topMatchId,
+                        onOpenApplicant: (application) {
+                          Navigator.of(context).pop();
+                          onOpenApplicant(application);
+                        },
+                        onChanged: () {
+                          Navigator.of(context).pop();
+                          onChanged();
+                        },
+                      ),
+                    ),
+            ),
+            const Divider(height: 1, color: Color(0xFFD8D0C3)),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: TextButton.styleFrom(
+                foregroundColor: GawaGoColors.textMuted,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Rejected/closed applications are history, not something the household
+/// still has to respond to, so the applicant lists leave them out.
+List<HouseholdApplication> _visibleApplicants(HouseholdJob job) => job
+    .applications
+    .where(
+      (application) =>
+          application.status.toLowerCase() != 'rejected' &&
+          application.status.toLowerCase() != 'closed',
+    )
+    .toList();
+
+/// Only badge a "Top match" when there is something to compare against.
+int? _topApplicantId(List<HouseholdApplication> applicants) {
+  final scored = applicants
+      .where((application) => (application.workerMatchScore ?? 0) > 0)
+      .toList();
+  if (scored.length < 2) return null;
+  scored.sort(
+    (a, b) => (b.workerMatchScore ?? 0).compareTo(a.workerMatchScore ?? 0),
+  );
+  return scored.first.id;
+}
+
+Widget _buildApplicantCard({
+  required BuildContext context,
+  required HouseholdJob job,
+  required HouseholdRepository repository,
+  required HouseholdApplication application,
+  required int? topMatchId,
+  required ValueChanged<HouseholdApplication> onOpenApplicant,
+  required VoidCallback onChanged,
+}) {
+  final status = application.status.trim().toLowerCase();
+  final settled =
+      status == 'hired' || status == 'completed' || status == 'hire_requested';
+
+  Future<void> respond(String next) async {
+    try {
+      await repository.setApplicationStatus(application.id, next);
+      onChanged();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              next == 'rejected'
+                  ? 'Application declined.'
+                  : 'Request sent. The worker can accept or reject it.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
+      }
+    }
+  }
+
+  return ApplicantCard(
+    name: application.workerName,
+    locationLabel: application.locationLabel,
+    photoUrl: application.workerProfilePhotoUrl,
+    verified: application.workerVerificationStatus.toLowerCase() == 'verified',
+    matchScore: application.workerMatchScore,
+    ratingLabel: application.workerRatingLabel,
+    ratingCount: application.workerRatingCount,
+    rateLabel: _shortRate(application.workerRateLabel),
+    completedJobs: application.workerCompletedJobs,
+    skills: application.workerSkills,
+    bio: application.workerBio,
+    appliedAgo: formatTimeAgo(application.appliedAt),
+    isTopMatch: topMatchId != null && topMatchId == application.id,
+    statusLabel: settled
+        ? (application.statusLabel.isNotEmpty
+              ? application.statusLabel
+              : applicationStatusLabel(application.status))
+        : null,
+    onDecline: () async {
+      final confirmed = await _confirmDialog(
+        context,
+        title: 'Decline this application?',
+        message: "This can't be undone.",
+        destructive: true,
+      );
+      if (confirmed) await respond('rejected');
+    },
+    onViewProfile: () => onOpenApplicant(application),
+    onSendRequest: () => respond('hire_requested'),
+  );
 }
 
 class _SmartMatchedWorkersPanel extends StatelessWidget {
@@ -2561,90 +3726,41 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
                     .map(
                       (worker) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: _RecommendedWorkerRow(
-                          worker: worker,
-                          onHire: () async {
-                            final existing = _applicationForWorker(job, worker);
-                            if (worker.verificationStatus
-                                    .trim()
-                                    .toLowerCase() !=
-                                'verified') {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'This worker must be verified before they can be hired.',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-                            if (job.hiredCount >= job.workerSlots) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'This job already has enough hired workers.',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-                            final existingStatus = existing?.status
-                                .trim()
-                                .toLowerCase();
-                            if (existingStatus == 'hired') {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'This worker is already hired for this job.',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-                            if (existingStatus == 'hire_requested') {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'A hire request was already sent to this worker.',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-                            try {
-                              if (existing != null) {
-                                await repository.setApplicationStatus(
-                                  existing.id,
-                                  'hired',
-                                );
-                              } else {
-                                await repository.sendHireRequest(
-                                  job.id,
-                                  worker.id,
-                                );
-                              }
-                              onChanged();
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      existing == null
-                                          ? 'Hire request sent.'
-                                          : 'Worker hired.',
-                                    ),
-                                  ),
-                                );
-                              }
-                            } catch (error) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(friendlyApiError(error)),
-                                  ),
-                                );
-                              }
-                            }
-                          },
+                        child: WorkerMatchCard(
+                          name: worker.displayName,
+                          locationLabel: worker.locationLabel,
+                          photoUrl: worker.profilePhotoUrl,
+                          verified:
+                              worker.verificationStatus.toLowerCase() ==
+                              'verified',
+                          matchScore: worker.aiScore,
+                          ratingLabel: worker.ratingLabel,
+                          ratingCount: worker.ratingCount,
+                          distanceLabel: worker.distanceLabel,
+                          completedJobs: worker.completedJobs,
+                          rateLabel: _shortRate(worker.workerRate),
+                          skills: worker.skills,
+                          bio: worker.bio,
+                          requestSent:
+                              _applicationForWorker(
+                                job,
+                                worker,
+                              )?.status.toLowerCase() ==
+                              'hire_requested',
+                          onViewProfile: () => _showWorkerMatchProfile(
+                            context,
+                            repository: repository,
+                            job: job,
+                            worker: worker,
+                            onChanged: onChanged,
+                          ),
+                          onSendRequest: () => _hireRecommendedWorker(
+                            context: context,
+                            repository: repository,
+                            job: job,
+                            worker: worker,
+                            onChanged: onChanged,
+                          ),
                         ),
                       ),
                     )
@@ -2796,175 +3912,91 @@ class _DashedEmptyBox extends StatelessWidget {
   }
 }
 
-class _ApplicantRow extends StatelessWidget {
-  const _ApplicantRow({required this.application, required this.onTap});
-
-  final HouseholdApplication application;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFD8D0C3)),
-          ),
-          child: Row(
-            children: [
-              const CircleAvatar(
-                radius: 18,
-                backgroundColor: Color(0xFFE8F5E9),
-                child: Icon(Icons.person_outline, color: GawaGoColors.primary),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      application.workerName,
-                      style: const TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      application.distanceKm == null
-                          ? applicationStatusLabel(application.status)
-                          : '${applicationStatusLabel(application.status)} | ${application.distanceKm!.toStringAsFixed(1)} km away',
-                      style: const TextStyle(
-                        color: Color(0xFF4A5E4F),
-                        fontSize: 12,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RecommendedWorkerRow extends StatelessWidget {
-  const _RecommendedWorkerRow({required this.worker, required this.onHire});
+/// Two-segment bar showing how much of a worker's AI score came from skill
+/// fit versus proximity, mirroring the breakdown workers see on recommended
+/// jobs. Renders nothing when the worker could not be scored.
+class _AiMatchBreakdown extends StatelessWidget {
+  const _AiMatchBreakdown({required this.worker});
 
   final RecommendedWorker worker;
-  final VoidCallback onHire;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
-      ),
+    final skillShare = worker.skillSharePercent;
+    if (skillShare == null) return const SizedBox.shrink();
+    final proximityShare = 100 - skillShare;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: const Color(0xFFF2EEE6),
-                child: Text(
-                  _initial(worker.username),
-                  style: const TextStyle(
-                    color: Color(0xFF4B6354),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: SizedBox(
+              height: 6,
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: skillShare,
+                    child: Container(color: const Color(0xFF2D7A4F)),
                   ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      worker.username,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        StatusBadge(
-                          status: worker.verificationStatus,
-                          prefix: 'Verification',
-                        ),
-                        _SoftFactPill(worker.distanceLabel),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _CompactProfileFact(label: 'Rating', value: worker.ratingLabel),
-          _CompactProfileFact(
-            label: 'Match Score',
-            value: worker.matchScore.toStringAsFixed(1),
-          ),
-          _CompactProfileFact(
-            label: 'Skills',
-            value: worker.skills.isEmpty
-                ? 'No skills listed'
-                : worker.skills.join(', '),
-          ),
-          if (worker.workerRate.isNotEmpty)
-            _CompactProfileFact(label: 'Worker Rate', value: worker.workerRate),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: onHire,
-              icon: const Icon(Icons.person_add_alt_1),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF4CAF74),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              label: const Text(
-                'Send Hire Request',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+                  Expanded(
+                    flex: proximityShare,
+                    child: Container(color: const Color(0xFFF0C040)),
+                  ),
+                ],
               ),
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Why this match: $skillShare% skill fit, $proximityShare% proximity'
+            '${worker.exactSkillMatch ? ' — exact skill match' : ''}',
+            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 11),
           ),
         ],
       ),
     );
   }
+}
+
+/// A match card's "View Profile" opens the same household-facing profile an
+/// applicant gets, so a worker looks the same however the household reached
+/// them.
+Future<void> _showWorkerMatchProfile(
+  BuildContext context, {
+  required HouseholdRepository repository,
+  required HouseholdJob job,
+  required RecommendedWorker worker,
+  required VoidCallback onChanged,
+}) {
+  final requested = _applicationForWorker(
+    job,
+    worker,
+  )?.status.trim().toLowerCase();
+  return Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => _WorkerProfileScreen(
+        subject: _WorkerProfileSubject.fromRecommendation(worker),
+        repository: repository,
+        hireEnabled: requested != 'hired' && requested != 'hire_requested',
+        hireLabel: requested == 'hired'
+            ? 'Hired'
+            : requested == 'hire_requested'
+            ? 'Request Sent'
+            : null,
+        matchBreakdown: _AiMatchBreakdown(worker: worker),
+        onHire: () => _hireRecommendedWorker(
+          context: context,
+          repository: repository,
+          job: job,
+          worker: worker,
+          onChanged: onChanged,
+        ),
+      ),
+    ),
+  );
 }
 
 class _CompactProfileFact extends StatelessWidget {
@@ -3008,251 +4040,6 @@ class _CompactProfileFact extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _SoftFactPill extends StatelessWidget {
-  const _SoftFactPill(this.label);
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF5EE),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFBBD8C4)),
-      ),
-      child: Text(
-        label.isEmpty ? 'Distance unavailable' : label,
-        style: const TextStyle(
-          color: Color(0xFF25853E),
-          fontSize: 12,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
-}
-
-class _ApplicantProfileCard extends StatelessWidget {
-  const _ApplicantProfileCard({
-    required this.job,
-    required this.application,
-    required this.reviews,
-  });
-
-  final HouseholdJob job;
-  final HouseholdApplication application;
-  final List<GawaGoReview> reviews;
-
-  @override
-  Widget build(BuildContext context) {
-    final feedback = reviews
-        .where(
-          (review) =>
-              review.feedback.trim().isNotEmpty || review.rating != null,
-        )
-        .take(3)
-        .toList();
-    final workerName = application.workerName.isEmpty
-        ? application.workerUsername
-        : application.workerName;
-
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 28,
-                backgroundColor: const Color(0xFFF2EEE6),
-                backgroundImage: application.workerProfilePhotoUrl.isEmpty
-                    ? null
-                    : NetworkImage(application.workerProfilePhotoUrl),
-                child: application.workerProfilePhotoUrl.isEmpty
-                    ? Text(
-                        _initial(workerName),
-                        style: const TextStyle(
-                          color: Color(0xFF4B6354),
-                          fontSize: 19,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      workerName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: GawaGoColors.ink,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '@${application.workerUsername}',
-                      style: const TextStyle(
-                        color: Color(0xFF4A5E4F),
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              StatusBadge(
-                status: application.workerVerificationStatus,
-                prefix: 'Verification',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _ApplicantProfileFact(
-                  label: 'Rate',
-                  value: application.workerRateLabel.isEmpty
-                      ? 'Not disclosed'
-                      : application.workerRateLabel,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _ApplicantProfileFact(
-                  label: 'Rating',
-                  value: application.workerRatingLabel,
-                ),
-              ),
-              if (application.distanceKm != null) ...[
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _ApplicantProfileFact(
-                    label: 'Distance',
-                    value: '${application.distanceKm!.toStringAsFixed(1)} km',
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 14),
-          _SmallLabel('Skills'),
-          const SizedBox(height: 5),
-          Text(
-            application.workerSkills.isEmpty
-                ? job.requiredSkill
-                : application.workerSkills.join(', '),
-            style: const TextStyle(
-              color: Color(0xFF355444),
-              fontSize: 14,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 14),
-          _SmallLabel('Experience'),
-          const SizedBox(height: 5),
-          Text(
-            '${application.workerYearsExperience} year(s)',
-            style: const TextStyle(color: Color(0xFF355444), fontSize: 14),
-          ),
-          if (application.workerBio.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            _SmallLabel('About the worker'),
-            const SizedBox(height: 5),
-            Text(
-              application.workerBio,
-              style: const TextStyle(
-                color: Color(0xFF355444),
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-          ],
-          if (application.note.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            _SmallLabel('Application Note'),
-            const SizedBox(height: 5),
-            Text(
-              application.note,
-              style: const TextStyle(
-                color: Color(0xFF355444),
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-          ],
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Divider(height: 1),
-          ),
-          const Text(
-            'Recent Feedback',
-            style: TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (feedback.isEmpty)
-            const Text(
-              'No feedback submitted yet.',
-              style: TextStyle(color: Color(0xFF5F687A), fontSize: 13),
-            )
-          else
-            ...feedback.map((review) => _ApplicantFeedbackItem(review: review)),
-          const SizedBox(height: 14),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: StatusBadge(
-              status: application.status,
-              prefix: 'Application',
-              label: applicationStatusLabel(application.status),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ApplicantProfileFact extends StatelessWidget {
-  const _ApplicantProfileFact({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SmallLabel(label),
-        const SizedBox(height: 4),
-        Text(
-          value.isEmpty ? 'Not available' : value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF244C3A),
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            height: 1.25,
-          ),
-        ),
-      ],
     );
   }
 }
@@ -3305,704 +4092,6 @@ class _ApplicantFeedbackItem extends StatelessWidget {
   }
 }
 
-class _ServiceReview extends StatefulWidget {
-  const _ServiceReview({
-    required this.repository,
-    required this.jobId,
-    required this.onChanged,
-  });
-
-  final HouseholdRepository repository;
-  final int jobId;
-  final VoidCallback onChanged;
-
-  @override
-  State<_ServiceReview> createState() => _ServiceReviewState();
-}
-
-class _ServiceReviewState extends State<_ServiceReview> {
-  late Future<HouseholdJob> _future = widget.repository.getJob(widget.jobId);
-  bool _busy = false;
-  bool _reviewOpen = false;
-  double _rating = 5;
-  final _feedback = TextEditingController();
-
-  @override
-  void dispose() {
-    _feedback.dispose();
-    super.dispose();
-  }
-
-  void _reload() {
-    setState(() {
-      _future = widget.repository.getJob(widget.jobId);
-    });
-    widget.onChanged();
-  }
-
-  Future<void> _confirmCompleted(HouseholdJob job) async {
-    setState(() => _busy = true);
-    try {
-      await widget.repository.updateJobStatus(job.id, 'completed');
-      _reload();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Job marked as completed.')),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _submitReview(
-    HouseholdJob job,
-    HouseholdApplication application,
-  ) async {
-    setState(() => _busy = true);
-    try {
-      await widget.repository.reviewWorker(
-        job,
-        application,
-        rating: _rating,
-        feedback: _feedback.text.trim(),
-      );
-      _feedback.clear();
-      setState(() => _reviewOpen = false);
-      _reload();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Review submitted.')));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AuthenticatedDetailScaffold(
-      title: 'Service Review',
-      child: FutureBuilder<HouseholdJob>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _ServiceReviewShell(
-              title: 'Service Review',
-              onClose: () => Navigator.pop(context),
-              child: AppErrorState(error: snapshot.error, onRetry: _reload),
-            );
-          }
-          if (!snapshot.hasData) {
-            return _ServiceReviewShell(
-              title: 'Service Review',
-              onClose: () => Navigator.pop(context),
-              child: const AppLoadingState(),
-            );
-          }
-          final job = snapshot.data!;
-          final selectedWorker = _selectedWorker(job);
-          final canConfirm =
-              selectedWorker != null &&
-              (job.status == 'completion_requested' ||
-                  job.status == 'assigned');
-          final canReview =
-              selectedWorker != null &&
-              job.status == 'completed' &&
-              job.canReview;
-          return _ServiceReviewShell(
-            title: job.title,
-            onClose: () => Navigator.pop(context),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
-              children: [
-                _WorkerReviewCard(job: job, application: selectedWorker),
-                const SizedBox(height: 14),
-                _JobReviewDetailsCard(job: job),
-                const SizedBox(height: 14),
-                _ServiceReviewProgressCard(
-                  job: job,
-                  application: selectedWorker,
-                  reviewOpen: _reviewOpen,
-                  rating: _rating,
-                  feedback: _feedback,
-                  busy: _busy,
-                  onRatingChanged: (value) => setState(() => _rating = value),
-                  onConfirmCompleted: canConfirm
-                      ? () => _confirmCompleted(job)
-                      : null,
-                  onOpenReview: canReview
-                      ? () => setState(() => _reviewOpen = true)
-                      : null,
-                  onSubmitReview: canReview
-                      ? () => _submitReview(job, selectedWorker)
-                      : null,
-                  onDone: () => Navigator.pop(context),
-                  onViewReviews: () {
-                    Navigator.pop(context);
-                    widget.onChanged();
-                  },
-                ),
-                if (job.images.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  _ServiceReviewCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Reference Images',
-                          style: TextStyle(
-                            color: GawaGoColors.ink,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        JobImageGallery(images: job.images),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _ServiceReviewShell extends StatelessWidget {
-  const _ServiceReviewShell({
-    required this.title,
-    required this.onClose,
-    required this.child,
-  });
-
-  final String title;
-  final VoidCallback onClose;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.all(10),
-        constraints: const BoxConstraints(maxWidth: 620),
-        decoration: BoxDecoration(
-          color: GawaGoColors.cream,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'SERVICE REVIEW',
-                    style: TextStyle(
-                      color: GawaGoColors.primary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: GawaGoColors.ink,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                      height: 1.05,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  OutlinedButton(
-                    onPressed: onClose,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF355444),
-                      side: const BorderSide(color: Color(0xFFD8D0C3)),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: const Text('Close'),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFFD8D0C3)),
-            Expanded(child: child),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _WorkerReviewCard extends StatelessWidget {
-  const _WorkerReviewCard({required this.job, required this.application});
-
-  final HouseholdJob job;
-  final HouseholdApplication? application;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasWorker = application != null;
-    final initial = hasWorker ? _initial(application!.workerName) : 'W';
-    return _ServiceReviewCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 34,
-            backgroundColor: const Color(0xFFF2EEE6),
-            child: Text(
-              initial,
-              style: const TextStyle(
-                color: Color(0xFF4B6354),
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            hasWorker ? application!.workerName : 'No worker selected',
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            hasWorker
-                ? 'Worker profile summary for this selected household job.'
-                : 'Worker profile summary for this selected household job.',
-            style: const TextStyle(
-              color: Color(0xFF4A5E4F),
-              fontSize: 15,
-              height: 1.25,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 18),
-          _ReviewInfoBox(
-            label: 'Verification',
-            value: hasWorker
-                ? formatStatus(application!.workerVerificationStatus)
-                : 'Not available',
-          ),
-          _ReviewInfoBox(
-            label: 'Rating',
-            value: hasWorker
-                ? application!.workerRatingLabel
-                : 'No ratings yet',
-          ),
-          _ReviewInfoBox(
-            label: 'Skills',
-            value: hasWorker && application!.workerSkills.isNotEmpty
-                ? application!.workerSkills.join(', ')
-                : job.requiredSkill,
-          ),
-          _ReviewInfoBox(
-            label: 'Location',
-            value: hasWorker && application!.locationLabel.isNotEmpty
-                ? application!.locationLabel
-                : _barangay(job),
-          ),
-          _ReviewInfoBox(
-            label: 'Worker Rate',
-            value: hasWorker && application!.workerRateLabel.isNotEmpty
-                ? application!.workerRateLabel
-                : _rateLabel(job),
-          ),
-          if (hasWorker && application!.distanceKm != null)
-            _ReviewInfoBox(
-              label: 'Distance',
-              value: '${application!.distanceKm!.toStringAsFixed(1)} km away',
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _JobReviewDetailsCard extends StatelessWidget {
-  const _JobReviewDetailsCard({required this.job});
-
-  final HouseholdJob job;
-
-  @override
-  Widget build(BuildContext context) {
-    return _ServiceReviewCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Job Details',
-            style: TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 21,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _PlainDetail(label: 'Service', value: job.jobType),
-          _PlainDetail(label: 'Rate', value: _rateLabel(job)),
-          _PlainDetail(label: 'Schedule', value: _scheduleLabel(job.schedule)),
-          _PlainDetail(label: 'Barangay', value: _barangay(job)),
-          _PlainDetail(label: 'Status', value: formatStatus(job.status)),
-          _PlainDetail(
-            label: 'Applications',
-            value: '${job.applications.length}',
-          ),
-          if (job.description.trim().isNotEmpty)
-            _PlainDetail(label: 'Description', value: job.description.trim()),
-        ],
-      ),
-    );
-  }
-}
-
-class _ServiceReviewProgressCard extends StatelessWidget {
-  const _ServiceReviewProgressCard({
-    required this.job,
-    required this.application,
-    required this.reviewOpen,
-    required this.rating,
-    required this.feedback,
-    required this.busy,
-    required this.onRatingChanged,
-    required this.onConfirmCompleted,
-    required this.onOpenReview,
-    required this.onSubmitReview,
-    required this.onDone,
-    required this.onViewReviews,
-  });
-
-  final HouseholdJob job;
-  final HouseholdApplication? application;
-  final bool reviewOpen;
-  final double rating;
-  final TextEditingController feedback;
-  final bool busy;
-  final ValueChanged<double> onRatingChanged;
-  final VoidCallback? onConfirmCompleted;
-  final VoidCallback? onOpenReview;
-  final VoidCallback? onSubmitReview;
-  final VoidCallback onDone;
-  final VoidCallback onViewReviews;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasWorker = application != null;
-    final status = job.status.trim().toLowerCase();
-    final completed = status == 'completed';
-    final waitingForHousehold = status == 'completion_requested';
-    final reviewCompleted = completed && !job.canReview;
-    final showReviewForm = reviewOpen && onSubmitReview != null;
-
-    return _ServiceReviewCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ReviewNotice(
-            message: completed
-                ? 'Job is completed. You can review the worker profile and your submitted rating here.'
-                : waitingForHousehold
-                ? 'Worker marked this service as done. Confirm completion when the work is accepted.'
-                : hasWorker
-                ? 'Review the completed work, then confirm completion.'
-                : 'No worker is assigned yet, so completion controls are not available.',
-            success: reviewCompleted,
-          ),
-          const SizedBox(height: 20),
-          _ReviewStep(
-            number: 1,
-            title: 'Worker hired',
-            body: 'Job started after household accepted the worker.',
-            done: hasWorker,
-          ),
-          _ReviewStep(
-            number: 2,
-            title: 'Worker requests completion',
-            body: 'Worker marks service as done.',
-            done: waitingForHousehold || completed,
-            active: hasWorker && !waitingForHousehold && !completed,
-          ),
-          _ReviewStep(
-            number: 3,
-            title: 'Confirm completed',
-            body: 'Household confirms completion.',
-            done: completed,
-            active: waitingForHousehold,
-          ),
-          _ReviewStep(
-            number: 4,
-            title: 'Rate worker',
-            body: 'Household submits rating and feedback.',
-            done: reviewCompleted,
-            active: completed && !reviewCompleted,
-          ),
-          if (onConfirmCompleted != null) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: busy ? null : onConfirmCompleted,
-                icon: busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.task_alt),
-                label: Text(busy ? 'Completing...' : 'Confirm Completed'),
-              ),
-            ),
-          ],
-          if (onOpenReview != null && !showReviewForm) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: busy ? null : onOpenReview,
-                icon: const Icon(Icons.star_outline),
-                label: const Text('Rate Worker'),
-              ),
-            ),
-          ],
-          if (showReviewForm) ...[
-            const SizedBox(height: 20),
-            const Divider(color: Color(0xFFD8CDBB)),
-            const SizedBox(height: 12),
-            const Text(
-              'Rating for worker',
-              style: TextStyle(
-                color: Color(0xFF1A2A1E),
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              children: List.generate(5, (index) {
-                final value = index + 1.0;
-                return IconButton(
-                  tooltip: '$value stars',
-                  onPressed: busy ? null : () => onRatingChanged(value),
-                  icon: Icon(
-                    rating >= value ? Icons.star : Icons.star_border,
-                    color: const Color(0xFFF0B429),
-                    size: 32,
-                  ),
-                );
-              }),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: feedback,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Feedback for worker',
-                hintText: 'Write feedback about the worker...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: busy ? null : onSubmitReview,
-                child: Text(busy ? 'Submitting...' : 'Submit Review'),
-              ),
-            ),
-          ],
-          if (reviewCompleted) ...[
-            const SizedBox(height: 20),
-            _ReviewNotice(
-              message:
-                  'Review completed. You rated this worker ${rating.toStringAsFixed(1)}/5.',
-              success: true,
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: onDone,
-                    child: const Text(
-                      'Done',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: onViewReviews,
-                    child: const Text(
-                      'View all Reviews',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ReviewNotice extends StatelessWidget {
-  const _ReviewNotice({required this.message, this.success = false});
-
-  final String message;
-  final bool success;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      decoration: BoxDecoration(
-        color: success ? const Color(0xFFE8F5E9) : const Color(0xFFFFF7E2),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: success ? const Color(0xFF9BD9A9) : const Color(0xFFFFC04D),
-        ),
-      ),
-      child: Text(
-        message,
-        style: TextStyle(
-          color: success ? const Color(0xFF25853E) : const Color(0xFF8A5B00),
-          fontSize: 15,
-          height: 1.35,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
-}
-
-class _ReviewStep extends StatelessWidget {
-  const _ReviewStep({
-    required this.number,
-    required this.title,
-    required this.body,
-    this.done = false,
-    this.active = false,
-  });
-
-  final int number;
-  final String title;
-  final String body;
-  final bool done;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = done
-        ? const Color(0xFFBFEFD5)
-        : active
-        ? const Color(0xFF4CAF74)
-        : const Color(0xFFF8F5EE);
-    final textColor = active ? Colors.white : GawaGoColors.ink;
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFEFB),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Text(
-              '$number',
-              style: TextStyle(
-                color: textColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xFF4A5E4F),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  body,
-                  style: const TextStyle(
-                    color: Color(0xFF4A5E4F),
-                    fontSize: 14,
-                    height: 1.2,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ServiceReviewCard extends StatelessWidget {
   const _ServiceReviewCard({required this.child});
 
@@ -4018,90 +4107,6 @@ class _ServiceReviewCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFD8D0C3)),
       ),
       child: child,
-    );
-  }
-}
-
-class _ReviewInfoBox extends StatelessWidget {
-  const _ReviewInfoBox({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD8CDBB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF1A2A1E),
-              fontSize: 14,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value.isEmpty ? 'Not available' : value,
-            style: const TextStyle(
-              color: Color(0xFF4A5E4F),
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-              height: 1.25,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PlainDetail extends StatelessWidget {
-  const _PlainDetail({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF1A2A1E),
-              fontSize: 14,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value.isEmpty ? 'Not specified' : value,
-            style: const TextStyle(
-              color: Color(0xFF4A5E4F),
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-              height: 1.25,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -4134,77 +4139,40 @@ class _ApplicantDetail extends StatelessWidget {
   }
 
   Future<void> _review(BuildContext context) async {
-    double rating = 5;
-    final feedback = TextEditingController();
-    final submit = await showDialog<bool>(
+    final submitted = await showRateReviewDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Review Worker'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButton<double>(
-                value: rating,
-                items: [1, 2, 3, 4, 5]
-                    .map(
-                      (value) => DropdownMenuItem(
-                        value: value.toDouble(),
-                        child: Text('$value stars'),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => setDialogState(() => rating = value ?? 5),
-              ),
-              TextField(
-                controller: feedback,
-                maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Feedback'),
-              ),
-            ],
+      workerName: application.workerName,
+      workerInitial: _initial(application.workerName),
+      workerVerified:
+          application.workerVerificationStatus.toLowerCase() == 'verified',
+      onSubmit:
+          ({
+            required rating,
+            required feedback,
+            qualityOfWork,
+            punctuality,
+            communication,
+            professionalism,
+          }) => repository.reviewWorker(
+            job,
+            application,
+            rating: rating,
+            feedback: feedback,
+            qualityOfWork: qualityOfWork,
+            punctuality: punctuality,
+            communication: communication,
+            professionalism: professionalism,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Submit'),
-            ),
-          ],
-        ),
-      ),
     );
-    if (submit == true) {
-      try {
-        await repository.reviewWorker(
-          job,
-          application,
-          rating: rating,
-          feedback: feedback.text,
-        );
-        if (context.mounted) Navigator.pop(context);
-      } catch (error) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
-        }
-      }
+    if (submitted) {
+      onChanged();
+      if (context.mounted) Navigator.pop(context);
     }
-    feedback.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final actions = <Widget>[
-      if (application.status == 'pending')
-        FilledButton.icon(
-          onPressed: () => _action(context, 'hired'),
-          icon: const Icon(Icons.person_add_alt_1),
-          label: const Text('Accept Applicant'),
-        ),
       if (application.status == 'pending')
         OutlinedButton.icon(
           onPressed: () => _action(context, 'rejected'),
@@ -4220,41 +4188,30 @@ class _ApplicantDetail extends StatelessWidget {
           label: const Text('Review Worker'),
         ),
     ];
-    return AuthenticatedDetailScaffold(
-      title: 'Applicant Details',
-      bottomNavigationBar: PersistentActionBar(children: actions),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-        children: [
-          FutureBuilder<List<GawaGoReview>>(
-            future: repository.getWorkerReviews(application.workerUsername),
-            builder: (context, snapshot) {
-              return _ApplicantProfileCard(
-                job: job,
-                application: application,
-                reviews: snapshot.data ?? const [],
-              );
-            },
-          ),
-          const SizedBox(height: 20),
-          LocationRouteMap(
-            start:
-                application.workerLatitude == null ||
-                    application.workerLongitude == null
-                ? null
-                : LatLng(
-                    application.workerLatitude!,
-                    application.workerLongitude!,
-                  ),
-            end: LatLng(job.latitude, job.longitude),
-            startLabel: 'Worker',
-            endLabel: 'Job',
-            routePoints: application.routePoints
-                .map((point) => LatLng(point.latitude, point.longitude))
-                .toList(),
-            roadDistanceKm: application.distanceKm,
-          ),
-        ],
+    return _WorkerProfileScreen(
+      subject: _WorkerProfileSubject.fromApplication(application),
+      repository: repository,
+      hireEnabled: application.status == 'pending',
+      hireLabel: application.status == 'pending'
+          ? null
+          : (application.statusLabel.isNotEmpty
+                ? application.statusLabel
+                : applicationStatusLabel(application.status)),
+      onHire: () => _action(context, 'hired'),
+      bottomActions: actions,
+      mapPanel: LocationRouteMap(
+        start:
+            application.workerLatitude == null ||
+                application.workerLongitude == null
+            ? null
+            : LatLng(application.workerLatitude!, application.workerLongitude!),
+        end: LatLng(job.latitude, job.longitude),
+        startLabel: 'Worker',
+        endLabel: 'Job',
+        routePoints: application.routePoints
+            .map((point) => LatLng(point.latitude, point.longitude))
+            .toList(),
+        roadDistanceKm: application.distanceKm,
       ),
     );
   }
@@ -5747,10 +5704,558 @@ class _Card extends StatelessWidget {
   );
 }
 
+/// Post-a-job landing screen: the workers the AI recommender ranked highest
+/// for the job that was just created.
+typedef _ScatterTag = ({
+  String label,
+  double baseLeft,
+  double baseTop,
+  double left,
+  double top,
+  double rotate,
+});
+
+/// The animated "finding workers" moment shown right after posting a job,
+/// while the AI match is computed -- mirrors web's .worker-ai-hero
+/// (AppViews.jsx: HOUSEHOLD_SCAN_STATUS_PHASES, householdScatterTags).
+/// Floating skill-tag chips jitter in place and the status line cycles
+/// through the same three phases web uses, so posting a job feels the same
+/// on both platforms instead of mobile just showing a bare spinner.
+class _FindingWorkersHero extends StatefulWidget {
+  const _FindingWorkersHero({required this.job});
+
+  final HouseholdJob job;
+
+  @override
+  State<_FindingWorkersHero> createState() => _FindingWorkersHeroState();
+}
+
+class _FindingWorkersHeroState extends State<_FindingWorkersHero> {
+  static const _phases = [
+    'Scanning available workers nearby…',
+    'Comparing worker skills to your job…',
+    'Ranking by skill fit and travel distance…',
+  ];
+
+  final _random = math.Random();
+  int _phaseIndex = 0;
+  late List<_ScatterTag> _tags = _buildTags();
+  Timer? _phaseTimer;
+  Timer? _jitterTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _phaseTimer = Timer.periodic(const Duration(milliseconds: 900), (_) {
+      if (!mounted) return;
+      setState(() => _phaseIndex = (_phaseIndex + 1) % _phases.length);
+    });
+    _jitterTimer = Timer.periodic(const Duration(milliseconds: 620), (_) {
+      if (!mounted) return;
+      setState(() => _tags = _tags.map(_jitter).toList());
+    });
+  }
+
+  @override
+  void dispose() {
+    _phaseTimer?.cancel();
+    _jitterTimer?.cancel();
+    super.dispose();
+  }
+
+  List<_ScatterTag> _buildTags() {
+    final labels = <String>{
+      widget.job.requiredSkill,
+      widget.job.jobType,
+      'Skill match',
+      'Verified workers',
+      'Travel distance',
+      'Nearby workers',
+    }.where((label) => label.trim().isNotEmpty).take(6).toList();
+    final tags = <_ScatterTag>[
+      for (var i = 0; i < labels.length; i++)
+        (
+          label: labels[i],
+          baseLeft: (i % 3) * 30.0 + 4,
+          baseTop: (i ~/ 3) * 38.0 + 6,
+          left: 0,
+          top: 0,
+          rotate: 0,
+        ),
+    ];
+    return tags.map(_jitter).toList();
+  }
+
+  _ScatterTag _jitter(_ScatterTag tag) => (
+    label: tag.label,
+    baseLeft: tag.baseLeft,
+    baseTop: tag.baseTop,
+    left: tag.baseLeft + _random.nextDouble() * 8,
+    top: tag.baseTop + _random.nextDouble() * 10,
+    rotate: _random.nextDouble() * 16 - 8,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final stageWidth = MediaQuery.sizeOf(context).width - 24 - 40;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [GawaGoColors.deepGreen, Color(0xFF1A4A2E)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'JOB POSTED',
+            style: TextStyle(
+              color: GawaGoColors.mutedText,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Finding workers for your job',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${widget.job.title.isEmpty ? "Your job" : widget.job.title} is live. '
+            "We're matching it to available workers nearby by skill fit and "
+            'travel distance.',
+            style: const TextStyle(
+              color: Color(0xFFD7E5DB),
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 22),
+          SizedBox(
+            height: 130,
+            width: double.infinity,
+            child: Stack(
+              children: _tags
+                  .map(
+                    (tag) => AnimatedPositioned(
+                      duration: const Duration(milliseconds: 600),
+                      curve: Curves.easeInOut,
+                      left: stageWidth > 0
+                          ? (tag.left / 100).clamp(0.0, 1.0) * stageWidth
+                          : 0,
+                      top: tag.top,
+                      child: Transform.rotate(
+                        angle: tag.rotate * math.pi / 180,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          child: Text(
+                            tag.label,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Center(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: Text(
+                _phases[_phaseIndex],
+                key: ValueKey(_phaseIndex),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _JobMatches extends StatefulWidget {
+  const _JobMatches({
+    required this.repository,
+    required this.job,
+    required this.onChanged,
+    required this.onOpenJob,
+  });
+
+  final HouseholdRepository repository;
+  final HouseholdJob job;
+  final VoidCallback onChanged;
+  final Future<void> Function(int jobId) onOpenJob;
+
+  @override
+  State<_JobMatches> createState() => _JobMatchesState();
+}
+
+class _JobMatchesState extends State<_JobMatches> {
+  // Mirrors web's AI_SCAN_MIN_DURATION_MS (AppViews.jsx): the animated
+  // "finding workers" moment stays up at least this long even if the API
+  // responds instantly, so it reads as a real search rather than a flicker.
+  static const _minScanDuration = Duration(milliseconds: 2400);
+
+  late Future<List<RecommendedWorker>> _future = _load();
+  bool _minDurationElapsed = false;
+  String _skillFilter = 'All';
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(_minScanDuration, () {
+      if (mounted) setState(() => _minDurationElapsed = true);
+    });
+  }
+
+  Future<List<RecommendedWorker>> _load() =>
+      widget.repository.getRecommendedWorkers(widget.job.id, rank: 'ai');
+
+  void _reload() {
+    // Block body, not an arrow body -- see the other _reload() fixes above
+    // for why an arrow body here throws "setState() callback argument
+    // returned a Future" at runtime.
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AuthenticatedDetailScaffold(
+      title: 'Recommended Workers',
+      child: RefreshIndicator(
+        onRefresh: () async => _reload(),
+        child: FutureBuilder<List<RecommendedWorker>>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                children: [
+                  AppErrorState(error: snapshot.error, onRetry: _reload),
+                ],
+              );
+            }
+            if (!snapshot.hasData || !_minDurationElapsed) {
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                children: [_FindingWorkersHero(job: widget.job)],
+              );
+            }
+            final workers = snapshot.data!;
+            // Chips come from the skills these matches actually list, so the
+            // row never offers a filter that empties the list.
+            final skillOptions = <String>[
+              'All',
+              ...{for (final worker in workers) ...worker.skills},
+            ];
+            if (!skillOptions.contains(_skillFilter)) {
+              _skillFilter = 'All';
+            }
+            final visible = _skillFilter == 'All'
+                ? workers
+                : workers
+                      .where((worker) => worker.skills.contains(_skillFilter))
+                      .toList();
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+              children: [
+                _MatchesHeader(
+                  jobTitle: widget.job.title,
+                  skillOptions: skillOptions,
+                  selected: _skillFilter,
+                  onSelect: (value) => setState(() => _skillFilter = value),
+                ),
+                const SizedBox(height: 14),
+                if (visible.isEmpty)
+                  _DashedEmptyBox(
+                    message: workers.isEmpty
+                        ? 'No workers matched this job yet. Workers need listed '
+                              'skills, a saved location, and must fall inside the '
+                              "job's search radius."
+                        : 'No matched worker lists $_skillFilter yet. Pick another '
+                              'category to see the rest.',
+                  )
+                else
+                  ...visible.map(
+                    (worker) => Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: WorkerMatchCard(
+                        name: worker.displayName,
+                        locationLabel: worker.locationLabel,
+                        photoUrl: worker.profilePhotoUrl,
+                        verified:
+                            worker.verificationStatus.toLowerCase() ==
+                            'verified',
+                        matchScore: worker.aiScore,
+                        ratingLabel: worker.ratingLabel,
+                        ratingCount: worker.ratingCount,
+                        distanceLabel: worker.distanceLabel,
+                        completedJobs: worker.completedJobs,
+                        rateLabel: _shortRate(worker.workerRate),
+                        skills: worker.skills,
+                        bio: worker.bio,
+                        requestSent:
+                            _applicationForWorker(
+                              widget.job,
+                              worker,
+                            )?.status.toLowerCase() ==
+                            'hire_requested',
+                        onViewProfile: () => _showWorkerMatchProfile(
+                          context,
+                          repository: widget.repository,
+                          job: widget.job,
+                          worker: worker,
+                          onChanged: widget.onChanged,
+                        ),
+                        onSendRequest: () => _hireRecommendedWorker(
+                          context: context,
+                          repository: widget.repository,
+                          job: widget.job,
+                          worker: worker,
+                          onChanged: widget.onChanged,
+                        ),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                OutlinedButton(
+                  onPressed: () => widget.onOpenJob(widget.job.id),
+                  child: const Text('View Job Details'),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// "PHP 650.00 / Per Day" -> "PHP 650/day", so the rate still fits the pill
+/// that sits over a match card's photo.
+String _shortRate(String rate) {
+  final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(rate);
+  if (match == null) return rate;
+  final amount = double.tryParse(match.group(1)!);
+  if (amount == null) return rate;
+  final whole = amount.truncateToDouble() == amount
+      ? amount.toStringAsFixed(0)
+      : amount.toStringAsFixed(2);
+  return rate.toLowerCase().contains('hour')
+      ? 'PHP $whole/hr'
+      : 'PHP $whole/day';
+}
+
+/// Page heading for the AI match list: the eyebrow/title/weights line, the
+/// live-matches badge, and the skill filter row.
+class _MatchesHeader extends StatelessWidget {
+  const _MatchesHeader({
+    required this.jobTitle,
+    required this.skillOptions,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final String jobTitle;
+  final List<String> skillOptions;
+  final String selected;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Expanded(
+              child: Text(
+                'AI MATCHED WORKERS',
+                style: TextStyle(
+                  color: GawaGoColors.primary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.1,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8F5E9),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  CircleAvatar(
+                    radius: 3,
+                    backgroundColor: GawaGoColors.primary,
+                  ),
+                  SizedBox(width: 6),
+                  Text(
+                    'Live matches',
+                    style: TextStyle(
+                      color: GawaGoColors.primary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          jobTitle,
+          style: const TextStyle(
+            color: GawaGoColors.ink,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Ranked by skill fit (70%) and travel distance (30%).',
+          style: TextStyle(color: GawaGoColors.textMuted, fontSize: 12.5),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 36,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: skillOptions.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final skill = skillOptions[index];
+              final active = skill == selected;
+              return GestureDetector(
+                onTap: () => onSelect(skill),
+                child: Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: active ? GawaGoColors.deepGreen : Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: active
+                          ? GawaGoColors.deepGreen
+                          : const Color(0xFFD8D0C3),
+                    ),
+                  ),
+                  child: Text(
+                    skill,
+                    style: TextStyle(
+                      color: active ? Colors.white : GawaGoColors.ink,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Send a hire request to a recommended worker.
+///
+/// Shared by the job detail panel and the post-a-job matches screen. The
+/// guards mirror the backend's own rules so the household gets an immediate
+/// answer instead of a round-trip failure.
+Future<void> _hireRecommendedWorker({
+  required BuildContext context,
+  required HouseholdRepository repository,
+  required HouseholdJob job,
+  required RecommendedWorker worker,
+  required VoidCallback onChanged,
+}) async {
+  void notify(String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  if (worker.verificationStatus.trim().toLowerCase() != 'verified') {
+    notify('This worker must be verified before they can be hired.');
+    return;
+  }
+  if (job.hiredCount >= job.workerSlots) {
+    notify('This job already has enough hired workers.');
+    return;
+  }
+
+  final existing = _applicationForWorker(job, worker);
+  final existingStatus = existing?.status.trim().toLowerCase();
+  if (existingStatus == 'hired') {
+    notify('This worker is already hired for this job.');
+    return;
+  }
+  if (existingStatus == 'hire_requested') {
+    notify('A hire request was already sent to this worker.');
+    return;
+  }
+
+  try {
+    // Always an offer the worker accepts, never a booking made for them --
+    // an applicant the household picks is asked the same way a matched
+    // worker is.
+    if (existing != null) {
+      await repository.setApplicationStatus(existing.id, 'hire_requested');
+    } else {
+      await repository.sendHireRequest(job.id, worker.id);
+    }
+    onChanged();
+    notify('Request sent. The worker can accept or reject it.');
+  } catch (error) {
+    notify(friendlyApiError(error));
+  }
+}
+
 String _title(_Page page) => switch (page) {
   _Page.dashboard => 'Dashboard',
   _Page.postJob => 'Post a Job',
   _Page.jobs => 'My Jobs',
+  _Page.myReports => 'My Reports',
   _Page.profile => 'My Profile',
   _Page.reviews => 'Reviews & Feedback',
   _Page.verification => 'Get Verified',
@@ -5761,6 +6266,7 @@ IconData _icon(_Page page) => switch (page) {
   _Page.dashboard => Icons.dashboard_outlined,
   _Page.postJob => Icons.post_add,
   _Page.jobs => Icons.work_outline,
+  _Page.myReports => Icons.flag_outlined,
   _Page.profile => Icons.person_outline,
   _Page.reviews => Icons.star_outline,
   _Page.verification => Icons.verified_outlined,
@@ -5773,3 +6279,1026 @@ double _coordinateForApi(double value) =>
 String _clock(TimeOfDay value) =>
     '${value.hour.toString().padLeft(2, '0')}:'
     '${value.minute.toString().padLeft(2, '0')}:00';
+
+/// Everything the household-facing worker profile renders, normalised so the
+/// same screen serves an applicant and a Smart-Matched / AI-recommended
+/// worker. The two sources carry different shapes; only this class knows.
+class _WorkerProfileSubject {
+  const _WorkerProfileSubject({
+    required this.workerId,
+    required this.username,
+    required this.displayName,
+    required this.photoUrl,
+    required this.verificationStatus,
+    required this.locationLabel,
+    required this.ratingLabel,
+    required this.completedJobs,
+    required this.bio,
+    required this.skills,
+    required this.hourlyRate,
+    required this.dailyRate,
+    required this.rateFallback,
+    required this.yearsExperience,
+    required this.distanceKm,
+    required this.distanceLabel,
+    required this.matchScore,
+    required this.matchBasis,
+  });
+
+  final int workerId;
+  final String username;
+  final String displayName;
+  final String photoUrl;
+  final String verificationStatus;
+  final String locationLabel;
+  final String ratingLabel;
+  final int completedJobs;
+  final String bio;
+  final List<String> skills;
+
+  /// Applicants expose the two numeric rates; a recommendation only carries
+  /// a pre-formatted label, so exactly one of these paths has data.
+  final double? hourlyRate;
+  final double? dailyRate;
+  final String rateFallback;
+
+  final int? yearsExperience;
+  final double? distanceKm;
+  final String distanceLabel;
+
+  /// 0-1. Null hides the Match Score card entirely rather than showing 0%.
+  final double? matchScore;
+
+  /// What that score was computed from. Smart Matching and the AI recommender
+  /// rank on different things and are specified as complementary, so the card
+  /// never claims one did the other's job.
+  final String matchBasis;
+
+  bool get isVerified => verificationStatus.trim().toLowerCase() == 'verified';
+
+  /// "Hire Maria" reads better than "Hire Maria Santos" in a top bar.
+  String get firstName {
+    final parts = displayName.trim().split(RegExp(r'\s+'));
+    return parts.isEmpty || parts.first.isEmpty ? displayName : parts.first;
+  }
+
+  factory _WorkerProfileSubject.fromApplication(HouseholdApplication item) {
+    final name = item.workerName.trim().isEmpty
+        ? item.workerUsername
+        : item.workerName;
+    return _WorkerProfileSubject(
+      workerId: item.workerId,
+      username: item.workerUsername,
+      displayName: name,
+      photoUrl: item.workerProfilePhotoUrl,
+      verificationStatus: item.workerVerificationStatus,
+      locationLabel: item.locationLabel,
+      ratingLabel: item.workerRatingLabel,
+      completedJobs: item.workerCompletedJobs,
+      bio: item.workerBio,
+      skills: item.workerSkills,
+      hourlyRate: item.workerHourlyRate,
+      dailyRate: item.workerDailyRate,
+      rateFallback: item.workerRateLabel,
+      yearsExperience: item.workerYearsExperience,
+      distanceKm: item.distanceKm,
+      distanceLabel: '',
+      matchScore: item.workerMatchScore,
+      matchBasis: 'Based on verification, skills and distance',
+    );
+  }
+
+  factory _WorkerProfileSubject.fromRecommendation(RecommendedWorker worker) {
+    return _WorkerProfileSubject(
+      workerId: worker.id,
+      username: worker.username,
+      displayName: worker.displayName,
+      photoUrl: worker.profilePhotoUrl,
+      verificationStatus: worker.verificationStatus,
+      locationLabel: worker.locationLabel,
+      ratingLabel: worker.ratingLabel,
+      completedJobs: worker.completedJobs,
+      bio: worker.bio,
+      skills: worker.skills,
+      hourlyRate: null,
+      dailyRate: null,
+      rateFallback: worker.workerRate,
+      yearsExperience: null,
+      distanceKm: worker.distanceKm,
+      distanceLabel: worker.distanceLabel,
+      matchScore: worker.aiScore > 0 ? worker.aiScore : null,
+      matchBasis: 'Based on skill fit & distance',
+    );
+  }
+}
+
+/// The profile a household reads before hiring. Replaces the old applicant
+/// summary, which only showed what the application payload happened to
+/// carry; this also pulls the worker's public portfolio and job history.
+class _WorkerProfileScreen extends StatefulWidget {
+  const _WorkerProfileScreen({
+    required this.subject,
+    required this.repository,
+    required this.onHire,
+    required this.hireEnabled,
+    this.hireLabel,
+    this.matchBreakdown,
+    this.mapPanel,
+    this.bottomActions = const [],
+  });
+
+  final _WorkerProfileSubject subject;
+  final HouseholdRepository repository;
+  final VoidCallback onHire;
+  final bool hireEnabled;
+
+  /// Overrides `Hire <first name>` when the offer has already been made, so
+  /// the button states what happened instead of sitting there dead.
+  final String? hireLabel;
+
+  /// The skill-vs-proximity bar that explains an AI score. Smart Matching
+  /// ranks on a rule order rather than weighted contributions, so an
+  /// applicant has nothing to break down and passes null.
+  final Widget? matchBreakdown;
+
+  /// The applicant route shows the worker-to-job driving route; a
+  /// recommendation card has already shown its own distance.
+  final Widget? mapPanel;
+
+  final List<Widget> bottomActions;
+
+  @override
+  State<_WorkerProfileScreen> createState() => _WorkerProfileScreenState();
+}
+
+class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
+  late final Future<WorkerPortfolio> _portfolio = widget.repository
+      .getWorkerPortfolio(widget.subject.workerId);
+  late final Future<List<WorkerJobHistoryEntry>> _history = widget.repository
+      .getWorkerJobHistory(widget.subject.workerId);
+  late final Future<List<GawaGoReview>> _reviews = widget.repository
+      .getWorkerReviews(widget.subject.username);
+
+  String get _hireText =>
+      widget.hireLabel ?? 'Hire ${widget.subject.firstName}';
+
+  @override
+  Widget build(BuildContext context) {
+    final subject = widget.subject;
+    return AuthenticatedDetailScaffold(
+      title: 'Worker Profile',
+      actions: [
+        // The detail top bar is deep green, so this pill uses the lighter
+        // brand green rather than the card button's deepGreen -- that would
+        // vanish into the bar.
+        SizedBox(
+          height: 38,
+          child: FilledButton(
+            onPressed: widget.hireEnabled ? widget.onHire : null,
+            style: FilledButton.styleFrom(
+              backgroundColor: GawaGoColors.primary,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: Colors.white.withValues(alpha: 0.16),
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.7),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+              ),
+            ),
+            child: Text(_hireText, maxLines: 1),
+          ),
+        ),
+      ],
+      bottomNavigationBar: widget.bottomActions.isEmpty
+          ? null
+          : PersistentActionBar(children: widget.bottomActions),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+        children: [
+          _WorkerProfileHeaderCard(
+            subject: subject,
+            hireLabel: _hireText,
+            onHire: widget.hireEnabled ? widget.onHire : null,
+          ),
+          if (subject.matchScore != null) ...[
+            const SizedBox(height: 14),
+            _MatchScoreCard(
+              score: subject.matchScore!,
+              basis: subject.matchBasis,
+              breakdown: widget.matchBreakdown,
+            ),
+          ],
+          const SizedBox(height: 14),
+          ProfileSection(
+            title: 'About',
+            child: subject.bio.trim().isEmpty
+                ? const SectionEmptyText('No description provided yet.')
+                : Text(
+                    subject.bio.trim(),
+                    style: const TextStyle(
+                      color: GawaGoColors.text,
+                      fontSize: 14.5,
+                      height: 1.45,
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 14),
+          FutureBuilder<WorkerPortfolio>(
+            future: _portfolio,
+            builder: (context, snapshot) {
+              final portfolio = snapshot.data ?? WorkerPortfolio.empty;
+              final failed = snapshot.hasError;
+              final loading = !snapshot.hasData && !failed;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ProfileSection(
+                    title: 'Skills & Expertise',
+                    child: _portfolioBody(
+                      loading: loading,
+                      failed: failed,
+                      empty: portfolio.skills.isEmpty,
+                      emptyText: 'No skills added yet.',
+                      builder: () => Column(
+                        children: portfolio.skills
+                            .map(
+                              (skill) => ProfileSkillTile(
+                                skillName: skill.skillName,
+                                proficiencyLabel: skill.proficiencyLabel,
+                                averageRating: skill.averageRating,
+                                ratingCount: skill.ratingCount,
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  ProfileSection(
+                    title: 'Certifications',
+                    child: _portfolioBody(
+                      loading: loading,
+                      failed: failed,
+                      empty: portfolio.certifications.isEmpty,
+                      emptyText: 'No certifications added yet.',
+                      builder: () => Column(
+                        children: portfolio.certifications
+                            .map(
+                              (certificate) => _ReadOnlyCertificationTile(
+                                certificate: certificate,
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  ProfileSection(
+                    title: 'Work Samples',
+                    child: _portfolioBody(
+                      loading: loading,
+                      failed: failed,
+                      empty: portfolio.workSamples.isEmpty,
+                      emptyText: 'No work samples uploaded yet.',
+                      builder: () => Column(
+                        children: portfolio.workSamples
+                            .map(
+                              (sample) =>
+                                  _ReadOnlyWorkSampleTile(sample: sample),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 14),
+          ProfileSection(
+            title: 'Employment History',
+            child: FutureBuilder<List<WorkerJobHistoryEntry>>(
+              future: _history,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const SectionEmptyText(
+                    'Could not load this worker\'s job history right now.',
+                  );
+                }
+                final jobs = snapshot.data;
+                if (jobs == null) return const _SectionLoading();
+                if (jobs.isEmpty) {
+                  return const SectionEmptyText('No completed jobs yet.');
+                }
+                return Column(
+                  children: jobs
+                      .map((entry) => _EmploymentHistoryRow(entry: entry))
+                      .toList(),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 14),
+          ProfileSection(
+            title: 'Recent Feedback',
+            child: FutureBuilder<List<GawaGoReview>>(
+              future: _reviews,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const SectionEmptyText(
+                    'Could not load feedback right now.',
+                  );
+                }
+                final reviews = snapshot.data;
+                if (reviews == null) return const _SectionLoading();
+                final withContent = reviews
+                    .where(
+                      (review) =>
+                          review.feedback.trim().isNotEmpty ||
+                          review.rating != null,
+                    )
+                    .take(3)
+                    .toList();
+                if (withContent.isEmpty) {
+                  return const SectionEmptyText('No feedback submitted yet.');
+                }
+                return Column(
+                  children: withContent
+                      .map((review) => _ApplicantFeedbackItem(review: review))
+                      .toList(),
+                );
+              },
+            ),
+          ),
+          if (widget.mapPanel != null) ...[
+            const SizedBox(height: 18),
+            widget.mapPanel!,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _portfolioBody({
+    required bool loading,
+    required bool failed,
+    required bool empty,
+    required String emptyText,
+    required Widget Function() builder,
+  }) {
+    if (failed) {
+      return const SectionEmptyText(
+        'Could not load this worker\'s portfolio right now.',
+      );
+    }
+    if (loading) return const _SectionLoading();
+    if (empty) return SectionEmptyText(emptyText);
+    return builder();
+  }
+}
+
+class _SectionLoading extends StatelessWidget {
+  const _SectionLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2.4),
+        ),
+      ),
+    );
+  }
+}
+
+/// Cover photo, identity, the facts a household decides on, and the primary
+/// hire action.
+class _WorkerProfileHeaderCard extends StatelessWidget {
+  const _WorkerProfileHeaderCard({
+    required this.subject,
+    required this.hireLabel,
+    required this.onHire,
+  });
+
+  final _WorkerProfileSubject subject;
+  final String hireLabel;
+  final VoidCallback? onHire;
+
+  @override
+  Widget build(BuildContext context) {
+    const bannerHeight = 168.0;
+    const avatarRadius = 38.0;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: bannerHeight + avatarRadius,
+            child: Stack(
+              children: [
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: bannerHeight,
+                  child: _ProfileBanner(subject: subject),
+                ),
+                if (subject.isVerified)
+                  const Positioned(
+                    top: 14,
+                    left: 14,
+                    child: _VerifiedOverlayPill(),
+                  ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: WorkerPhoto(
+                        photoUrl: subject.photoUrl,
+                        name: subject.displayName,
+                        size: avatarRadius * 2,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            subject.displayName,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '@${subject.username}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 15),
+          ),
+          const SizedBox(height: 10),
+          const Center(child: SoftGreenPill(label: 'Worker')),
+          const SizedBox(height: 18),
+          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _ProfileFactRow(
+                  label: 'Barangay',
+                  value: subject.locationLabel.isEmpty
+                      ? 'Not set'
+                      : subject.locationLabel,
+                ),
+                if (subject.yearsExperience != null)
+                  _ProfileFactRow(
+                    label: 'Experience',
+                    value:
+                        '${subject.yearsExperience} '
+                        '${subject.yearsExperience == 1 ? 'year' : 'years'}',
+                  ),
+                if (subject.distanceKm != null)
+                  _ProfileFactRow(
+                    label: 'Distance',
+                    value: '${subject.distanceKm!.toStringAsFixed(1)} km away',
+                  )
+                else if (subject.distanceLabel.isNotEmpty)
+                  _ProfileFactRow(
+                    label: 'Distance',
+                    value: subject.distanceLabel,
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Verification: ',
+                      style: TextStyle(
+                        color: GawaGoColors.ink,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    StatusBadge(status: subject.verificationStatus),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _ProfileFactRow(
+                  label: 'Rating',
+                  value: subject.ratingLabel.isEmpty
+                      ? 'No ratings yet'
+                      : subject.ratingLabel,
+                ),
+                _ProfileFactRow(
+                  label: 'Jobs Done',
+                  value: '${subject.completedJobs}',
+                ),
+                if (subject.hourlyRate != null ||
+                    subject.dailyRate != null) ...[
+                  _ProfileFactRow(
+                    label: 'Hourly Rate',
+                    value: subject.hourlyRate == null
+                        ? 'Not disclosed'
+                        : 'PHP ${subject.hourlyRate!.toStringAsFixed(2)}',
+                  ),
+                  _ProfileFactRow(
+                    label: 'Daily Rate',
+                    value: subject.dailyRate == null
+                        ? 'Not disclosed'
+                        : 'PHP ${subject.dailyRate!.toStringAsFixed(2)}',
+                  ),
+                ] else
+                  _ProfileFactRow(
+                    label: 'Rate',
+                    value: subject.rateFallback.isEmpty
+                        ? 'Not disclosed'
+                        : subject.rateFallback,
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (subject.skills.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: subject.skills
+                        .map((skill) => _NeutralChip(label: skill))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                SizedBox(
+                  height: 54,
+                  child: FilledButton(
+                    onPressed: onHire,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: GawaGoColors.deepGreen,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    child: Text(hireLabel),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The worker's own photo as a cover image. There is only one photo on a
+/// profile, so it doubles as the banner; with none, a flat brand panel keeps
+/// the card's shape instead of collapsing it.
+class _ProfileBanner extends StatelessWidget {
+  const _ProfileBanner({required this.subject});
+
+  final _WorkerProfileSubject subject;
+
+  @override
+  Widget build(BuildContext context) {
+    if (subject.photoUrl.isEmpty) {
+      return Container(color: GawaGoColors.deepGreen);
+    }
+    return Image.network(
+      subject.photoUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => Container(color: GawaGoColors.deepGreen),
+    );
+  }
+}
+
+class _VerifiedOverlayPill extends StatelessWidget {
+  const _VerifiedOverlayPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: GawaGoColors.deepGreen,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Text(
+        '✓ Verified',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 12.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _MatchScoreCard extends StatelessWidget {
+  const _MatchScoreCard({
+    required this.score,
+    required this.basis,
+    this.breakdown,
+  });
+
+  final double score;
+  final String basis;
+  final Widget? breakdown;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              WorkerMatchRing(score: score, size: 58),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Match Score',
+                      style: TextStyle(
+                        color: GawaGoColors.ink,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      basis,
+                      style: const TextStyle(
+                        color: GawaGoColors.textMuted,
+                        fontSize: 13.5,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          ?breakdown,
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileFactRow extends StatelessWidget {
+  const _ProfileFactRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(color: GawaGoColors.textMuted),
+            ),
+          ],
+        ),
+        style: const TextStyle(
+          color: GawaGoColors.ink,
+          fontSize: 15,
+          height: 1.35,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _NeutralChip extends StatelessWidget {
+  const _NeutralChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1EEE6),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFE0D8CC)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: GawaGoColors.ink,
+          fontSize: 13.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReadOnlyCertificationTile extends StatelessWidget {
+  const _ReadOnlyCertificationTile({required this.certificate});
+
+  final WorkerCertificate certificate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F5F0),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE6E0D6)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (certificate.fileUrl.isNotEmpty && certificate.isImage)
+            Image.network(
+              certificate.fileUrl,
+              height: 160,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  certificate.certificateName,
+                  style: const TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    if (certificate.certificateTypeLabel.isNotEmpty)
+                      SoftGreenPill(
+                        label: certificate.certificateTypeLabel,
+                        muted: true,
+                      ),
+                    SoftGreenPill(
+                      label: certificate.isVerified
+                          ? 'Verified'
+                          : formatStatus(certificate.verificationStatus),
+                      muted: !certificate.isVerified,
+                    ),
+                  ],
+                ),
+                if (certificate.issuer.isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  Text(
+                    'Issued by ${certificate.issuer}',
+                    style: const TextStyle(
+                      color: GawaGoColors.textMuted,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReadOnlyWorkSampleTile extends StatelessWidget {
+  const _ReadOnlyWorkSampleTile({required this.sample});
+
+  final WorkSample sample;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F5F0),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE6E0D6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            sample.title.isEmpty ? 'Untitled sample' : sample.title,
+            style: const TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 15.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _WorkSampleThumb(
+                  url: sample.beforeOrFallback,
+                  caption: 'Before',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _WorkSampleThumb(
+                  url: sample.afterImageUrl,
+                  caption: 'After',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkSampleThumb extends StatelessWidget {
+  const _WorkSampleThumb({required this.url, required this.caption});
+
+  final String url;
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 110,
+            width: double.infinity,
+            child: url.isEmpty
+                ? Container(color: const Color(0xFFE2DCD0))
+                : Image.network(
+                    url,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) =>
+                        Container(color: const Color(0xFFE2DCD0)),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          caption,
+          style: const TextStyle(
+            color: GawaGoColors.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmploymentHistoryRow extends StatelessWidget {
+  const _EmploymentHistoryRow({required this.entry});
+
+  final WorkerJobHistoryEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final period = entry.periodLabel;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFFEDF5EF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.work_outline,
+              size: 20,
+              color: GawaGoColors.deepGreen,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.title.isEmpty ? entry.jobType : entry.title,
+                  style: const TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  entry.householdName.isEmpty
+                      ? 'Household'
+                      : entry.householdName,
+                  style: const TextStyle(
+                    color: GawaGoColors.textMuted,
+                    fontSize: 13.5,
+                  ),
+                ),
+                if (period.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    period,
+                    style: const TextStyle(
+                      color: Color(0xFF8A9690),
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
