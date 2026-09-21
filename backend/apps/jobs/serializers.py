@@ -387,16 +387,19 @@ class JobPostingSerializer(serializers.ModelSerializer):
 
 
 class JobCreateSerializer(serializers.Serializer):
-    household_username = serializers.CharField(required=False, allow_blank=True)
-    title = serializers.CharField()
-    job_type = serializers.CharField()
-    required_skill = serializers.CharField()
-    schedule = serializers.CharField(required=False, allow_blank=True)
-    schedule_type = serializers.CharField(required=False, allow_blank=True, default="")
+    # Plain Serializer, so these do not inherit the model's column widths.
+    # Without an explicit max_length an oversized value reaches the database
+    # and surfaces as a 500 instead of a field validation error.
+    household_username = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    title = serializers.CharField(max_length=255)
+    job_type = serializers.CharField(max_length=120)
+    required_skill = serializers.CharField(max_length=120)
+    schedule = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    schedule_type = serializers.CharField(required=False, allow_blank=True, default="", max_length=80)
     preferred_date = serializers.DateField(required=False, allow_null=True)
     preferred_time = serializers.TimeField(required=False, allow_null=True)
     description = serializers.CharField(required=False, allow_blank=True, default="")
-    location_label = serializers.CharField()
+    location_label = serializers.CharField(max_length=255)
     latitude = RoundedCoordinateField(max_digits=10, decimal_places=7)
     longitude = RoundedCoordinateField(max_digits=10, decimal_places=7)
     service_rate = serializers.DecimalField(max_digits=10, decimal_places=2)

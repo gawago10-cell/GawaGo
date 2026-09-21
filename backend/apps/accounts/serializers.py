@@ -364,7 +364,24 @@ class SkillRatingSerializer(serializers.ModelSerializer):
 
 
 class VerificationDocumentSerializer(serializers.ModelSerializer):
+    # Both clients already limit the picker to these types and the ID photos
+    # are small, but that is client-side only: the API accepted any file of
+    # any size until this ran server-side too.
+    ALLOWED_DOCUMENT_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".pdf"}
+    MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
+
     verified_by_username = serializers.CharField(source="verified_by.username", read_only=True, allow_null=True)
+
+    def validate_document_file(self, value):
+        if value is None:
+            return value
+        if Path(value.name).suffix.lower() not in self.ALLOWED_DOCUMENT_EXTENSIONS:
+            raise serializers.ValidationError(
+                "Upload an image (JPG, PNG, WEBP, HEIC) or a PDF for your ID document."
+            )
+        if value.size > self.MAX_DOCUMENT_BYTES:
+            raise serializers.ValidationError("Keep the document under 10 MB.")
+        return value
 
     class Meta:
         model = VerificationDocument
