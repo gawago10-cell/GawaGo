@@ -104,6 +104,8 @@ export function normalizeVerificationRequest(request) {
     workerDailyRate: source.worker_daily_rate ?? source.workerDailyRate ?? null,
     workerYearsExperience: source.worker_years_experience ?? source.workerYearsExperience ?? 0,
     workerProfilePhoto: normalizePreviewUrl(source.worker_profile_photo || source.workerProfilePhoto),
+    primaryIdType: source.primary_id_type || source.primaryIdType || "",
+    primaryIdTypeLabel: source.primary_id_type_label || source.primaryIdTypeLabel || "",
     primaryIdName: source.primary_id_name || source.primaryIdName || "",
     secondaryDocName: source.secondary_doc_name || source.secondaryDocName || "",
     primaryIdPreview: normalizePreviewUrl(source.primary_id_preview || source.primaryIdPreview),
@@ -322,9 +324,12 @@ export function normalizeBackendApplication(application) {
     workerCompletedJobs: application.worker_completed_jobs ?? application.workerCompletedJobs ?? 0,
     workerMatchScore: application.worker_match_score ?? application.workerMatchScore ?? null,
     workerDailyRate: application.worker_daily_rate || application.workerDailyRate || "",
+    // The API only fills these (and routePoints) once the worker is hired for
+    // this job; before that they are null/empty and only the distance is set.
     workerLatitude: application.worker_latitude ?? application.workerLatitude ?? null,
     workerLongitude: application.worker_longitude ?? application.workerLongitude ?? null,
     routeDistanceKm: application.route_distance_km ?? application.routeDistanceKm ?? null,
+    distanceLabel: application.distance_label || application.distanceLabel || "",
     routePoints: application.route_points || application.routePoints || [],
     status: normalizeJobApplicationStatus(application.status),
     // The backend owns the display vocabulary (apps/jobs/statuses.py) so the
@@ -335,6 +340,9 @@ export function normalizeBackendApplication(application) {
     appliedAt: application.applied_at || application.appliedAt || "",
     updatedAt: application.updated_at || application.updatedAt || "",
     note: application.note || "",
+    // Whether the household can still review this particular worker; the
+    // job-level canReview only says some worker on the job is left.
+    householdCanReview: Boolean(application.household_can_review ?? application.householdCanReview ?? false),
   };
 }
 
@@ -369,8 +377,6 @@ export function normalizeBackendJob(job) {
     jobTitle: job.title || job.job_title || job.required_skill || job.jobType || "",
     serviceType: job.required_skill || job.job_type || job.jobType || job.title || "",
     scheduleType: job.schedule_type || job.scheduleType || job.schedule || "One-Time",
-    preferredDate: job.preferred_date || "",
-    preferredTime: job.preferred_time || "",
     description: job.description || "",
     jobStartDate: job.job_start_date || job.jobStartDate || "",
     jobEndDate: job.job_end_date || job.jobEndDate || "",
@@ -381,10 +387,13 @@ export function normalizeBackendJob(job) {
     streetAddress: job.street_address || parsedLocation.streetAddress || "",
     latitude: job.latitude ?? job.job_latitude ?? null,
     longitude: job.longitude ?? job.job_longitude ?? null,
+    approximateLatitude: job.approximate_latitude ?? job.approximateLatitude ?? null,
+    approximateLongitude: job.approximate_longitude ?? job.approximateLongitude ?? null,
     routeDistanceKm: job.route_distance_km ?? job.routeDistanceKm ?? null,
+    distanceLabel: job.distance_label || job.distanceLabel || "",
     routePoints: job.route_points || job.routePoints || [],
     offeredRate: String(job.service_rate ?? "0.00"),
-    rateType: "Per Day",
+    rateType: job.rate_type_label || job.job_rate_type_label || "Per Day",
     workersNeeded,
     hiredCount,
     status: normalizeJobStatus(job.status),
@@ -417,7 +426,7 @@ export function normalizeBackendNotification(notification) {
   return {
     id: `backend-notification-${notification.id}`,
     backendId: notification.id,
-    notificationType: notification.notification_type || notification.notificationType || "analytics",
+    notificationType: notification.notification_type || notification.notificationType || "generic",
     title: notification.title || "Notification",
     message: notification.message || "",
     actorId: notification.actor ?? notification.actor_id ?? notification.actorId ?? null,
@@ -560,6 +569,9 @@ export function normalizeCertificate(certificate) {
     issueDate: certificate.issue_date || "",
     expiryDate: certificate.expiry_date || "",
     fileUrl: certificate.certificate_file_url || certificate.certificate_file || "",
+    // "image" | "pdf" | "file" | "" -- the file URL is a permission-checked
+    // API route with no extension, so the type has to come from the backend.
+    fileType: certificate.certificate_file_type || "",
     isVerified: Boolean(certificate.is_verified),
     verificationStatus: certificate.verification_status || "pending",
     verificationNotes: certificate.verification_notes || "",
@@ -569,25 +581,13 @@ export function normalizeCertificate(certificate) {
   };
 }
 
-export function normalizeVerificationDocument(document) {
-  if (!document) {
-    return null;
-  }
-  return {
-    id: document.id,
-    username: document.user_username || "",
-    displayName: document.user_name || document.user_username || "",
-    locationLabel: document.user_location_label || "",
-    memberSince: document.user_member_since || "",
-    idType: document.id_type || "",
-    idTypeLabel: document.id_type_label || document.id_type || "",
-    idNumber: document.id_number || "",
-    fileUrl: document.document_file || "",
-    isPrimary: Boolean(document.is_primary),
-    verificationStatus: document.verification_status || "pending",
-    verificationNotes: document.verification_notes || "",
-    verifiedByUsername: document.verified_by_username || "",
-    verifiedAt: document.verified_at || "",
-    createdAt: document.created_at || "",
-  };
+// Sidebar label for the verification page. New profiles default to
+// verification_status "pending", so "Under Review" must come from an actual
+// submitted request -- otherwise an account that never uploaded an ID read
+// "Under Review".
+export function getVerificationNavLabel(account) {
+  if (account?.verification === "Verified") return "Verified";
+  if (["Pending", "Under Review"].includes(account?.verificationSubmission?.status)) return "Under Review";
+  if (account?.verification === "Rejected") return "Verify Again";
+  return "Get Verified";
 }

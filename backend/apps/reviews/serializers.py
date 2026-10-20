@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
+from apps.common.sanitize import sanitize_text
 from apps.reviews.models import Review
 
 
@@ -12,6 +13,8 @@ def mask_name_part(value):
 
 
 def get_masked_user_name(user):
+    if user is None:
+        return "Masked worker"
     name_parts = [user.first_name.strip(), user.last_name.strip()]
     visible_parts = [mask_name_part(part) for part in name_parts if part]
     if visible_parts:
@@ -21,7 +24,7 @@ def get_masked_user_name(user):
 
 
 class ReviewSerializer(serializers.ModelSerializer):
-    author_username = serializers.CharField(source="author.username", read_only=True)
+    author_username = serializers.CharField(source="author_label", read_only=True)
     target_username = serializers.CharField(source="target.username", read_only=True)
     author_name = serializers.SerializerMethodField()
     target_name = serializers.SerializerMethodField()
@@ -65,6 +68,8 @@ class ReviewSerializer(serializers.ModelSerializer):
         return obj.author_role == Review.ROLE_WORKER and obj.target_role == Review.ROLE_HOUSEHOLD
 
     def get_author_name(self, obj):
+        if not obj.author_id:
+            return obj.author_username or "Deleted account"
         return obj.author.get_full_name().strip() or obj.author.username
 
     def get_target_name(self, obj):
@@ -97,6 +102,9 @@ class ReviewCreateSerializer(serializers.Serializer):
     communication = serializers.IntegerField(required=False, min_value=1, max_value=5, allow_null=True)
     professionalism = serializers.IntegerField(required=False, min_value=1, max_value=5, allow_null=True)
 
+    def validate_feedback(self, value):
+        return sanitize_text(value)
+
     def validate_author_username(self, value):
         if not value:
             return None
@@ -110,3 +118,9 @@ class ReviewCreateSerializer(serializers.Serializer):
             return User.objects.get(username=value)
         except User.DoesNotExist as exc:
             raise serializers.ValidationError("Target user not found.") from exc
+
+    def validate(self, attrs):
+        scores = ["rating", "quality_of_work", "punctuality", "communication", "professionalism"]
+        if all(attrs.get(field) is None for field in scores):
+            raise serializers.ValidationError({"rating": "Give an overall rating or rate at least one metric."})
+        return attrs

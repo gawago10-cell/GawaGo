@@ -24,6 +24,8 @@ class Notification(models.Model):
     TYPE_COMPLETION = "completion"
     TYPE_REVIEW_REMINDER = "review_reminder"
     TYPE_JOB_MATCH = "job_match"
+    TYPE_REVIEW = "review"
+    TYPE_ADMIN_ALERT = "admin_alert"
     TYPE_CHOICES = [
         (TYPE_APPLICATION, "Application"),
         (TYPE_ACCOUNT_ACTIVITY, "Account Activity"),
@@ -35,6 +37,8 @@ class Notification(models.Model):
         (TYPE_COMPLETION, "Completion"),
         (TYPE_REVIEW_REMINDER, "Review Reminder"),
         (TYPE_JOB_MATCH, "Job Match"),
+        (TYPE_REVIEW, "Review"),
+        (TYPE_ADMIN_ALERT, "Admin Alert"),
     ]
 
     recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
@@ -58,6 +62,15 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            # The background job-match pass may run more than once for a job
+            # (retry, duplicate enqueue); a worker is told about a job once.
+            models.UniqueConstraint(
+                fields=["recipient", "related_job_id"],
+                condition=models.Q(notification_type="job_match"),
+                name="unique_job_match_notification_per_job",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"{self.recipient.username}: {self.title}"

@@ -1,10 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { SidebarIcon } from "./DashboardLayout";
+import { DashboardSidebar, MobileDashboardTopbar, SidebarIcon } from "./DashboardLayout";
+import { buildAdminNavItems } from "../utils/roles";
 import HomeView from "./HomeView";
 import ComplaintModal from "./ComplaintModal";
+import SkillRatingForm from "./SkillRatingForm";
+import { CertificateStatusBadge, CertificateThumb } from "./CertificatePreview";
 import HouseholdJobMapPanel from "./HouseholdJobMapPanel";
 import JobImageUpload from "./JobImageUpload";
 import LocationDistanceMap from "./LocationDistanceMap";
+import WorkerJobsMap from "./WorkerJobsMap";
+import HouseholdWorkersMap from "./HouseholdWorkersMap";
 import WorkerLocationPicker from "./WorkerLocationPicker";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
@@ -12,8 +17,9 @@ import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
 import { getHouseholdInitials } from "../utils/formatters";
 import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
-import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, MAX_WORKER_SKILLS, TAYABAS_MAP_BOUNDS } from "../constants/appConstants";
-import { formatExperience, formatTimeAgo, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
+import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_WORKER_SKILLS, TAYABAS_MAP_BOUNDS } from "../constants/appConstants";
+import { formatExperience, formatJobDate, formatTimeAgo, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
+import { getVerificationNavLabel } from "../utils/normalizers";
 
 const HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY = "gawago-household-dismissed-notifications";
 const WORKER_DISMISSED_NOTIFICATIONS_KEY = "gawago-worker-dismissed-notifications";
@@ -22,6 +28,21 @@ const AI_SCAN_STATUS_PHASES = [
   "Comparing your skills to job requirements…",
   "Ranking by relevance and distance…",
 ];
+// The score a review counts for: the average of the four metrics when they
+// were given (AGENTS.md II.A), otherwise the star rating -- the same rule the
+// backend uses for a worker's average, so the two can't disagree.
+// The calendar day in the viewer's own timezone, as a date <input> gives it.
+// toISOString() is UTC, which filed anything posted before 8am in the
+// Philippines under the previous day.
+function localDateKey(date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function reviewScore(review) {
+  const value = review.overallRating ?? review.rating;
+  return value == null ? null : Number(value);
+}
+
 const AI_SCAN_MIN_DURATION_MS = 2400;
 const HOUSEHOLD_SCAN_MAX_DURATION_MS = 25000;
 const HOUSEHOLD_SCAN_STATUS_PHASES = [
@@ -59,9 +80,15 @@ export default function AppViews({
   handleHouseholdJobChange,
   handleHouseholdJobSubmit,
   isSubmittingJob,
+  isActionPending,
+  portfolioSaving = false,
+  handleSetSkillProficiency = () => {},
+  householdMatchRank = "ai",
+  setHouseholdMatchRank = () => {},
   handleHouseholdProfileChange,
   handleHouseholdProfileSave,
   handleHouseholdRegisterSubmit,
+  registerErrors,
   handleHouseholdReviewSubmit,
   handleLoginChange,
   handleLoginSubmit,
@@ -89,6 +116,7 @@ export default function AppViews({
   householdReviewForm,
   householdUnreadCount,
   isAdminPortalPath,
+  loginError,
   loginForm,
   markAllNotificationsRead,
   markNotificationRead,
@@ -166,19 +194,6 @@ export default function AppViews({
   portfolioGalleryOpen,
   setPortfolioGalleryOpen,
   employmentHistory,
-  ratingModalOpen,
-  setRatingModalOpen,
-  ratingJobId,
-  ratingWorker,
-  ratingWorkerSkills,
-  ratingSkillsLoading,
-  ratingExtraSkills,
-  addRatingExtraSkill,
-  removeRatingExtraSkill,
-  skillRatings,
-  setSkillRatings,
-  openRatingModal,
-  handleSubmitRatings,
   addToast,
   verificationForm,
   verificationRequests,
@@ -194,6 +209,9 @@ export default function AppViews({
   workerVisibleJobs,
 }) {
   const [showComplaintModal, setShowComplaintModal] = useState(false);
+  // Offered right after a household's review, as on mobile: per-skill
+  // ratings (AGENTS.md II.A) roll up into the worker's portfolio skills.
+  const [skillRatingTarget, setSkillRatingTarget] = useState(null);
   const [householdFeedbackDateFilter, setHouseholdFeedbackDateFilter] = useState("");
   const [householdNotificationDateFilter, setHouseholdNotificationDateFilter] = useState("");
   const [householdReviewDateFilter, setHouseholdReviewDateFilter] = useState("");
@@ -204,7 +222,10 @@ export default function AppViews({
   const [workerProfilePanel, setWorkerProfilePanel] = useState("profile");
   const [workerJobTypeFilter, setWorkerJobTypeFilter] = useState("All Types");
   const [workerBarangayFilter, setWorkerBarangayFilter] = useState("");
+  const [workerApplicationStatusFilter, setWorkerApplicationStatusFilter] = useState("All");
+  const [workerFindJobsView, setWorkerFindJobsView] = useState("list");
   const [matchedSkillFilter, setMatchedSkillFilter] = useState("All");
+  const [householdMatchesView, setHouseholdMatchesView] = useState("list");
   const [aiModeActive, setAiModeActive] = useState(false);
   const [aiRecommendedJobs, setAiRecommendedJobs] = useState(null);
   const [aiRecommendationsLoading, setAiRecommendationsLoading] = useState(false);
@@ -247,7 +268,6 @@ export default function AppViews({
       return [];
     }
   });
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const addWorkerDateAvailability = () => {
     setWorkerProfileForm((prev) => ({
       ...prev,
@@ -288,14 +308,9 @@ export default function AppViews({
   const [workerCompletionConfirmJob, setWorkerCompletionConfirmJob] = useState(null);
   const verificationAccount = currentUser?.role === "household" ? currentHousehold : currentWorker;
   const isHouseholdVerification = currentUser?.role === "household";
-  const verificationNavLabel =
-    verificationAccount?.verification === "Verified"
-      ? "Verified"
-      : verificationAccount?.verification === "Under Review"
-        ? "Under Review"
-        : verificationAccount?.verification === "Rejected"
-          ? "Verify Again"
-          : "Get Verified";
+  const verificationNavLabel = getVerificationNavLabel(verificationAccount);
+  // Local date (not UTC) so late-evening users in PH aren't blocked from today.
+  const todayIsoDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const pendingVerificationSubmission =
     verificationAccount?.verificationSubmission &&
     ["Pending", "Under Review"].includes(verificationAccount.verificationSubmission.status);
@@ -335,6 +350,9 @@ export default function AppViews({
   const getWorkerJobDistanceLabel = (job) => {
     if (!currentWorker || !job) {
       return "";
+    }
+    if (job.distanceLabel) {
+      return job.distanceLabel;
     }
     const backendDistanceKm = job.routeDistanceKm ?? job.distanceKm ?? null;
     return backendDistanceKm !== null && backendDistanceKm !== undefined && backendDistanceKm !== ""
@@ -438,6 +456,7 @@ export default function AppViews({
       completedJobs: application.workerCompletedJobs ?? 0,
       aiScore: application.workerMatchScore ?? null,
       distanceKm: application.routeDistanceKm ?? null,
+      distanceLabel: application.distanceLabel || "",
       dailyRate: application.workerDailyRate || existingWorker?.dailyRate || "0.00",
       avatar: existingWorker?.avatar || (application.workerName || application.workerUsername || "W").slice(0, 1).toUpperCase(),
       applicationStatus: application.status,
@@ -473,9 +492,13 @@ export default function AppViews({
   // Sorted here rather than trusting the response order: background polling
   // re-fetches this list in Smart Matching order, which would otherwise
   // silently reshuffle the AI ranking under the user.
-  const aiMatchedWorkersForSelectedJob = [...selectedSuggestedWorkers].sort(
-    (first, second) => (second.aiScore || 0) - (first.aiScore || 0),
-  );
+  const smartMatchRanking = householdMatchRank === "smart";
+  // Smart Matching keeps the backend's rule order (skill, verification,
+  // distance, then rating and rate); the AI view sorts by score here because
+  // the polled list can arrive in either order.
+  const aiMatchedWorkersForSelectedJob = smartMatchRanking
+    ? [...selectedSuggestedWorkers]
+    : [...selectedSuggestedWorkers].sort((first, second) => (second.aiScore || 0) - (first.aiScore || 0));
   // Chips are built from the skills the matched workers actually have, so the
   // row never offers a category that would filter the list down to nothing.
   const matchedSkillOptions = [
@@ -512,7 +535,7 @@ export default function AppViews({
   const householdSubmittedReviews = currentHousehold?.givenFeedback || [];
   const workerHouseholdReviews = currentWorker?.receivedReviews || [];
   const workerHouseholdFeedback = workerHouseholdReviews.filter((review) => review.feedback || review.comment);
-  const workerHouseholdRatings = workerHouseholdReviews.filter((review) => review.rating != null);
+  const workerHouseholdRatings = workerHouseholdReviews.filter((review) => reviewScore(review) != null);
   // "My Jobs" splits the worker's hired work from their finished history. The
   // application stays Hired while the job runs, including once completion has
   // been requested, so the job status is what separates the two lists.
@@ -527,10 +550,10 @@ export default function AppViews({
     workerHouseholdRatings.find((review) => String(review.jobId) === String(jobId)) || null;
   const workerRatingCounts = [5, 4, 3, 2, 1].map((rating) => ({
     rating,
-    count: workerHouseholdRatings.filter((review) => Number(review.rating) === rating).length,
+    count: workerHouseholdRatings.filter((review) => Math.round(reviewScore(review)) === rating).length,
   }));
   const workerTotalReviews = workerHouseholdRatings.length;
-  const workerRatingTotal = workerHouseholdRatings.reduce((total, review) => total + Number(review.rating || 0), 0);
+  const workerRatingTotal = workerHouseholdRatings.reduce((total, review) => total + (reviewScore(review) || 0), 0);
   const workerAverageRating = workerTotalReviews > 0 ? workerRatingTotal / workerTotalReviews : null;
   const workerFiveStarRate =
     workerTotalReviews > 0
@@ -559,13 +582,6 @@ export default function AppViews({
   useEffect(() => {
     setSelectedWorkerRouteDistanceKm(null);
   }, [selectedJob?.id, selectedWorker?.id, selectedWorker?.username]);
-  useEffect(() => {
-    document.body.classList.toggle("gawago-mobile-menu-open", mobileMenuOpen);
-    return () => document.body.classList.remove("gawago-mobile-menu-open");
-  }, [mobileMenuOpen]);
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [view]);
   useEffect(() => {
     if (view !== "worker-notifications") {
       setWorkerNotificationPreview(null);
@@ -611,24 +627,6 @@ export default function AppViews({
       document.removeEventListener("click", closeNotificationMenu);
       document.removeEventListener("keydown", closeNotificationMenuOnEscape);
     };
-  }, []);
-  useEffect(() => {
-    const handleMobileSidebarClick = (event) => {
-      const sidebarHead = event.target.closest(".worker-sidebar-head");
-      const sidebarAction = event.target.closest(".worker-nav-item, .worker-sidebar-logout");
-      if (!window.matchMedia("(max-width: 767px)").matches) {
-        return;
-      }
-      if (sidebarHead) {
-        sidebarHead.closest(".worker-sidebar")?.classList.toggle("mobile-menu-open");
-        return;
-      }
-      if (sidebarAction) {
-        sidebarAction.closest(".worker-sidebar")?.classList.remove("mobile-menu-open");
-      }
-    };
-    document.addEventListener("click", handleMobileSidebarClick);
-    return () => document.removeEventListener("click", handleMobileSidebarClick);
   }, []);
   const submitWorkerProfileForm = (event) => {
     if (!workerProfileEditing) {
@@ -944,7 +942,7 @@ export default function AppViews({
       if (Number.isNaN(notificationDate.getTime())) {
         return false;
       }
-      return notificationDate.toISOString().slice(0, 10) === householdNotificationDateFilter;
+      return localDateKey(notificationDate) === householdNotificationDateFilter;
     });
   }, [
     householdDismissedNotificationIds,
@@ -1074,19 +1072,21 @@ export default function AppViews({
       if (Number.isNaN(reviewDate.getTime())) {
         return false;
       }
-      return reviewDate.toISOString().slice(0, 10) === householdFeedbackDateFilter;
+      return localDateKey(reviewDate) === householdFeedbackDateFilter;
     });
   }, [householdFeedbackDateFilter, householdWorkerFeedback]);
   const filteredHouseholdSubmittedReviews = useMemo(() => {
     return householdSubmittedReviews.filter((review) => {
       if (householdReviewDateFilter) {
         const reviewDate = new Date(review.createdAt || review.date || "");
-        if (Number.isNaN(reviewDate.getTime()) || reviewDate.toISOString().slice(0, 10) !== householdReviewDateFilter) {
+        if (Number.isNaN(reviewDate.getTime()) || localDateKey(reviewDate) !== householdReviewDateFilter) {
           return false;
         }
       }
       if (householdReviewRatingFilter) {
-        return String(review.rating || "") === householdReviewRatingFilter;
+        // The backend sends "4.0", the filter "4": compare the star a review
+        // shows (its overall rating, rounded), the same way the summary counts.
+        return Math.round(reviewScore(review) || 0) === Number(householdReviewRatingFilter);
       }
       return true;
     });
@@ -1100,7 +1100,7 @@ export default function AppViews({
       if (Number.isNaN(reviewDate.getTime())) {
         return false;
       }
-      return reviewDate.toISOString().slice(0, 10) === workerFeedbackDateFilter;
+      return localDateKey(reviewDate) === workerFeedbackDateFilter;
     });
   }, [workerFeedbackDateFilter, workerHouseholdReviews]);
   const filteredWorkerHouseholdRatings = useMemo(() => {
@@ -1112,7 +1112,7 @@ export default function AppViews({
       if (Number.isNaN(reviewDate.getTime())) {
         return false;
       }
-      return reviewDate.toISOString().slice(0, 10) === workerRatingDateFilter;
+      return localDateKey(reviewDate) === workerRatingDateFilter;
     });
   }, [workerHouseholdRatings, workerRatingDateFilter]);
   const hasSentHouseholdFeedbackForReview = (review) =>
@@ -1156,6 +1156,15 @@ export default function AppViews({
     }
     return "Pending";
   };
+  // Options come from the statuses actually present, so the filter can never
+  // offer a label the list doesn't use (it used to offer "In Progress").
+  const workerApplicationStatusOptions = [
+    ...new Set(workerApplications.map((job) => getWorkerApplicationDisplayStatus(job))),
+  ];
+  const visibleWorkerApplications =
+    workerApplicationStatusFilter === "All"
+      ? workerApplications
+      : workerApplications.filter((job) => getWorkerApplicationDisplayStatus(job) === workerApplicationStatusFilter);
   const selectedWorkerJobPoint = getDistancePoint({
     barangay: selectedJob?.barangay || currentHousehold?.barangay,
     latitude: selectedJob?.latitude ?? currentHousehold?.latitude ?? null,
@@ -1189,15 +1198,18 @@ export default function AppViews({
       : "";
   const selectedWorkerDistanceLabel =
     selectedWorkerRouteLabel ||
+    selectedWorker?.distanceLabel ||
     (selectedWorkerDistanceKm !== null ? formatDistance(selectedWorkerDistanceKm) : "Road distance unavailable");
+  // Exact location is only sent once this worker is hired for the job.
+  const selectedWorkerLocationShared = Boolean(selectedWorkerPoint);
   const selectedWorkerReviews = selectedWorker?.receivedReviews || [];
-  const selectedWorkerRatings = selectedWorkerReviews.filter((review) => review.rating != null);
+  const selectedWorkerRatings = selectedWorkerReviews.filter((review) => reviewScore(review) != null);
   const selectedWorkerRatingCounts = [5, 4, 3, 2, 1].map((rating) => ({
     rating,
-    count: selectedWorkerRatings.filter((review) => Number(review.rating) === rating).length,
+    count: selectedWorkerRatings.filter((review) => Math.round(reviewScore(review)) === rating).length,
   }));
   const selectedWorkerTotalReviews = selectedWorkerRatings.length;
-  const selectedWorkerRatingTotal = selectedWorkerRatings.reduce((total, review) => total + Number(review.rating || 0), 0);
+  const selectedWorkerRatingTotal = selectedWorkerRatings.reduce((total, review) => total + (reviewScore(review) || 0), 0);
   const selectedWorkerAverageRating =
     selectedWorkerTotalReviews > 0 ? selectedWorkerRatingTotal / selectedWorkerTotalReviews : null;
   const selectedWorkerFiveStarRate =
@@ -1207,12 +1219,21 @@ export default function AppViews({
             100,
         )
       : 0;
-  function getAssignedWorkerForJob(job) {
+  // On a job with several hired workers, the one still waiting for this
+  // household's review -- the Rate buttons used to always open the first
+  // worker, so the others could never be reviewed.
+  function getWorkerToReviewForJob(job) {
+    return getAssignedWorkerForJob(job, (application) => application.householdCanReview);
+  }
+  function getAssignedWorkerForJob(job, preferApplication = null) {
     if (!job) {
       return null;
     }
+    const applications = job.applications || [];
     const acceptedApplication =
-      (job.applications || []).find((application) => ["Completed", "Hired"].includes(application.status)) || null;
+      (preferApplication && applications.find(preferApplication)) ||
+      applications.find((application) => ["Completed", "Hired"].includes(application.status)) ||
+      null;
     const matchedWorker =
       acceptedApplication &&
       registeredWorkers.find(
@@ -1250,7 +1271,7 @@ export default function AppViews({
         const sameJob = review.jobId
           ? String(review.jobId) === String(job.id)
           : !review.jobTitle || jobTitles.includes(review.jobTitle);
-        return sameWorker && sameJob && review.rating != null;
+        return sameWorker && sameJob && reviewScore(review) != null;
       }) || null
     );
   }
@@ -1289,7 +1310,7 @@ export default function AppViews({
     [historyCompletedJobs],
   );
   const householdRatingsGiven = useMemo(
-    () => householdSubmittedReviews.filter((review) => review.rating != null).map((review) => Number(review.rating)),
+    () => householdSubmittedReviews.filter((review) => reviewScore(review) != null).map((review) => reviewScore(review)),
     [householdSubmittedReviews],
   );
   const householdAvgRatingGiven = householdRatingsGiven.length
@@ -1401,23 +1422,7 @@ export default function AppViews({
   return (
     <div className="app-shell">
       {!["home", "login", "register-worker", "register-household"].includes(view) && (
-        <>
-          <div className="mobile-sidebar-overlay" onClick={() => setMobileMenuOpen(false)} />
-          <header className="mobile-dashboard-topbar">
-            <button
-              type="button"
-              className={`mobile-burger-button ${mobileMenuOpen ? "open" : ""}`}
-              aria-label="Toggle navigation"
-              aria-expanded={mobileMenuOpen}
-              onClick={() => setMobileMenuOpen((open) => !open)}
-            >
-              <span />
-              <span />
-              <span />
-            </button>
-            <span className="mobile-dashboard-title">GawaGo</span>
-          </header>
-        </>
+        <MobileDashboardTopbar resetKey={view} />
       )}
       <main>
         {(view === "home" || view === "login") && (
@@ -1425,6 +1430,7 @@ export default function AppViews({
             dashboardMetrics={dashboardMetrics}
             isAdminPortal={isAdminPortalPath}
             initialShowLogin={view === "login"}
+            loginError={loginError}
             loginForm={loginForm}
             onLoginChange={handleLoginChange}
             onLoginSubmit={handleLoginSubmit}
@@ -1455,60 +1461,82 @@ export default function AppViews({
                         <div className="register-section-label">Personal Information</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">First Name</label>
+                        <label className="form-label fw-semibold">First Name <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="firstName"
-                          className="form-control"
+                          className={`form-control${registerErrors?.firstName ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.firstName ? "true" : undefined}
+                          aria-describedby={registerErrors?.firstName ? "register-error-firstName" : undefined}
                           placeholder="Juan"
                           value={workerForm.firstName}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.firstName && (
+                          <div className="invalid-feedback d-block" id="register-error-firstName">{registerErrors.firstName}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Last Name</label>
+                        <label className="form-label fw-semibold">Last Name <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="lastName"
-                          className="form-control"
+                          className={`form-control${registerErrors?.lastName ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.lastName ? "true" : undefined}
+                          aria-describedby={registerErrors?.lastName ? "register-error-lastName" : undefined}
                           placeholder="dela Cruz"
                           value={workerForm.lastName}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.lastName && (
+                          <div className="invalid-feedback d-block" id="register-error-lastName">{registerErrors.lastName}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Username</label>
+                        <label className="form-label fw-semibold">Username <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="username"
-                          className="form-control"
+                          className={`form-control${registerErrors?.username ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.username ? "true" : undefined}
+                          aria-describedby={registerErrors?.username ? "register-error-username" : undefined}
                           placeholder="juandc"
                           value={workerForm.username}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.username && (
+                          <div className="invalid-feedback d-block" id="register-error-username">{registerErrors.username}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Email</label>
+                        <label className="form-label fw-semibold">Email <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="email"
                           name="email"
-                          className="form-control"
+                          className={`form-control${registerErrors?.email ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.email ? "true" : undefined}
+                          aria-describedby={registerErrors?.email ? "register-error-email" : undefined}
                           placeholder="juan@email.com"
                           value={workerForm.email}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.email && (
+                          <div className="invalid-feedback d-block" id="register-error-email">{registerErrors.email}</div>
+                        )}
                       </div>
                       <div className="col-12">
                         <div className="register-section-label">Contact & Location</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Phone Number</label>
+                        <label className="form-label fw-semibold">Phone Number <span className="required-mark" aria-hidden="true">*</span></label>
                         <div className="input-group">
                           <span className="input-group-text">+63</span>
                           <input
                             type="tel"
                             name="phone"
-                            className="form-control"
+                            className={`form-control${registerErrors?.phone ? " is-invalid" : ""}`}
+                            aria-invalid={registerErrors?.phone ? "true" : undefined}
+                            aria-describedby={registerErrors?.phone ? "register-error-phone" : undefined}
                             placeholder="9XXXXXXXXX"
                             inputMode="numeric"
                             maxLength={10}
@@ -1516,29 +1544,42 @@ export default function AppViews({
                             onChange={handleWorkerChange}
                           />
                         </div>
+                        {registerErrors?.phone && (
+                          <div className="invalid-feedback d-block" id="register-error-phone">{registerErrors.phone}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Barangay</label>
+                        <label className="form-label fw-semibold">Barangay <span className="required-mark" aria-hidden="true">*</span></label>
                         <select
                           name="barangay"
-                          className="form-select"
+                          className={`form-select${registerErrors?.barangay ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.barangay ? "true" : undefined}
+                          aria-describedby={registerErrors?.barangay ? "register-error-barangay" : undefined}
                           value={workerForm.barangay}
                           onChange={handleWorkerChange}
                         >
                           <option value="">--- Select Barangay ---</option>
                           {renderBarangayOptions()}
                         </select>
+                        {registerErrors?.barangay && (
+                          <div className="invalid-feedback d-block" id="register-error-barangay">{registerErrors.barangay}</div>
+                        )}
                       </div>
                       <div className="col-12">
-                        <label className="form-label fw-semibold">Street / House No.</label>
+                        <label className="form-label fw-semibold">Street / House No. <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="streetAddress"
-                          className="form-control"
+                          className={`form-control${registerErrors?.streetAddress ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.streetAddress ? "true" : undefined}
+                          aria-describedby={registerErrors?.streetAddress ? "register-error-streetAddress" : undefined}
                           placeholder="e.g. 45 Mabini St."
                           value={workerForm.streetAddress}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.streetAddress && (
+                          <div className="invalid-feedback d-block" id="register-error-streetAddress">{registerErrors.streetAddress}</div>
+                        )}
                         <p className="form-text mb-0">Location coverage: Tayabas City, Quezon only.</p>
                       </div>
                       <div className="col-12">
@@ -1633,26 +1674,36 @@ export default function AppViews({
                         <div className="register-section-label">Security</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Password</label>
+                        <label className="form-label fw-semibold">Password <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="password"
                           name="password"
-                          className="form-control"
+                          className={`form-control${registerErrors?.password ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.password ? "true" : undefined}
+                          aria-describedby={registerErrors?.password ? "register-error-password" : undefined}
                           placeholder="••••••••"
                           value={workerForm.password}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.password && (
+                          <div className="invalid-feedback d-block" id="register-error-password">{registerErrors.password}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Confirm Password</label>
+                        <label className="form-label fw-semibold">Confirm Password <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="password"
                           name="confirmPassword"
-                          className="form-control"
+                          className={`form-control${registerErrors?.confirmPassword ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.confirmPassword ? "true" : undefined}
+                          aria-describedby={registerErrors?.confirmPassword ? "register-error-confirmPassword" : undefined}
                           placeholder="••••••••"
                           value={workerForm.confirmPassword}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.confirmPassword && (
+                          <div className="invalid-feedback d-block" id="register-error-confirmPassword">{registerErrors.confirmPassword}</div>
+                        )}
                       </div>
                       <div className="col-12">
                         <button type="submit" className="btn btn-primary w-100">
@@ -1665,10 +1716,9 @@ export default function AppViews({
                   <div className="login-card-foot text-center p-3">
                     <p className="small mb-0">
                       {" "}
-                      Already have an account?
+                      Already have an account?{" "}
                       <button type="button" className="btn btn-link btn-sm align-baseline p-0" onClick={openLogin}>
-                        {" "}
-                        Login here{" "}
+                        Login here
                       </button>
                     </p>
                   </div>
@@ -1699,60 +1749,82 @@ export default function AppViews({
                         <div className="register-section-label">Personal Information</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">First Name</label>
+                        <label className="form-label fw-semibold">First Name <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="firstName"
-                          className="form-control"
+                          className={`form-control${registerErrors?.firstName ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.firstName ? "true" : undefined}
+                          aria-describedby={registerErrors?.firstName ? "register-error-firstName" : undefined}
                           placeholder="Juan"
                           value={householdForm.firstName}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.firstName && (
+                          <div className="invalid-feedback d-block" id="register-error-firstName">{registerErrors.firstName}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Last Name</label>
+                        <label className="form-label fw-semibold">Last Name <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="lastName"
-                          className="form-control"
+                          className={`form-control${registerErrors?.lastName ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.lastName ? "true" : undefined}
+                          aria-describedby={registerErrors?.lastName ? "register-error-lastName" : undefined}
                           placeholder="dela Cruz"
                           value={householdForm.lastName}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.lastName && (
+                          <div className="invalid-feedback d-block" id="register-error-lastName">{registerErrors.lastName}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Username</label>
+                        <label className="form-label fw-semibold">Username <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="username"
-                          className="form-control"
+                          className={`form-control${registerErrors?.username ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.username ? "true" : undefined}
+                          aria-describedby={registerErrors?.username ? "register-error-username" : undefined}
                           placeholder="juandc"
                           value={householdForm.username}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.username && (
+                          <div className="invalid-feedback d-block" id="register-error-username">{registerErrors.username}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Email</label>
+                        <label className="form-label fw-semibold">Email <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="email"
                           name="email"
-                          className="form-control"
+                          className={`form-control${registerErrors?.email ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.email ? "true" : undefined}
+                          aria-describedby={registerErrors?.email ? "register-error-email" : undefined}
                           placeholder="juan@email.com"
                           value={householdForm.email}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.email && (
+                          <div className="invalid-feedback d-block" id="register-error-email">{registerErrors.email}</div>
+                        )}
                       </div>
                       <div className="col-12">
                         <div className="register-section-label">Contact & Location</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Phone Number</label>
+                        <label className="form-label fw-semibold">Phone Number <span className="required-mark" aria-hidden="true">*</span></label>
                         <div className="input-group">
                           <span className="input-group-text">+63</span>
                           <input
                             type="tel"
                             name="phone"
-                            className="form-control"
+                            className={`form-control${registerErrors?.phone ? " is-invalid" : ""}`}
+                            aria-invalid={registerErrors?.phone ? "true" : undefined}
+                            aria-describedby={registerErrors?.phone ? "register-error-phone" : undefined}
                             placeholder="9XXXXXXXXX"
                             inputMode="numeric"
                             maxLength={10}
@@ -1760,55 +1832,78 @@ export default function AppViews({
                             onChange={handleHouseholdChange}
                           />
                         </div>
+                        {registerErrors?.phone && (
+                          <div className="invalid-feedback d-block" id="register-error-phone">{registerErrors.phone}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Barangay</label>
+                        <label className="form-label fw-semibold">Barangay <span className="required-mark" aria-hidden="true">*</span></label>
                         <select
                           name="barangay"
-                          className="form-select"
+                          className={`form-select${registerErrors?.barangay ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.barangay ? "true" : undefined}
+                          aria-describedby={registerErrors?.barangay ? "register-error-barangay" : undefined}
                           value={householdForm.barangay}
                           onChange={handleHouseholdChange}
                         >
                           <option value="">--- Select Barangay ---</option>
                           {renderBarangayOptions()}
                         </select>
+                        {registerErrors?.barangay && (
+                          <div className="invalid-feedback d-block" id="register-error-barangay">{registerErrors.barangay}</div>
+                        )}
                       </div>
                       <div className="col-12">
-                        <label className="form-label fw-semibold">Street / House No.</label>
+                        <label className="form-label fw-semibold">Street / House No. <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="text"
                           name="streetAddress"
-                          className="form-control"
+                          className={`form-control${registerErrors?.streetAddress ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.streetAddress ? "true" : undefined}
+                          aria-describedby={registerErrors?.streetAddress ? "register-error-streetAddress" : undefined}
                           placeholder="e.g. 45 Mabini St."
                           value={householdForm.streetAddress}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.streetAddress && (
+                          <div className="invalid-feedback d-block" id="register-error-streetAddress">{registerErrors.streetAddress}</div>
+                        )}
                         <p className="form-text mb-0">Location coverage: Tayabas City, Quezon only.</p>
                       </div>
                       <div className="col-12">
                         <div className="register-section-label">Security</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Password</label>
+                        <label className="form-label fw-semibold">Password <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="password"
                           name="password"
-                          className="form-control"
+                          className={`form-control${registerErrors?.password ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.password ? "true" : undefined}
+                          aria-describedby={registerErrors?.password ? "register-error-password" : undefined}
                           placeholder="••••••••"
                           value={householdForm.password}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.password && (
+                          <div className="invalid-feedback d-block" id="register-error-password">{registerErrors.password}</div>
+                        )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Confirm Password</label>
+                        <label className="form-label fw-semibold">Confirm Password <span className="required-mark" aria-hidden="true">*</span></label>
                         <input
                           type="password"
                           name="confirmPassword"
-                          className="form-control"
+                          className={`form-control${registerErrors?.confirmPassword ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.confirmPassword ? "true" : undefined}
+                          aria-describedby={registerErrors?.confirmPassword ? "register-error-confirmPassword" : undefined}
                           placeholder="••••••••"
                           value={householdForm.confirmPassword}
                           onChange={handleHouseholdChange}
                         />
+                        {registerErrors?.confirmPassword && (
+                          <div className="invalid-feedback d-block" id="register-error-confirmPassword">{registerErrors.confirmPassword}</div>
+                        )}
                       </div>
                       <div className="col-12">
                         <button type="submit" className="btn btn-primary w-100">
@@ -1821,10 +1916,9 @@ export default function AppViews({
                   <div className="login-card-foot text-center p-3">
                     <p className="small mb-0">
                       {" "}
-                      Already have an account?
+                      Already have an account?{" "}
                       <button type="button" className="btn btn-link btn-sm align-baseline p-0" onClick={openLogin}>
-                        {" "}
-                        Login here{" "}
+                        Login here
                       </button>
                     </p>
                   </div>
@@ -2101,8 +2195,18 @@ export default function AppViews({
                         />
                       </div>
                       <div className="col-md-2">
-                        <button className="btn btn-primary w-100" type="button">
-                          Filter
+                        {/* Filters apply as you type; this resets them. A
+                            "Filter" button here used to do nothing at all. */}
+                        <button
+                          className="btn btn-outline-secondary w-100"
+                          type="button"
+                          disabled={workerJobTypeFilter === "All Types" && !workerBarangayFilter.trim()}
+                          onClick={() => {
+                            setWorkerJobTypeFilter("All Types");
+                            setWorkerBarangayFilter("");
+                          }}
+                        >
+                          Clear
                         </button>
                       </div>
                     </div>
@@ -2113,12 +2217,43 @@ export default function AppViews({
                     Ranked for you by skill match and distance. Higher score = better fit.
                   </p>
                 ) : !aiModeActive ? (
-                  <p className="small worker-skill-hint fw-semibold mt-3 mb-2">Green labels match your skills. Neutral labels are other available jobs.</p>
+                  <div className="worker-find-jobs-viewbar mt-3 mb-2">
+                    <p className="small worker-skill-hint fw-semibold mb-0">
+                      {workerFindJobsView === "map"
+                        ? "Every household with an open job is pinned, near or far. Tap a pin to see who's hiring."
+                        : "Green labels match your skills. Neutral labels are other available jobs."}
+                    </p>
+                    <div className="worker-find-jobs-toggle" role="group" aria-label="Job view">
+                      {[
+                        ["list", "List View"],
+                        ["map", "Map View"],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={workerFindJobsView === value ? "active" : ""}
+                          aria-pressed={workerFindJobsView === value}
+                          onClick={() => setWorkerFindJobsView(value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ) : null}
                 {aiModeActive && !aiRecommendationsLoading && aiRecommendationsError && (
                   <div className="alert alert-warning py-2 small mb-2">{aiRecommendationsError}</div>
                 )}
-                {!aiRecommendationsLoading && (
+                {!aiModeActive && !aiRecommendationsLoading && workerFindJobsView === "map" && (
+                  <WorkerJobsMap
+                    jobs={filteredWorkerVisibleJobs}
+                    worker={currentWorker}
+                    getDistanceLabel={getWorkerJobDistanceLabel}
+                    onViewDetails={openWorkerJobDetail}
+                    onApply={handleApplyToJob}
+                  />
+                )}
+                {!aiRecommendationsLoading && (aiModeActive || workerFindJobsView === "list") && (
                 <div className="row g-3">
                   {(aiModeActive ? aiRecommendedJobs || [] : filteredWorkerVisibleJobs).length > 0 ? (
                     (aiModeActive ? aiRecommendedJobs : filteredWorkerVisibleJobs).map((job) => (
@@ -2161,7 +2296,7 @@ export default function AppViews({
                             </p>
                             <p className="worker-jobcard-when">
                               <span aria-hidden="true">🗓</span>
-                              <span>{formatDateTime(job.preferredDate, job.preferredTime)}</span>
+                              <span>{formatJobDate(job.jobStartDate) || "Schedule not set"}</span>
                               {getWorkerJobDistanceLabel(job) && (
                                 <span className="worker-jobcard-distance">
                                   · {getWorkerJobDistanceLabel(job)}
@@ -2187,8 +2322,8 @@ export default function AppViews({
                             </div>
                             {(job.jobStartDate || job.jobEndDate) && (
                               <p className="worker-jobcard-period">
-                                {job.jobStartDate || "Not set"}
-                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
+                                {formatJobDate(job.jobStartDate) || "Not set"}
+                                {job.jobEndDate ? ` to ${formatJobDate(job.jobEndDate)}` : ""}
                                 {job.estimatedWorkingDays
                                   ? ` (${job.estimatedWorkingDays} working day${Number(job.estimatedWorkingDays) === 1 ? "" : "s"})`
                                   : ""}
@@ -2543,7 +2678,7 @@ export default function AppViews({
                               <div className="household-feedback-copy">
                                 <div className="household-review-title-row">
                                   <h2>{authorName}</h2>
-                                  <strong>{review.rating != null ? `${review.rating}/5` : "No rating"}</strong>
+                                  <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "No rating"}</strong>
                                 </div>
                                 <p>{review.feedback || review.comment || "No comment provided."}</p>
                                 <small>{formatDateTime(review.createdAt || review.date)}</small>
@@ -2838,7 +2973,40 @@ export default function AppViews({
                                   </button>
                                 )}
                                 <div className="fw-600">{skill}</div>
-                                <span className="badge bg-success mt-2">Proficient</span>
+                                {(() => {
+                                  const entry = (workerProfileForm.portfolioSkills || []).find(
+                                    (item) => item.name.toLowerCase() === String(skill).toLowerCase(),
+                                  );
+                                  if (!entry) {
+                                    return <span className="small text-muted d-block mt-2">Save your profile to set a level</span>;
+                                  }
+                                  return (
+                                    <>
+                                      {workerProfileEditing ? (
+                                        <select
+                                          className="form-select form-select-sm mt-2"
+                                          aria-label={`Proficiency in ${skill}`}
+                                          value={entry.proficiency}
+                                          onChange={(event) => handleSetSkillProficiency(entry.id, event.target.value)}
+                                        >
+                                          <option value="">Level not set</option>
+                                          <option value="beginner">Beginner</option>
+                                          <option value="intermediate">Intermediate</option>
+                                          <option value="expert">Expert</option>
+                                        </select>
+                                      ) : entry.proficiency ? (
+                                        <span className="badge bg-success mt-2 text-capitalize">{entry.proficiency}</span>
+                                      ) : (
+                                        <span className="small text-muted d-block mt-2">Level not set</span>
+                                      )}
+                                      <span className="small text-muted d-block mt-1">
+                                        {entry.ratingCount
+                                          ? `★ ${Number(entry.averageRating).toFixed(1)} from ${entry.ratingCount} household rating${entry.ratingCount === 1 ? "" : "s"}`
+                                          : "Not yet rated"}
+                                      </span>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             ))
                           ) : (
@@ -2864,11 +3032,11 @@ export default function AppViews({
                             {workerProfileForm.certifications.map((cert, index) => (
                               <div key={index} className="col-md-4">
                                 <div className="position-relative">
-                                  <img src={cert.certificatePreview} alt={cert.name} className="img-fluid rounded" style={{ width: '100%', height: '200px', objectFit: 'cover' }} />
-                                  <div className="position-absolute top-0 start-0 end-0 bottom-0 d-flex align-items-end justify-content-between p-2 rounded" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }}>
+                                  <CertificateThumb cert={cert} height="200px" />
+                                  <div className="position-absolute start-0 end-0 bottom-0 d-flex align-items-end justify-content-between p-2 rounded-bottom" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.75))' }}>
                                     <div>
-                                      <p className="text-white mb-0 small fw-bold">{cert.name}</p>
-                                      {cert.is_verified && <span className="badge bg-success mt-1">✓ Verified</span>}
+                                      <p className="text-white mb-1 small fw-bold">{cert.name}</p>
+                                      <CertificateStatusBadge cert={cert} />
                                     </div>
                                     {workerProfileEditing && (
                                       <div className="d-flex gap-1">
@@ -3067,8 +3235,8 @@ export default function AppViews({
                             <label className="form-label">Certificate Type *</label>
                             <select
                               className="form-select"
-                              value={certificationForm.type || ""}
-                              onChange={(e) => setCertificationForm({ ...certificationForm, type: e.target.value })}
+                              value={certificationForm.certificateType || ""}
+                              onChange={(e) => setCertificationForm({ ...certificationForm, certificateType: e.target.value })}
                             >
                               <option value="">Select type...</option>
                               <option value="tesda">TESDA Certificate</option>
@@ -3087,6 +3255,37 @@ export default function AppViews({
                               onChange={(e) => setCertificationForm({ ...certificationForm, name: e.target.value })}
                               placeholder="e.g., AWS Solutions Architect"
                             />
+                          </div>
+                          <div className="mb-3">
+                            <label className="form-label">Issued by</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              value={certificationForm.issuer || ""}
+                              onChange={(e) => setCertificationForm({ ...certificationForm, issuer: e.target.value })}
+                              placeholder="e.g., TESDA"
+                            />
+                          </div>
+                          <div className="row g-3 mb-3">
+                            <div className="col-6">
+                              <label className="form-label">Date issued</label>
+                              <input
+                                type="date"
+                                className="form-control"
+                                value={certificationForm.issueDate || ""}
+                                onChange={(e) => setCertificationForm({ ...certificationForm, issueDate: e.target.value })}
+                              />
+                            </div>
+                            <div className="col-6">
+                              <label className="form-label">Expiry date</label>
+                              <input
+                                type="date"
+                                className="form-control"
+                                value={certificationForm.expiryDate || ""}
+                                min={certificationForm.issueDate || undefined}
+                                onChange={(e) => setCertificationForm({ ...certificationForm, expiryDate: e.target.value })}
+                              />
+                            </div>
                           </div>
                           <div className="mb-3">
                             <label className="form-label">Certificate Image *</label>
@@ -3112,13 +3311,13 @@ export default function AppViews({
                           </div>
                           {certificationForm.certificatePreview && (
                             <div className="mb-3">
-                              <img src={certificationForm.certificatePreview} alt={certificationForm.name} className="img-fluid rounded" style={{ maxHeight: '200px', objectFit: 'contain' }} />
+                              <CertificateThumb cert={certificationForm} height="200px" />
                             </div>
                           )}
                         </div>
                         <div className="modal-footer">
                           <button type="button" className="btn btn-secondary" onClick={() => setShowCertificationModal(false)}>Cancel</button>
-                          <button type="button" className="btn btn-success" onClick={handleAddCertification}>Save Certificate</button>
+                          <button type="button" className="btn btn-success" disabled={portfolioSaving} onClick={handleAddCertification}>{portfolioSaving ? "Saving…" : "Save Certificate"}</button>
                         </div>
                       </div>
                     </div>
@@ -3198,7 +3397,7 @@ export default function AppViews({
                         </div>
                         <div className="modal-footer">
                           <button type="button" className="btn btn-secondary" onClick={() => setShowWorkSampleModal(false)}>Cancel</button>
-                          <button type="button" className="btn btn-success" onClick={handleAddWorkSample}>Save Sample</button>
+                          <button type="button" className="btn btn-success" disabled={portfolioSaving} onClick={handleAddWorkSample}>{portfolioSaving ? "Saving…" : "Save Sample"}</button>
                         </div>
                       </div>
                     </div>
@@ -3254,11 +3453,11 @@ export default function AppViews({
                             {workerProfileForm.certifications.map((cert, index) => (
                               <div key={index} className="col-md-4">
                                 <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
-                                  <img src={cert.certificatePreview} alt={cert.name} className="img-fluid rounded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                  <div className="position-absolute bottom-0 start-0 end-0 p-2" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }}>
-                                    <div className="d-flex justify-content-between align-items-end">
+                                  <CertificateThumb cert={cert} height="100%" />
+                                  <div className="position-absolute bottom-0 start-0 end-0 p-2" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.75))' }}>
+                                    <div className="d-flex justify-content-between align-items-end gap-2">
                                       <p className="text-white mb-0 fw-bold small">{cert.name}</p>
-                                      {cert.is_verified && <span className="badge bg-success">✓</span>}
+                                      <CertificateStatusBadge cert={cert} />
                                     </div>
                                   </div>
                                 </div>
@@ -3417,7 +3616,7 @@ export default function AppViews({
                           </div>
                           <p className="household-process-meta">
                             {formatRate(job.offeredRate, job.rateType)}
-                            {job.jobStartDate ? ` · Started ${job.jobStartDate}` : ""}
+                            {job.jobStartDate ? ` · Started ${formatJobDate(job.jobStartDate)}` : ""}
                           </p>
                           {awaitingConfirmation ? (
                             <div className="household-process-note">
@@ -3473,7 +3672,7 @@ export default function AppViews({
                           </div>
                           <p className="household-process-meta">
                             {review
-                              ? `Rating received: ${Number(review.rating).toFixed(1)} / 5`
+                              ? `Rating received: ${Number(review.overallRating ?? review.rating).toFixed(1)} / 5`
                               : "No rating yet"}
                           </p>
                         </article>
@@ -3591,21 +3790,40 @@ export default function AppViews({
                   <h1 className="h4 mb-0">My Applications</h1>
                 </div>
                 <div className="applications-filter mt-3">
-                  <div className="row g-2">
+                  <div className="row g-2 align-items-center">
                     <div className="col-md-4">
-                      <select className="form-select">
-                        <option>All Status</option>
-                        <option>Pending</option>
-                        <option>In Progress</option>
-                        <option>Completed</option>
+                      <label className="visually-hidden" htmlFor="worker-application-status-filter">
+                        Filter by status
+                      </label>
+                      <select
+                        id="worker-application-status-filter"
+                        className="form-select"
+                        value={workerApplicationStatusFilter}
+                        onChange={(event) => setWorkerApplicationStatusFilter(event.target.value)}
+                      >
+                        <option value="All">All Status</option>
+                        {workerApplicationStatusOptions.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
                       </select>
                     </div>
-                    <div className="col-md-2">
-                      <button className="btn btn-primary w-100">Filter</button>
+                    <div className="col-md-8 small text-muted">
+                      Showing {visibleWorkerApplications.length} of {workerApplications.length}
                     </div>
                   </div>
                 </div>
                 <div className="card border-0 shadow-sm mt-3">
+                  {visibleWorkerApplications.length === 0 ? (
+                    // Outside the table on purpose: inside a horizontally
+                    // scrolling table on a phone, this message was cut off.
+                    <p className="text-center text-muted py-4 px-3 mb-0">
+                      {workerApplications.length === 0
+                        ? "No applications yet."
+                        : "No applications with this status."}
+                    </p>
+                  ) : (
                   <div className="table-responsive">
                     <table className="table align-middle mb-0">
                       <thead>
@@ -3620,8 +3838,7 @@ export default function AppViews({
                         </tr>
                       </thead>
                       <tbody>
-                        {workerApplications.length > 0 ? (
-                          workerApplications.map((job) => (
+                        {visibleWorkerApplications.map((job) => (
                             <tr key={`${job.id}-${job.appliedAt}`}>
                               <td>
                                 <div className="fw-semibold">{job.jobTitle || job.serviceType}</div>
@@ -3633,24 +3850,22 @@ export default function AppViews({
                                 )}
                               </td>
                               <td>{job.householdName || "Household"}</td>
-                              <td>{formatScheduleLabel(job.scheduleType) || "Not set"}</td>
+                              <td>
+                                {formatScheduleLabel(job.scheduleType) || "Not set"}
+                                {job.jobStartDate && (
+                                  <div className="small text-muted">{formatJobDate(job.jobStartDate)}</div>
+                                )}
+                              </td>
                               <td>{formatLocation(job.barangay, job.streetAddress)}</td>
                               <td>{formatRate(job.offeredRate, job.rateType)}</td>
                               <td>{getWorkerApplicationDisplayStatus(job)}</td>
                               <td>{formatDateTime(job.appliedAt)}</td>
                             </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="7" className="text-center text-muted py-4">
-                              {" "}
-                              No applications yet.{" "}
-                            </td>
-                          </tr>
-                        )}
+                          ))}
                       </tbody>
                     </table>
                   </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3665,39 +3880,45 @@ export default function AppViews({
                   <p className="worker-brand mb-0">GawaGo Community Platform</p>
                 </div>
                 <nav className="worker-nav">
-                  <button
-                    className="worker-nav-item"
-                    onClick={isHouseholdVerification ? openHouseholdDashboard : openWorkerDashboard}
-                  >
-                    {navIcon("dashboard")}
-                    <span>Dashboard</span>
-                  </button>
-                  {!isHouseholdVerification && (
-                    <button className="worker-nav-item" onClick={openAllWorkerFindJobs}>
-                      {navIcon("search")}
-                      <span>Find Jobs</span>
-                    </button>
-                  )}
-                  {isHouseholdVerification && (
-                    <button className="worker-nav-item" onClick={openHouseholdPostJob}>
-                      {navIcon("post-job")}
-                      <span>Post a Job</span>
-                    </button>
-                  )}
-                  <button
-                    className="worker-nav-item"
-                    onClick={isHouseholdVerification ? openHouseholdProfile : openWorkerProfile}
-                  >
-                    {navIcon("profile")}
-                    <span>My Profile</span>
-                  </button>
+                  {/* Same items and order as every other page of each role. */}
                   {isHouseholdVerification ? (
-                    <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
-                      {navIcon("jobs")}
-                      <span>My Jobs</span>
-                    </button>
+                    <>
+                      <button className="worker-nav-item" onClick={openHouseholdDashboard}>
+                        {navIcon("dashboard")}
+                        <span>Dashboard</span>
+                      </button>
+                      <button className="worker-nav-item" onClick={openHouseholdPostJob}>
+                        {navIcon("post-job")}
+                        <span>Post a Job</span>
+                      </button>
+                      <button className="worker-nav-item" onClick={openHouseholdMyJobs}>
+                        {navIcon("jobs")}
+                        <span>My Jobs</span>
+                      </button>
+                      <button className="worker-nav-item" onClick={openMyComplaints}>
+                        {navIcon("flag")}
+                        <span>My Reports</span>
+                      </button>
+                      <span className="worker-nav-section">Account</span>
+                      <button className="worker-nav-item" onClick={openHouseholdProfile}>
+                        {navIcon("profile")}
+                        <span>My Profile</span>
+                      </button>
+                    </>
                   ) : (
                     <>
+                      <button className="worker-nav-item" onClick={openWorkerDashboard}>
+                        {navIcon("dashboard")}
+                        <span>Dashboard</span>
+                      </button>
+                      <button className="worker-nav-item" onClick={openAllWorkerFindJobs}>
+                        {navIcon("search")}
+                        <span>Find Jobs</span>
+                      </button>
+                      <button className="worker-nav-item" onClick={openWorkerProfile}>
+                        {navIcon("profile")}
+                        <span>My Profile</span>
+                      </button>
                       <button className="worker-nav-item" onClick={openWorkerApplications}>
                         {navIcon("applications")}
                         <span>My Applications</span>
@@ -3709,6 +3930,11 @@ export default function AppViews({
                         {navIcon("jobs")}
                         <span>My Jobs</span>
                       </button>
+                      <button className="worker-nav-item" onClick={openMyComplaints}>
+                        {navIcon("flag")}
+                        <span>My Reports</span>
+                      </button>
+                      <span className="worker-nav-section">Account</span>
                     </>
                   )}
                   <button className="worker-nav-item active">{navIcon("verified")}
@@ -3843,6 +4069,42 @@ export default function AppViews({
                           </p>
                         </div>
                         <div className="mb-3">
+                          <label className="form-label fw-semibold" htmlFor="primaryIdType">
+                            Which government ID are you uploading?
+                          </label>
+                          <select
+                            id="primaryIdType"
+                            name="primaryIdType"
+                            className="form-select"
+                            value={verificationForm.primaryIdType || ""}
+                            onChange={handleVerificationChange}
+                          >
+                            <option value="">---Select ID Type---</option>
+                            {GOVERNMENT_ID_TYPES.map(({ value, label }) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                          {verificationForm.primaryIdType === "other" && (
+                            <div className="mt-2">
+                              <label className="form-label fw-semibold" htmlFor="primaryIdOtherName">
+                                Name the ID
+                              </label>
+                              <input
+                                id="primaryIdOtherName"
+                                type="text"
+                                name="primaryIdOtherName"
+                                className="form-control"
+                                placeholder="e.g. PRC Professional ID"
+                                maxLength={255}
+                                value={verificationForm.primaryIdOtherName || ""}
+                                onChange={handleVerificationChange}
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="mb-3">
                           <label className="form-label fw-semibold">Primary ID Document</label>
                           <input
                             type="file"
@@ -3850,7 +4112,7 @@ export default function AppViews({
                             name="primaryId"
                             onChange={handleVerificationChange}
                           />
-                          <p className="form-text mb-0"> Accepted: Government-issued ID (SSS, GSIS, Passport, etc.) </p>
+                          <p className="form-text mb-0">Upload a clear photo or scan of the ID you chose above.</p>
                           {verificationForm.primaryIdName && (
                             <p className="small text-muted mt-1 mb-0">Selected: {verificationForm.primaryIdName}</p>
                           )}
@@ -4059,7 +4321,7 @@ export default function AppViews({
                         </div>
                         <div>
                           <span>Schedule</span>
-                          <strong>{formatDateTime(job.preferredDate, job.preferredTime) || job.scheduleType || "Not set"}</strong>
+                          <strong>{formatJobDate(job.jobStartDate) || job.scheduleType || "Not set"}</strong>
                         </div>
                         <div>
                           <span>Location</span>
@@ -4243,10 +4505,7 @@ export default function AppViews({
                         <div>
                           <span>Schedule</span>
                           <strong>
-                            {formatDateTime(
-                              workerHireRequestPreviewJob.preferredDate,
-                              workerHireRequestPreviewJob.preferredTime,
-                            ) || workerHireRequestPreviewJob.scheduleType || "Not set"}
+                            {formatJobDate(workerHireRequestPreviewJob.jobStartDate) || workerHireRequestPreviewJob.scheduleType || "Not set"}
                           </strong>
                         </div>
                         <div>
@@ -4306,35 +4565,13 @@ export default function AppViews({
           </section>
         )}
         {view === "admin-dashboard" && (
-          <section className="worker-dashboard">
+          <section className="worker-dashboard admin-dashboard-page">
             <div className="worker-layout">
-              <aside className="worker-sidebar">
-                <div className="worker-sidebar-head">
-                  <div className="worker-logo">GG</div>
-                  <p className="worker-brand mb-0">Admin Panel</p>
-                </div>
-                <nav className="worker-nav">
-                  <button
-                    className={`worker-nav-item ${adminSection === "verification" ? "active" : ""}`}
-                    onClick={openAdminDashboard}
-                  >
-                    {navIcon("verification")}
-                    <span>Verification Queue</span>
-                  </button>
-                  <button className="worker-nav-item" onClick={openMyComplaints}>
-                    {navIcon("flag")}
-                    <span>My Reports</span>
-                  </button>
-                  <span className="worker-nav-section">Account</span>
-                  <button
-                    className={`worker-nav-item ${adminSection === "history" ? "active" : ""}`}
-                    onClick={openAdminWorkersHistory}
-                  >
-                    {navIcon("history")}
-                    <span>Workers History</span>
-                  </button>
-                </nav>
-              </aside>
+              <DashboardSidebar
+                brand="Admin Panel"
+                items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory })}
+                footerAction={{ label: "Log Out", onClick: handleLogout }}
+              />
               <div className="worker-content">
                 <div className="worker-topbar">
                   <h1 className="h4 mb-0">
@@ -4691,26 +4928,6 @@ export default function AppViews({
                           <option>Full-Time</option>
                         </select>
                       </div>
-                      <div className="col-md-6">
-                        <label className="form-label fw-semibold">Preferred Date</label>
-                        <input
-                          type="date"
-                          name="preferredDate"
-                          className="form-control"
-                          value={householdJobForm.preferredDate}
-                          onChange={handleHouseholdJobChange}
-                        />
-                      </div>
-                      <div className="col-md-6">
-                        <label className="form-label fw-semibold">Preferred Time</label>
-                        <input
-                          type="time"
-                          name="preferredTime"
-                          className="form-control"
-                          value={householdJobForm.preferredTime}
-                          onChange={handleHouseholdJobChange}
-                        />
-                      </div>
                       <div className="col-12">
                         <label className="form-label fw-semibold">Job Description</label>
                         <textarea
@@ -4749,6 +4966,7 @@ export default function AppViews({
                         <input
                           type="number"
                           min="1"
+                          max="50"
                           step="1"
                           name="workersNeeded"
                           className="form-control"
@@ -4785,8 +5003,10 @@ export default function AppViews({
                         <label className="form-label fw-semibold">Job Start Date</label>
                         <input
                           type="date"
+                          min={todayIsoDate}
                           name="jobStartDate"
                           className="form-control"
+                          required
                           value={householdJobForm.jobStartDate || ""}
                           onChange={handleHouseholdJobChange}
                         />
@@ -4795,6 +5015,7 @@ export default function AppViews({
                         <label className="form-label fw-semibold">Job End Date</label>
                         <input
                           type="date"
+                          min={todayIsoDate}
                           name="jobEndDate"
                           className="form-control"
                           value={householdJobForm.jobEndDate || ""}
@@ -4806,6 +5027,7 @@ export default function AppViews({
                         <input
                           type="number"
                           min="1"
+                          max="366"
                           step="1"
                           name="estimatedWorkingDays"
                           className="form-control"
@@ -5096,7 +5318,7 @@ export default function AppViews({
                                     {formatDateTime(review.createdAt || review.date)}
                                   </p>
                                 </div>
-                                <strong>{review.rating != null ? `${review.rating}/5` : "Feedback"}</strong>
+                                <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "Feedback"}</strong>
                               </div>
                             </div>
                           ))
@@ -5130,7 +5352,7 @@ export default function AppViews({
                                     {formatDateTime(review.createdAt || review.date)}
                                   </p>
                                 </div>
-                                <strong>{review.rating != null ? `${review.rating}/5` : "Feedback"}</strong>
+                                <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "Feedback"}</strong>
                               </div>
                             </div>
                           ))
@@ -5242,7 +5464,7 @@ export default function AppViews({
                             <div className="household-feedback-copy">
                               <div className="household-review-title-row">
                                 <h2>{maskedAuthorName}</h2>
-                                {review.rating != null && <strong>{review.rating}/5</strong>}
+                                {reviewScore(review) != null && <strong>{reviewScore(review).toFixed(1)}/5</strong>}
                               </div>
                               <p>{review.feedback || review.comment || "No comment provided."}</p>
                               <small>{formatDateTime(review.createdAt || review.date)}</small>
@@ -5386,7 +5608,7 @@ export default function AppViews({
                               <div className="household-feedback-copy">
                                 <div className="household-review-title-row">
                                   <h2>{targetName}</h2>
-                                  <strong>{review.rating != null ? `${review.rating}/5` : "No rating"}</strong>
+                                  <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "No rating"}</strong>
                                 </div>
                                 <p>{review.feedback || review.comment || "No comment provided."}</p>
                                 <small>{formatDateTime(review.createdAt || review.date)}</small>
@@ -5519,12 +5741,34 @@ export default function AppViews({
                   </button>
                   <div className="gg-matches-heading">
                     <div>
-                      <p className="gg-matches-eyebrow">AI Matched Workers</p>
+                      <p className="gg-matches-eyebrow">{smartMatchRanking ? "Smart Matched Workers" : "AI Matched Workers"}</p>
                       <h1>{selectedJob?.jobTitle || "Your job is live"}</h1>
                       <p className="gg-matches-sub">
-                        Ranked by skill fit ({Math.round(AI_SKILL_WEIGHT * 100)}%) and travel distance (
-                        {Math.round((1 - AI_SKILL_WEIGHT) * 100)}%).
+                        {smartMatchRanking ? (
+                          "Ranked by Smart Matching: matching skill first, then verified workers, then road distance, then rating and rate."
+                        ) : (
+                          <>
+                            Ranked by skill fit ({Math.round(AI_SKILL_WEIGHT * 100)}%) and travel distance (
+                            {Math.round((1 - AI_SKILL_WEIGHT) * 100)}%).
+                          </>
+                        )}
                       </p>
+                      <div className="worker-find-jobs-toggle mt-2" role="group" aria-label="How matches are ranked">
+                        {[
+                          ["ai", "AI match"],
+                          ["smart", "Smart Matching"],
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={householdMatchRank === value ? "active" : ""}
+                            aria-pressed={householdMatchRank === value}
+                            onClick={() => setHouseholdMatchRank(value)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     <span className="gg-matches-live">
                       <i aria-hidden="true" />
@@ -5544,9 +5788,42 @@ export default function AppViews({
                       </button>
                     ))}
                   </div>
+                  <div className="worker-find-jobs-viewbar mt-3 mb-0">
+                    <p className="small worker-skill-hint fw-semibold mb-0">
+                      {householdMatchesView === "map"
+                        ? "Every matched worker is pinned by their general area. Tap a pin to see who's available there."
+                        : "Best matches first. Open a profile to compare rates, ratings and experience before you decide."}
+                    </p>
+                    <div className="worker-find-jobs-toggle" role="group" aria-label="Matched worker view">
+                      {[
+                        ["list", "List View"],
+                        ["map", "Map View"],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={householdMatchesView === value ? "active" : ""}
+                          aria-pressed={householdMatchesView === value}
+                          onClick={() => setHouseholdMatchesView(value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 <section className="gg-matches-body">
+                  {householdMatchesView === "map" && (
+                    <HouseholdWorkersMap
+                      workers={visibleMatchedWorkers}
+                      job={selectedJob}
+                      onViewProfile={(worker) => openMatchedWorkerProfile(worker, selectedJob.id)}
+                      onHire={requestDashboardHire}
+                    />
+                  )}
+                  {householdMatchesView === "list" && (
+                  <>
                   {visibleMatchedWorkers.length > 0 ? (
                     <div className="gg-match-grid">
                       {visibleMatchedWorkers.map((worker) => {
@@ -5560,7 +5837,9 @@ export default function AppViews({
                               {worker.verification === "Verified" && (
                                 <span className="gg-match-verified">&#10003; Verified</span>
                               )}
-                              <span className="gg-match-ring-slot">{renderMatchRing(worker.aiScore)}</span>
+                              {!smartMatchRanking && (
+                                <span className="gg-match-ring-slot">{renderMatchRing(worker.aiScore)}</span>
+                              )}
                               <div className="gg-match-photo-ident">
                                 <h3>{workerName}</h3>
                                 <p>{worker.barangay || "Location not set"}</p>
@@ -5570,12 +5849,13 @@ export default function AppViews({
                             <div className="gg-match-info">
                               <div className="gg-match-meta">
                                 {renderStarRow(worker.rating, worker.reviewsDone)}
-                                <span>&middot; {formatDistance(worker.distanceKm, worker.distanceLabel)}</span>
+                                <span>&middot; {worker.distanceLabel || formatDistance(worker.distanceKm)}</span>
                                 <span>
                                   &middot; {worker.completedJobs || 0}{" "}
                                   {(worker.completedJobs || 0) === 1 ? "job" : "jobs"}
                                 </span>
                               </div>
+                              {!smartMatchRanking && renderAiMatchBreakdown(worker)}
                               <div className="gg-match-skills">
                                 {(worker.skills || []).slice(0, 2).map((skill) => (
                                   <span key={`${worker.id}-${skill}`}>{skill}</span>
@@ -5610,6 +5890,8 @@ export default function AppViews({
                         ? `No matched worker lists ${matchedSkillFilter} yet. Pick another category to see the rest.`
                         : "No workers matched this job yet. Workers need listed skills, a saved location, and must fall inside the job's search radius. Widen the radius on the job to reach further."}
                     </div>
+                  )}
+                  </>
                   )}
                   <div className="d-flex gap-2 flex-wrap mt-3">
                     <button type="button" className="btn btn-outline-secondary" onClick={openHouseholdMyJobs}>
@@ -5746,23 +6028,23 @@ export default function AppViews({
                           ? historyCancelledJobs
                           : historyHouseholdJobs
                       ).map((job) => {
-                        const worker = getAssignedWorkerForJob(job);
+                        const worker = getWorkerToReviewForJob(job);
                         const workerName = worker
                           ? getDisplayName(worker.firstName, worker.lastName, worker.username)
                           : null;
                         const review = getHouseholdReviewForJobWorker(job, worker);
                         const isCancelled = job.status === "Cancelled";
-                        const starRating = Math.round(Number(review?.rating) || 0);
+                        const starRating = Math.round((review && reviewScore(review)) || 0);
                         return (
                           <article key={job.id} className={`household-history-card ${isCancelled ? "cancelled" : ""}`}>
                             <div className="household-history-top">
                               <h3>{job.jobTitle || job.serviceType}</h3>
                               <span className={`household-history-pill ${isCancelled ? "cancelled" : "completed"}`}>
-                                {job.status}
+                                {job.statusLabel || job.status}
                               </span>
                             </div>
                             <p className="household-history-meta">
-                              {job.serviceType} &middot; {formatDateTime(job.preferredDate, job.preferredTime) || "Date not set"}
+                              {job.serviceType} &middot; {formatJobDate(job.jobStartDate) || "Date not set"}
                               {" "}&middot;{" "}
                               {job.barangay || "Location not set"}
                             </p>
@@ -5773,6 +6055,15 @@ export default function AppViews({
                                 <div>
                                   <strong>No worker was hired</strong>
                                   <p>Job was cancelled before a worker was assigned.</p>
+                                  {(job.applications || []).length > 0 && (
+                                    <button
+                                      type="button"
+                                      className="household-history-report-link"
+                                      onClick={() => openDashboardReportModal(job)}
+                                    >
+                                      Report an Issue
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             ) : (
@@ -5828,11 +6119,22 @@ export default function AppViews({
                                             <polygon points="12 2 15 8.5 22 9.5 17 14.5 18.3 21.5 12 18 5.7 21.5 7 14.5 2 9.5 9 8.5 12 2" />
                                           </svg>
                                         ))}
-                                        <strong>{Number(review.rating || 0).toFixed(1)}/5</strong>
+                                        <strong>{(reviewScore(review) || 0).toFixed(1)}/5</strong>
                                       </div>
                                       {review.feedback && (
                                         <p className="household-history-quote">&ldquo;{review.feedback}&rdquo;</p>
                                       )}
+                                      <button
+                                        type="button"
+                                        className="household-history-report-link mt-2"
+                                        onClick={() => openDashboardReportModal(job)}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
+                                          <line x1="4" y1="22" x2="4" y2="15"></line>
+                                        </svg>
+                                        Report an Issue
+                                      </button>
                                     </div>
                                   ) : (
                                     <div className="household-history-actions">
@@ -6085,18 +6387,31 @@ export default function AppViews({
                         </span>
                       </div>
                       <div className="p-3">
-                        <LocationDistanceMap
-                          userLatitude={selectedWorkerJobLatitude}
-                          userLongitude={selectedWorkerJobLongitude}
-                          targetLatitude={selectedWorkerPoint?.latitude ?? null}
-                          targetLongitude={selectedWorkerPoint?.longitude ?? null}
-                          userLocation={selectedWorkerJobLocationLabel}
-                          targetLocation={selectedWorkerLocationLabel}
-                          distanceKm={selectedWorkerDistanceKm}
-                          routePoints={selectedWorker.routePoints || []}
-                          formatDistanceFn={formatDistance}
-                          onRouteDistanceChange={setSelectedWorkerRouteDistanceKm}
-                        />
+                        {selectedWorkerLocationShared ? (
+                          <LocationDistanceMap
+                            userLatitude={selectedWorkerJobLatitude}
+                            userLongitude={selectedWorkerJobLongitude}
+                            targetLatitude={selectedWorkerPoint.latitude}
+                            targetLongitude={selectedWorkerPoint.longitude}
+                            userLocation={selectedWorkerJobLocationLabel}
+                            targetLocation={selectedWorkerLocationLabel}
+                            distanceKm={selectedWorkerDistanceKm}
+                            routePoints={selectedWorker.routePoints || []}
+                            formatDistanceFn={formatDistance}
+                            onRouteDistanceChange={setSelectedWorkerRouteDistanceKm}
+                          />
+                        ) : (
+                          <div className="worker-location-private" data-testid="worker-location-private">
+                            <strong>{selectedWorkerDistanceLabel}</strong>
+                            <span>
+                              {selectedWorkerDistanceLabel === "Road distance unavailable"
+                                ? "Road distance from your job site could not be calculated."
+                                : "Road distance from your job site."}{" "}
+                              This worker hasn't pinned a location on their profile yet, so there's nothing
+                              to show on the map.
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     {selectedWorkerVerificationRequest && (
@@ -6488,8 +6803,8 @@ export default function AppViews({
                             {formatRate(job.offeredRate, job.rateType)} &middot; {job.barangay || "Location not set"}
                             {job.jobStartDate && (
                               <>
-                                {" "}&middot; {job.jobStartDate}
-                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
+                                {" "}&middot; {formatJobDate(job.jobStartDate)}
+                                {job.jobEndDate ? ` to ${formatJobDate(job.jobEndDate)}` : ""}
                               </>
                             )}
                           </p>
@@ -6497,7 +6812,11 @@ export default function AppViews({
                             <button
                               type="button"
                               className="btn btn-success household-process-cta"
+                              disabled={isActionPending(`complete-${job.id}`)}
                               onClick={() => {
+                                if (isActionPending(`complete-${job.id}`)) {
+                                  return;
+                                }
                                 if (window.confirm("Confirm this job as completed? This can't be undone.")) {
                                   handleConfirmJobCompleted(job.id);
                                 }
@@ -6510,6 +6829,15 @@ export default function AppViews({
                             <div className="household-process-note">
                               You&rsquo;ll be notified once {workerName || "the worker"} marks this done.
                             </div>
+                          )}
+                          {worker && (isAssigned || needsConfirmation) && (
+                            <button
+                              type="button"
+                              className="household-process-outline-cta"
+                              onClick={() => openMatchedWorkerProfile(worker, job.id)}
+                            >
+                              View Worker &amp; Route
+                            </button>
                           )}
                           {(hasApplicants || awaitingReply) && (
                             <button
@@ -6558,6 +6886,19 @@ export default function AppViews({
                               Cancel Job
                             </button>
                           )}
+                          {(job.applications || []).length > 0 && (
+                            <button
+                              type="button"
+                              className="household-history-report-link household-process-report-link"
+                              onClick={() => openDashboardReportModal(job)}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
+                                <line x1="4" y1="22" x2="4" y2="15"></line>
+                              </svg>
+                              Report an Issue
+                            </button>
+                          )}
                         </article>
                       );
                     })}
@@ -6571,7 +6912,7 @@ export default function AppViews({
                     </p>
                     <div className="household-process-grid">
                       {pendingHouseholdReviewJobs.map((job) => {
-                        const worker = getAssignedWorkerForJob(job);
+                        const worker = getWorkerToReviewForJob(job);
                         const workerName = worker
                           ? getDisplayName(worker.firstName, worker.lastName, worker.username)
                           : null;
@@ -6728,7 +7069,7 @@ export default function AppViews({
                           )}
                           {topApplicantKey &&
                             String(applicant.id || applicant.username) === topApplicantKey && (
-                              <span className="gg-applicant-top">Top match</span>
+                              <span className="gg-applicant-top" title="Highest AI match score among these applicants">Top AI match</span>
                             )}
                         </div>
                         <div className="gg-applicant-actions">
@@ -6760,8 +7101,11 @@ export default function AppViews({
                           <button
                             type="button"
                             className="gg-applicant-hire"
-                            disabled={isHired || isRequested}
+                            disabled={isHired || isRequested || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)}
                             onClick={() => {
+                              if (pendingHireWorkerId != null || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)) {
+                                return;
+                              }
                               if (
                                 !window.confirm(
                                   `Accept ${applicantName} for this job? They will be hired and the job moves to In progress.`,
@@ -6847,9 +7191,20 @@ export default function AppViews({
                 <form
                   className="gg-rate-form"
                   onSubmit={async (event) => {
+                    const ratedJob = selectedJob;
+                    const ratedWorker = selectedWorker;
                     const submitted = await handleHouseholdReviewSubmit(event);
                     if (submitted) {
                       closeDashboardModal();
+                      if (ratedJob && ratedWorker?.id) {
+                        setSkillRatingTarget({
+                          jobId: ratedJob.id,
+                          workerId: ratedWorker.id,
+                          workerName: getDisplayName(ratedWorker.firstName, ratedWorker.lastName, ratedWorker.username),
+                          jobTitle: ratedJob.jobTitle || ratedJob.serviceType,
+                          jobSkill: ratedJob.requiredSkill || ratedJob.serviceType,
+                        });
+                      }
                     }
                   }}
                 >
@@ -6882,6 +7237,26 @@ export default function AppViews({
                   </div>
                 </form>
               </div>
+            </div>
+          </div>
+        )}
+
+        {skillRatingTarget && (
+          <div className="gg-modal-backdrop" role="dialog" aria-modal="true" aria-label="Rate skills">
+            <div className="gg-skill-rating-panel" onClick={(event) => event.stopPropagation()}>
+              <SkillRatingForm
+                key={`${skillRatingTarget.jobId}-${skillRatingTarget.workerId}`}
+                jobId={skillRatingTarget.jobId}
+                workerId={skillRatingTarget.workerId}
+                workerName={skillRatingTarget.workerName}
+                jobTitle={skillRatingTarget.jobTitle}
+                jobSkill={skillRatingTarget.jobSkill}
+                onSubmitSuccess={() => {
+                  setSkillRatingTarget(null);
+                  addToast("Skill ratings saved.", "success");
+                }}
+                onCancel={() => setSkillRatingTarget(null)}
+              />
             </div>
           </div>
         )}

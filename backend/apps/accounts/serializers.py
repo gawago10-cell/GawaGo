@@ -5,9 +5,18 @@ from pathlib import Path
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.urls import reverse
 from rest_framework import serializers
 
 from apps.common.fields import RoundedCoordinateField
+from apps.common.sanitize import sanitize_text
+from apps.common.uploads import (
+    DOCUMENT_EXTENSIONS,
+    MAX_DOCUMENT_BYTES as MAX_DOCUMENT_UPLOAD_BYTES,
+    UploadRejected,
+    validate_document_upload,
+    validate_image_upload,
+)
 from apps.accounts.models import (
     PasswordResetRequest,
     SignupVerificationRequest,
@@ -18,9 +27,25 @@ from apps.accounts.models import (
     WorkerCertification,
     WorkerPortfolioItem,
     SkillRating,
-    VerificationDocument,
 )
 from apps.common.serializers import VerificationRequestSerializer
+
+
+# Both clients already limit the picker to these types, but that is
+# client-side only -- apps.common.uploads enforces the real rules (contents,
+# not just the extension) for every upload path.
+ALLOWED_DOCUMENT_EXTENSIONS = DOCUMENT_EXTENSIONS
+MAX_DOCUMENT_BYTES = MAX_DOCUMENT_UPLOAD_BYTES
+
+
+# Tayabas City sits at roughly 13.93-14.12 N, 121.50-121.75 E. The box is
+# padded well past the city limits so a pin dropped just outside a barangay
+# boundary still saves, while coordinates from another province -- or the
+# 0,0 and 999,999 that a malformed client sends -- are refused. The platform
+# serves one city (AGENTS.md V), so a job in New York is bad data, not an
+# edge case.
+TAYABAS_LATITUDE_RANGE = (13.80, 14.25)
+TAYABAS_LONGITUDE_RANGE = (121.35, 121.90)
 
 
 def validate_tayabas_coordinates(attrs):
@@ -32,10 +57,29 @@ def validate_tayabas_coordinates(attrs):
         )
     if latitude is None or longitude is None:
         return attrs
+    latitude = float(latitude)
+    longitude = float(longitude)
+    within_latitude = TAYABAS_LATITUDE_RANGE[0] <= latitude <= TAYABAS_LATITUDE_RANGE[1]
+    within_longitude = TAYABAS_LONGITUDE_RANGE[0] <= longitude <= TAYABAS_LONGITUDE_RANGE[1]
+    if not (within_latitude and within_longitude):
+        raise serializers.ValidationError(
+            {"location": "Pick a location inside Tayabas City and its barangays."}
+        )
     return attrs
 
 
-MAX_WORKER_SKILLS = 4
+MAX_WORKER_SKILLS = 3
+# WorkerSkill.skill_name's column size; every profile skill gets a WorkerSkill row.
+SKILL_NAME_MAX_LENGTH = 120
+
+
+def viewer_may_see_credential_review(request, worker_id):
+    """Admin review notes and the reviewing admin's identity belong to staff
+    and to the credential's owner."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return False
+    return user.is_staff or user.id == worker_id
 
 
 def validate_worker_profile_requirements(attrs, *, role, profile=None):
@@ -44,10 +88,27 @@ def validate_worker_profile_requirements(attrs, *, role, profile=None):
         return attrs
 
     skills = attrs.get("skills")
-    if skills is not None and len(skills) > MAX_WORKER_SKILLS:
-        raise serializers.ValidationError(
-            {"skills": f"Workers can list at most {MAX_WORKER_SKILLS} skills."}
-        )
+    if skills is not None:
+        # "Cooking", "cooking" and "COOKING" are one skill, and a worker with
+        # none cannot be matched to anything, so an empty list is not a valid
+        # saved state.
+        # Same notion of "one skill" as the portfolio sync (skill_key):
+        # case and repeated spaces don't make a different skill.
+        deduplicated = []
+        seen = set()
+        for skill in skills:
+            name = " ".join(str(skill).split())
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            deduplicated.append(name)
+        if not deduplicated:
+            raise serializers.ValidationError({"skills": "List at least one skill."})
+        if len(deduplicated) > MAX_WORKER_SKILLS:
+            raise serializers.ValidationError(
+                {"skills": f"Workers can list at most {MAX_WORKER_SKILLS} skills."}
+            )
+        attrs["skills"] = deduplicated
 
     hourly_rate = attrs.get("hourly_rate", getattr(profile, "hourly_rate", None))
     daily_rate = attrs.get("daily_rate", getattr(profile, "daily_rate", None))
@@ -82,14 +143,45 @@ def validate_worker_profile_requirements(attrs, *, role, profile=None):
 class FlexibleStringListField(serializers.ListField):
     child = serializers.CharField()
 
+    def get_value(self, dictionary):
+        value = super().get_value(dictionary)
+        # Multipart and form-encoded bodies arrive as a one-item list holding
+        # the whole serialized list, so unwrap it here or the string parsing
+        # in to_internal_value never runs and the list is stored as one
+        # mangled string.
+        if (
+            isinstance(value, list)
+            and len(value) == 1
+            and isinstance(value[0], str)
+            and self._looks_serialized(value[0])
+        ):
+            return value[0]
+        return value
+
+    @staticmethod
+    def _looks_serialized(raw):
+        text = raw.strip()
+        return (text.startswith("[") and text.endswith("]")) or "," in text
+
     def to_internal_value(self, data):
         if isinstance(data, str):
-            try:
-                parsed = json.loads(data)
-            except json.JSONDecodeError:
-                parsed = [item.strip() for item in data.split(",") if item.strip()]
-            data = parsed
+            data = self._parse_text(data)
         return super().to_internal_value(data)
+
+    @staticmethod
+    def _parse_text(raw):
+        text = raw.strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+        if isinstance(parsed, str):
+            return [parsed.strip()] if parsed.strip() else []
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        return [item.strip() for item in text.split(",") if item.strip()]
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -111,6 +203,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
     # household/worker directory -- an admin's own UserProfile.role is
     # usually just "worker" by default, so role alone can't tell them apart.
     is_staff = serializers.BooleanField(source="user.is_staff", read_only=True)
+    # The web client restores a signed-in session from this endpoint on page
+    # load, and a superadmin has to come back as a superadmin: role alone
+    # cannot tell the two admin levels apart.
+    is_superuser = serializers.BooleanField(source="user.is_superuser", read_only=True)
 
     class Meta:
         model = UserProfile
@@ -146,6 +242,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "blocked_until",
             "blocked_reason",
             "is_staff",
+            "is_superuser",
         ]
 
     def get_is_blocked(self, obj):
@@ -214,6 +311,7 @@ class PublicUserProfileSerializer(UserProfileSerializer):
                 "blocked_until",
                 "blocked_reason",
                 "is_staff",
+                "is_superuser",
             }
         ]
 
@@ -228,14 +326,14 @@ class RegisterSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     bio = serializers.CharField(required=False, allow_blank=True)
     years_experience = serializers.IntegerField(required=False, min_value=0)
-    skills = FlexibleStringListField(required=False)
+    skills = FlexibleStringListField(child=serializers.CharField(max_length=SKILL_NAME_MAX_LENGTH), required=False)
     hourly_rate = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
     )
     daily_rate = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
     )
-    location_label = serializers.CharField(required=False, allow_blank=True)
+    location_label = serializers.CharField(required=False, allow_blank=True, max_length=255)
     latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
     longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
 
@@ -254,40 +352,118 @@ class RegisterSerializer(serializers.Serializer):
         )
 
 
+class AdminAccountSerializer(serializers.Serializer):
+    """One staff account as the superadmin Admin Management table shows it."""
+
+    id = serializers.IntegerField(read_only=True)
+    username = serializers.CharField(read_only=True)
+    email = serializers.EmailField(read_only=True)
+    full_name = serializers.SerializerMethodField()
+    is_active = serializers.BooleanField(read_only=True)
+    is_superuser = serializers.BooleanField(read_only=True)
+    date_joined = serializers.DateTimeField(read_only=True)
+    last_login = serializers.DateTimeField(read_only=True)
+    role_label = serializers.SerializerMethodField()
+
+    def get_full_name(self, obj):
+        return obj.get_full_name() or obj.username
+
+    def get_role_label(self, obj):
+        return "Full System Control" if obj.is_superuser else "Admin"
+
+
+class AdminAccountCreateSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(min_length=8, write_only=True)
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+
+    def validate_username(self, value):
+        username = value.strip()
+        if not username:
+            raise serializers.ValidationError("Username is required.")
+        if User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("That username is already taken.")
+        return username
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("That email is already in use.")
+        return email
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
+
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField()
 
 
 class ProfileUpdateSerializer(serializers.Serializer):
-    first_name = serializers.CharField(required=False, allow_blank=True)
-    last_name = serializers.CharField(required=False, allow_blank=True)
+    # Explicit max_length: a plain Serializer doesn't inherit column widths,
+    # so an oversized value would reach the database and 500.
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     email = serializers.EmailField(required=False)
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     bio = serializers.CharField(required=False, allow_blank=True)
     years_experience = serializers.IntegerField(required=False, min_value=0)
-    skills = FlexibleStringListField(required=False)
+    skills = FlexibleStringListField(child=serializers.CharField(max_length=SKILL_NAME_MAX_LENGTH), required=False)
     hourly_rate = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
     )
     daily_rate = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
     )
-    location_label = serializers.CharField(required=False, allow_blank=True)
+    location_label = serializers.CharField(required=False, allow_blank=True, max_length=255)
     latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
     longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
     profile_photo = serializers.FileField(required=False, allow_null=True)
+    # Email changes are re-auth-gated below: a hijacked access token (valid
+    # up to an hour, see common/authentication.py) must not be able to turn
+    # itself into a permanent takeover by silently moving the account to an
+    # attacker-controlled email, since password resets are then mailed there.
+    current_password = serializers.CharField(required=False, write_only=True)
 
     def validate_profile_photo(self, value):
         if value is None:
             return value
-        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
-        if Path(value.name).suffix.lower() not in allowed_extensions:
-            raise serializers.ValidationError("Choose an image file for the profile photo.")
-        return value
+        try:
+            return validate_image_upload(value)
+        except UploadRejected as rejected:
+            raise serializers.ValidationError(str(rejected)) from rejected
+
+    def validate_bio(self, value):
+        return sanitize_text(value)
+
+    def validate_email(self, value):
+        # Login and password reset both look accounts up by email, so two
+        # accounts sharing one would make either pick an arbitrary account.
+        email = value.strip().lower()
+        profile = self.context.get("profile")
+        others = User.objects.filter(email__iexact=email)
+        if profile is not None:
+            others = others.exclude(pk=profile.user_id)
+        if others.exists():
+            raise serializers.ValidationError("Email already exists.")
+        return email
 
 
     def validate(self, attrs):
+        user = self.context.get("user")
+        new_email = attrs.get("email")
+        if new_email and user is not None and new_email != (user.email or "").strip().lower():
+            if not attrs.get("current_password") or not user.check_password(attrs["current_password"]):
+                raise serializers.ValidationError(
+                    {"current_password": "Enter your current password to change your email."}
+                )
         profile = self.context.get("profile")
         return validate_worker_profile_requirements(
             attrs,
@@ -336,7 +512,13 @@ class WorkerSkillSerializer(serializers.ModelSerializer):
 
 
 class WorkerCertificationSerializer(serializers.ModelSerializer):
+    # certificate_file lives in private storage (no public .url), so the
+    # model field itself is write-only for uploads; certificate_file_url
+    # below is the only read representation, pointing at the
+    # permission-checked serving view.
+    certificate_file = serializers.FileField(write_only=True, required=False)
     certificate_file_url = serializers.SerializerMethodField()
+    certificate_file_type = serializers.SerializerMethodField()
     verified_by_username = serializers.CharField(source="verified_by.username", read_only=True, allow_null=True)
     # The admin review queue lists certificates across all workers, so it
     # needs to say whose each one is -- and enough about them (name,
@@ -352,22 +534,74 @@ class WorkerCertificationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "worker_username", "worker_name", "worker_location_label", "worker_member_since",
             "certificate_type", "certificate_type_label", "certificate_name", "issuer", "issue_date", "expiry_date",
-            "certificate_file", "certificate_file_url", "is_verified", "verification_status",
+            "certificate_file", "certificate_file_url", "certificate_file_type", "is_verified", "verification_status",
             "verified_by", "verified_by_username", "verification_notes", "verified_at", "created_at"
         ]
         read_only_fields = ["id", "worker_username", "worker_name", "worker_location_label", "worker_member_since",
                            "certificate_type_label", "is_verified", "verification_status", "verified_by",
                            "verified_by_username", "verification_notes", "verified_at", "created_at"]
 
+    # Who reviewed a credential and what they wrote about it is for the admin
+    # queue and the worker themselves, never for whoever is reading the
+    # public portfolio.
+    REVIEWER_FIELDS = ("verified_by", "verified_by_username", "verification_notes", "verified_at")
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not viewer_may_see_credential_review(self.context.get("request"), instance.worker_id):
+            for field in self.REVIEWER_FIELDS:
+                data.pop(field, None)
+        return data
+
+    def validate_certificate_file(self, value):
+        # Anything other than a real image or PDF (an .html file, say) would
+        # otherwise be stored and served back as a live page.
+        if value is None:
+            return value
+        try:
+            return validate_document_upload(value)
+        except UploadRejected as rejected:
+            raise serializers.ValidationError(str(rejected)) from rejected
+
+    def validate_certificate_name(self, value):
+        return sanitize_text(value)
+
+    def validate_issuer(self, value):
+        return sanitize_text(value)
+
     def get_worker_name(self, obj):
         return obj.worker.get_full_name().strip() or obj.worker.username
+
+    def get_certificate_file_type(self, obj):
+        """"image" or "pdf" (or "" with no file). The file URL is the
+        permission-checked serving view, which has no extension, so clients
+        can't tell from the URL whether to show a thumbnail."""
+        if not obj.certificate_file:
+            return ""
+        name = obj.certificate_file.name.lower()
+        if name.endswith(".pdf"):
+            return "pdf"
+        if name.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif")):
+            return "image"
+        return "file"
 
     def get_certificate_file_url(self, obj):
         if not obj.certificate_file:
             return None
+        # certificate_file lives in private storage (no public .url), so this
+        # always points at the permission-checked serving view (F16).
+        path = f"/api/accounts/portfolio/certifications/{obj.id}/file/"
         request = self.context.get("request")
-        url = obj.certificate_file.url
-        return request.build_absolute_uri(url) if request else url
+        return request.build_absolute_uri(path) if request else path
+
+
+def _validated_portfolio_image(value):
+    if value is None:
+        return value
+    try:
+        return validate_image_upload(value)
+    except UploadRejected as rejected:
+        raise serializers.ValidationError(str(rejected)) from rejected
 
 
 class WorkerPortfolioItemSerializer(serializers.ModelSerializer):
@@ -380,6 +614,21 @@ class WorkerPortfolioItemSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "description", "image", "image_url",
                   "before_image", "before_image_url", "after_image", "after_image_url", "created_at"]
         read_only_fields = ["id", "created_at"]
+
+    def validate_image(self, value):
+        return _validated_portfolio_image(value)
+
+    def validate_before_image(self, value):
+        return _validated_portfolio_image(value)
+
+    def validate_after_image(self, value):
+        return _validated_portfolio_image(value)
+
+    def validate_title(self, value):
+        return sanitize_text(value)
+
+    def validate_description(self, value):
+        return sanitize_text(value)
 
     def get_image_url(self, obj):
         if not obj.image:
@@ -427,55 +676,25 @@ class SkillRatingSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class VerificationDocumentSerializer(serializers.ModelSerializer):
-    # Both clients already limit the picker to these types and the ID photos
-    # are small, but that is client-side only: the API accepted any file of
-    # any size until this ran server-side too.
-    ALLOWED_DOCUMENT_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".pdf"}
-    MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
-
-    verified_by_username = serializers.CharField(source="verified_by.username", read_only=True, allow_null=True)
-
-    def validate_document_file(self, value):
-        if value is None:
-            return value
-        if Path(value.name).suffix.lower() not in self.ALLOWED_DOCUMENT_EXTENSIONS:
-            raise serializers.ValidationError(
-                "Upload an image (JPG, PNG, WEBP, HEIC) or a PDF for your ID document."
-            )
-        if value.size > self.MAX_DOCUMENT_BYTES:
-            raise serializers.ValidationError("Keep the document under 10 MB.")
-        return value
-    # The admin review queue lists documents across all users -- and enough
-    # about each one (name, location, tenure) to render the review card
-    # without a second request.
-    user_username = serializers.CharField(source="user.username", read_only=True)
-    user_name = serializers.SerializerMethodField()
-    user_location_label = serializers.CharField(source="user.profile.location_label", read_only=True, default="")
-    user_member_since = serializers.DateTimeField(source="user.date_joined", read_only=True)
-    id_type_label = serializers.CharField(source="get_id_type_display", read_only=True)
-
-    class Meta:
-        model = VerificationDocument
-        fields = [
-            "id", "user", "user_username", "user_name", "user_location_label", "user_member_since",
-            "id_type", "id_type_label", "id_number",
-            "document_file", "is_primary",
-            "verification_status", "verified_by", "verified_by_username",
-            "verification_notes", "verified_at", "created_at", "updated_at"
-        ]
-        read_only_fields = ["id", "user", "user_username", "user_name", "user_location_label",
-                           "user_member_since", "id_type_label", "verification_status", "verified_by",
-                           "verified_by_username", "verification_notes", "verified_at", "created_at", "updated_at"]
-
-    def get_user_name(self, obj):
-        return obj.user.get_full_name().strip() or obj.user.username
-
-
 class WorkerPortfolioSerializer(serializers.ModelSerializer):
-    skills = WorkerSkillSerializer(source="worker.portfolio_skills", many=True, read_only=True)
-    certifications = WorkerCertificationSerializer(source="worker.portfolio_certifications", many=True, read_only=True)
+    skills = serializers.SerializerMethodField()
+    certifications = serializers.SerializerMethodField()
+
+    def get_skills(self, obj):
+        from apps.accounts.services import listed_portfolio_skills
+
+        return WorkerSkillSerializer(listed_portfolio_skills(obj.worker), many=True).data
     portfolio_items = WorkerPortfolioItemSerializer(source="worker.portfolio_items", many=True, read_only=True)
+
+    def get_certifications(self, obj):
+        certifications = obj.worker.portfolio_certifications.all()
+        if not viewer_may_see_credential_review(self.context.get("request"), obj.worker_id):
+            # A pending credential is an unverified claim and a rejected one
+            # was turned down, so neither belongs on a public portfolio.
+            certifications = certifications.filter(
+                verification_status=WorkerCertification.STATUS_APPROVED
+            )
+        return WorkerCertificationSerializer(certifications, many=True, context=self.context).data
 
     class Meta:
         model = WorkerPortfolio

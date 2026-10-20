@@ -192,6 +192,49 @@ void main() {
     expect(data.first['title'], 'Cleaning');
   });
 
+  test('list endpoints follow next links across every page', () async {
+    final requested = <String>[];
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        requested.add(request.url.toString());
+        final page = request.url.queryParameters['page'];
+        final body = switch (page) {
+          null => {
+            'count': 3,
+            'next': 'http://testserver/api/reviews/?page=2',
+            'previous': null,
+            'results': [
+              {'id': 1},
+            ],
+          },
+          '2' => {
+            'count': 3,
+            'next': 'http://testserver/api/reviews/?page=3',
+            'previous': 'http://testserver/api/reviews/',
+            'results': [
+              {'id': 2},
+            ],
+          },
+          _ => {
+            'count': 3,
+            'next': null,
+            'previous': 'http://testserver/api/reviews/?page=2',
+            'results': [
+              {'id': 3},
+            ],
+          },
+        };
+        return http.Response(jsonEncode(body), 200);
+      }),
+    );
+
+    final data = await GawaGoApi.getList('/reviews/');
+
+    expect(data.map((item) => item['id']), [1, 2, 3]);
+    expect(requested, hasLength(3));
+    expect(requested.last, 'http://testserver/api/reviews/?page=3');
+  });
+
   test('list endpoints still accept plain arrays', () async {
     GawaGoApi.setClient(
       MockClient((_) async => http.Response('[{"id":2}]', 200)),
@@ -231,5 +274,65 @@ void main() {
     expect(body, contains('first.jpg'));
     expect(body, contains('second.png'));
     await directory.delete(recursive: true);
+  });
+
+  group('why a session ended', () {
+    Future<void> signedInThenRejectedWith(String detail) async {
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'live-token', role: 'worker'),
+      );
+      GawaGoApi.setClient(
+        MockClient((_) async => http.Response('{"detail":"$detail"}', 401)),
+      );
+      await expectLater(
+        GawaGoApi.get('/accounts/me/'),
+        throwsA(isA<ApiException>()),
+      );
+    }
+
+    test('a suspension keeps the server reason for the person to read', () async {
+      await signedInThenRejectedWith(
+        'This account is suspended until 2026-10-20 09:00. Contact support for assistance.',
+      );
+
+      expect(SessionStorage.endedMessage, contains('suspended until'));
+    });
+
+    test('a block keeps the server reason too', () async {
+      await signedInThenRejectedWith(
+        'This account has been blocked. Contact support for assistance.',
+      );
+
+      expect(SessionStorage.endedMessage, contains('blocked'));
+    });
+
+    test('an ordinary expired token does not quote the server', () async {
+      await signedInThenRejectedWith('Token expired.');
+
+      expect(SessionStorage.endedMessage, isNull);
+    });
+
+    test(
+      'the endpoint that rejects a 401 with a map body works for lists too',
+      () async {
+        await SessionStorage.save(
+          const AuthSession(accessToken: 'live-token', role: 'worker'),
+        );
+        GawaGoApi.setClient(
+          MockClient(
+            (_) async => http.Response(
+              '{"detail":"This account has been blocked."}',
+              401,
+            ),
+          ),
+        );
+
+        await expectLater(
+          GawaGoApi.getList('/notifications/'),
+          throwsA(isA<ApiException>()),
+        );
+        expect(SessionStorage.endedMessage, contains('blocked'));
+      },
+    );
   });
 }

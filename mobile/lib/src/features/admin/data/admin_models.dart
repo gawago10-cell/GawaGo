@@ -13,15 +13,30 @@ class AdminDashboardMetrics {
     required this.workerAvailability,
     required this.averageRates,
     required this.ratingDistribution,
+    this.totalJobPostings = 0,
+    this.verifiedUsers = 0,
+    this.hiringSuccessRate = 0,
+    this.jobMatchRate = 0,
+    this.hiredWorkers = 0,
+    this.repeatHires = 0,
+    this.applicationTrend = const [],
+    this.monthlyJobPostings = const [],
+    this.serviceDistribution = const [],
+    this.pricingTrends = const [],
   });
 
+  /// Open job postings (the same count as the web dashboard's Open Jobs).
   final int openJobs;
   final int verifiedWorkers;
   final int completedJobs;
   final int cancelledJobs;
   final int activeApplications;
+
+  /// Household and worker accounts (admins are not counted).
   final int totalAccounts;
   final double? averageRating;
+
+  /// Accounts with an ID actually waiting in the review queue.
   final int pendingVerifications;
   final int ongoingMatches;
   final List<AdminAnalyticsItem> barangayDemand;
@@ -29,13 +44,27 @@ class AdminDashboardMetrics {
   final List<AdminAnalyticsItem> averageRates;
   final List<AdminAnalyticsItem> ratingDistribution;
 
+  // Hiring performance and trends (AGENTS.md IV.A), from enhancedAnalytics.
+  final int totalJobPostings;
+  final int verifiedUsers;
+  final double hiringSuccessRate;
+  final double jobMatchRate;
+  final int hiredWorkers;
+  final int repeatHires;
+  final List<AdminAnalyticsItem> applicationTrend;
+  final List<AdminAnalyticsItem> monthlyJobPostings;
+  final List<AdminAnalyticsItem> serviceDistribution;
+  final List<AdminAnalyticsItem> pricingTrends;
+
   factory AdminDashboardMetrics.fromJson(Map<String, dynamic> json) {
     final analytics = _map(json['analytics']);
     final geographic = _map(analytics['geographicAnalytics']);
     final rates = _map(analytics['rateTransparency']);
     final summary = _map(analytics['summary']);
+    final enhanced = _map(analytics['enhancedAnalytics']);
+    final hiring = _map(enhanced['workerHiringStats']);
     return AdminDashboardMetrics(
-      openJobs: _integer(json['open_jobs']),
+      openJobs: _integer(summary['activeJobs'] ?? json['open_jobs']),
       verifiedWorkers: _integer(json['verified_workers']),
       completedJobs: _integer(json['completed_jobs']),
       cancelledJobs: _integer(json['cancelled_jobs']),
@@ -47,7 +76,23 @@ class AdminDashboardMetrics {
       barangayDemand: _items(geographic['barangayDemand']),
       workerAvailability: _items(geographic['workerAvailability']),
       averageRates: _items(rates['averageRatesByCategory']),
-      ratingDistribution: _items(analytics['ratingDistribution']),
+      // Five star buckets always come back; only buckets with ratings say
+      // anything, and an all-zero list should read as "no ratings yet".
+      ratingDistribution: _items(
+        analytics['ratingDistribution'],
+      ).where((item) => item.value > 0).toList(),
+      totalJobPostings: _integer(summary['totalJobPostings']),
+      verifiedUsers: _integer(summary['verifiedUsers']),
+      hiringSuccessRate: _number(enhanced['hiringSuccessRate']) ?? 0,
+      jobMatchRate: _number(enhanced['jobMatchRate']) ?? 0,
+      hiredWorkers: _integer(hiring['hiredWorkers']),
+      repeatHires: _integer(hiring['repeatHires']),
+      applicationTrend: _items(enhanced['applicationTrends']),
+      monthlyJobPostings: _items(analytics['monthlyJobRequests']),
+      serviceDistribution: _items(
+        analytics['serviceAnalytics'],
+      ).where((item) => item.value > 0).toList(),
+      pricingTrends: _items(rates['pricingTrends']),
     );
   }
 }
@@ -63,9 +108,17 @@ class AdminAnalyticsItem {
   final double value;
   final String unit;
 
+  /// Reads every row shape the dashboard sends: barangay counts, rate rows
+  /// (`skill`/`averageRate`), rating buckets (`stars`/`count`), monthly rows
+  /// (`month`/`requests` or `applications`) and service rows
+  /// (`service`/`requests`).
   factory AdminAnalyticsItem.fromJson(Map<String, dynamic> json) {
     final label = _text(
       json['barangay'] ??
+          json['skill'] ??
+          json['service'] ??
+          json['stars'] ??
+          json['month'] ??
           json['serviceType'] ??
           json['job_type'] ??
           json['rating'] ??
@@ -76,6 +129,8 @@ class AdminAnalyticsItem {
         json['jobs'] ??
         json['workers'] ??
         json['averageRate'] ??
+        json['requests'] ??
+        json['applications'] ??
         json['count'] ??
         json['value'];
     final unit = json.containsKey('averageRate') ? 'PHP' : '';
@@ -150,6 +205,71 @@ class AdminVerificationRequest {
       notes: _text(json['notes']),
       submittedAt: _text(json['submitted_at']),
       reviewNote: _text(json['review_note']),
+    );
+  }
+}
+
+/// One worker credential in the admin review queue
+/// (GET /accounts/admin/certificates/).
+class AdminCertificate {
+  const AdminCertificate({
+    required this.id,
+    required this.workerUsername,
+    required this.workerName,
+    required this.workerLocation,
+    required this.typeLabel,
+    required this.name,
+    required this.issuer,
+    required this.issueDate,
+    required this.expiryDate,
+    required this.fileUrl,
+    required this.fileType,
+    required this.status,
+    required this.notes,
+    required this.submittedAt,
+  });
+
+  final int id;
+  final String workerUsername;
+  final String workerName;
+  final String workerLocation;
+  final String typeLabel;
+  final String name;
+  final String issuer;
+  final String issueDate;
+  final String expiryDate;
+  final String fileUrl;
+
+  /// "image", "pdf" or "file".
+  final String fileType;
+
+  /// "pending", "approved" or "rejected".
+  final String status;
+  final String notes;
+  final String submittedAt;
+
+  String get statusLabel => switch (status) {
+    'approved' => 'Approved',
+    'rejected' => 'Rejected',
+    _ => 'Pending Review',
+  };
+
+  factory AdminCertificate.fromJson(Map<String, dynamic> json) {
+    return AdminCertificate(
+      id: _integer(json['id']),
+      workerUsername: _text(json['worker_username']),
+      workerName: _text(json['worker_name'] ?? json['worker_username']),
+      workerLocation: _text(json['worker_location_label']),
+      typeLabel: _text(json['certificate_type_label']),
+      name: _text(json['certificate_name']),
+      issuer: _text(json['issuer']),
+      issueDate: _text(json['issue_date'] ?? ''),
+      expiryDate: _text(json['expiry_date'] ?? ''),
+      fileUrl: _text(json['certificate_file_url'] ?? ''),
+      fileType: _text(json['certificate_file_type'] ?? ''),
+      status: _text(json['verification_status'], 'pending'),
+      notes: _text(json['verification_notes']),
+      submittedAt: _text(json['created_at']),
     );
   }
 }

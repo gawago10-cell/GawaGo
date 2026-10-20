@@ -1,4 +1,5 @@
 import '../../../core/api/gawago_api.dart';
+import '../../../core/config/api_config.dart';
 import '../../worker/data/worker_models.dart';
 import 'household_models.dart';
 
@@ -17,9 +18,7 @@ class HouseholdRepository {
         ? await GawaGoApi.patch('/accounts/me/', body: values)
         : await GawaGoApi.multipartPatch(
             '/accounts/me/',
-            fields: values.map(
-              (key, value) => MapEntry(key, value?.toString() ?? ''),
-            ),
+            fields: GawaGoApi.multipartFields(values),
             files: {'profile_photo': profilePhotoPath},
           );
     return HouseholdProfile.fromJson(response);
@@ -42,9 +41,7 @@ class HouseholdRepository {
         ? await GawaGoApi.post('/jobs/', body: values)
         : await GawaGoApi.multipartPostMany(
             '/jobs/',
-            fields: values.map(
-              (key, value) => MapEntry(key, value?.toString() ?? ''),
-            ),
+            fields: GawaGoApi.multipartFields(values),
             fileField: 'images',
             filePaths: imagePaths,
           );
@@ -79,6 +76,9 @@ class HouseholdRepository {
     final rankParam = rank == null ? '' : '&rank=$rank';
     final response = await GawaGoApi.get(
       '/matching/recommended-workers/?job_id=$jobId$rankParam',
+      // Scores every candidate and resolves routes: a cold call takes around
+      // ten seconds, well past the default timeout.
+      timeout: ApiConfig.matchingTimeout,
     );
     final results = response['results'] is List
         ? response['results'] as List
@@ -112,6 +112,34 @@ class HouseholdRepository {
         'professionalism': ?professionalism,
       },
     );
+  }
+
+  /// Rates individual skills on a completed job. Sent one request per skill
+  /// (that is the endpoint's shape), and stops at the first failure so the
+  /// caller can tell the person rather than half-saving silently.
+  /// Posts one rating per skill. Ids found in [unlistedSkillNames] are not
+  /// real portfolio entries but skills the worker never listed (the job's own
+  /// skill): those are sent by name and the backend files the rating under
+  /// that worker, as the web client does.
+  Future<void> rateSkills(
+    HouseholdJob job,
+    Map<int, int> ratingsBySkillId, {
+    int? workerId,
+    Map<int, String> unlistedSkillNames = const {},
+  }) async {
+    for (final entry in ratingsBySkillId.entries) {
+      final unlistedName = unlistedSkillNames[entry.key];
+      await GawaGoApi.post(
+        '/accounts/jobs/${job.id}/skill-ratings/',
+        body: unlistedName != null
+            ? {
+                'skill_name': unlistedName,
+                'worker_id': workerId,
+                'rating': entry.value,
+              }
+            : {'skill': entry.key, 'rating': entry.value},
+      );
+    }
   }
 
   /// Another worker's public portfolio -- the rated skills, certificates and
@@ -155,6 +183,14 @@ class HouseholdRepository {
     return data.map((item) => GawaGoReview.fromJson(item)).toList();
   }
 
+  /// The unread badge number only, so polling for it doesn't download every
+  /// page of notifications.
+  Future<int> getUnreadNotificationCount() async {
+    final data = await GawaGoApi.get('/notifications/unread-count/');
+    final value = data['unread'];
+    return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+  }
+
   Future<List<WorkerNotification>> getNotifications() async {
     final data = await GawaGoApi.getList('/notifications/');
     return data.map((item) => WorkerNotification.fromJson(item)).toList();
@@ -176,12 +212,17 @@ class HouseholdRepository {
   Future<void> submitVerification({
     required String primaryPath,
     required String secondaryPath,
+    required String primaryIdType,
+    String primaryIdOtherName = '',
     String notes = '',
   }) async {
     await GawaGoApi.multipartPost(
       '/common/verification-requests/',
       fields: {
-        'primary_id_name': primaryPath.split(RegExp(r'[/\\]')).last,
+        'primary_id_type': primaryIdType,
+        // The backend labels the request from the chosen type; it only reads
+        // this when the type is "other".
+        if (primaryIdType == 'other') 'primary_id_name': primaryIdOtherName,
         'secondary_doc_name': secondaryPath.split(RegExp(r'[/\\]')).last,
         'notes': notes,
       },

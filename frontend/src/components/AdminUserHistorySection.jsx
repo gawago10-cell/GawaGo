@@ -82,7 +82,7 @@ export default function AdminUserHistorySection({ role, fullRecord, postedJobs, 
                       <td className="text-muted">{job.createdAt?.slice(0, 10)}</td>
                       <td>{formatMoney(job.offeredRate)}</td>
                       <td>
-                        <HistoryStatusPill status={job.status} tone={JOB_STATUS_TONE[job.status]} />
+                        <HistoryStatusPill status={job.statusLabel || job.status} tone={JOB_STATUS_TONE[job.status]} />
                       </td>
                     </tr>
                   ))

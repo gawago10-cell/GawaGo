@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/gawago_colors.dart';
+
 class PersistentActionBar extends StatelessWidget {
   const PersistentActionBar({
     super.key,
@@ -15,7 +17,7 @@ class PersistentActionBar extends StatelessWidget {
     if (children.isEmpty && !busy) return const SizedBox.shrink();
     return Material(
       elevation: 10,
-      color: const Color(0xFFFBFDFB),
+      color: GawaGoColors.surface,
       child: SafeArea(
         top: false,
         child: Padding(

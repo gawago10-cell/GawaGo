@@ -72,6 +72,9 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
   String? _error;
 
   static const _maxEvidence = 5;
+  // The backend's image limit (apps.common.uploads.MAX_IMAGE_BYTES); checked
+  // here so an oversized photo is refused now, not after a long upload.
+  static const _maxEvidenceBytes = 5 * 1024 * 1024;
 
   Future<void> _pickEvidence() async {
     const group = XTypeGroup(
@@ -80,12 +83,27 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
     );
     final files = await openFiles(acceptedTypeGroups: [group]);
     if (files.isEmpty) return;
-    final combined = {..._evidencePaths, ...files.map((file) => file.path)};
+    final picked = <PickedEvidence>[
+      // XFile.length() also works in the web build, where dart:io File throws.
+      for (final file in files)
+        PickedEvidence(
+          path: file.path,
+          name: file.name,
+          bytes: await file.length(),
+        ),
+    ];
+    if (!mounted) return;
+    final result = mergeEvidence(
+      existing: _evidencePaths,
+      picked: picked,
+      maxCount: _maxEvidence,
+      maxBytes: _maxEvidenceBytes,
+    );
     setState(() {
       _evidencePaths
         ..clear()
-        ..addAll(combined.take(_maxEvidence));
-      _error = null;
+        ..addAll(result.paths);
+      _error = result.message;
     });
   }
 
@@ -96,6 +114,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) return;
     if (_complaintType == null) {
       setState(() => _error = 'Please select a report type.');
       return;
@@ -132,8 +151,8 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
   Widget _requiredLabel(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: RichText(
-        text: TextSpan(
+      child: Text.rich(
+        TextSpan(
           style: const TextStyle(
             color: GawaGoColors.ink,
             fontWeight: FontWeight.w800,
@@ -154,8 +173,8 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
   Widget _optionalLabel(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: RichText(
-        text: TextSpan(
+      child: Text.rich(
+        TextSpan(
           style: const TextStyle(
             color: GawaGoColors.ink,
             fontWeight: FontWeight.w800,
@@ -186,11 +205,14 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
     return Theme(
       data: ThemeData(
         useMaterial3: true,
+        fontFamily: GawaGoColors.fontBody,
         colorScheme: ColorScheme.fromSeed(
           seedColor: GawaGoColors.primary,
           brightness: Brightness.light,
+        ).copyWith(primary: GawaGoColors.leafDeep),
+        dialogTheme: const DialogThemeData(
+          backgroundColor: GawaGoColors.surface,
         ),
-        dialogTheme: const DialogThemeData(backgroundColor: Colors.white),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: GawaGoColors.input,
@@ -205,7 +227,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
         ),
       ),
       child: AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: GawaGoColors.surface,
         title: Row(
           children: [
             const Expanded(
@@ -404,7 +426,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE7F1FC),
+                  color: GawaGoColors.leafTint,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -413,15 +435,15 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                     const Icon(
                       Icons.shield_outlined,
                       size: 18,
-                      color: Color(0xFF2F6FB0),
+                      color: GawaGoColors.leafDeep,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: RichText(
-                        text: const TextSpan(
+                      child: Text.rich(
+                        const TextSpan(
                           style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF2F6FB0),
+                            color: GawaGoColors.leafDeep,
                           ),
                           children: [
                             TextSpan(
@@ -454,7 +476,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                       ? null
                       : () => Navigator.of(context).pop(false),
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF3A4750),
+                    backgroundColor: GawaGoColors.textMuted,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
@@ -469,7 +491,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                 child: FilledButton(
                   onPressed: _submitting ? null : _submit,
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFFD3352B),
+                    backgroundColor: GawaGoColors.danger,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
@@ -485,4 +507,47 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
       ),
     );
   }
+}
+
+/// One file the user picked as report evidence.
+class PickedEvidence {
+  const PickedEvidence({
+    required this.path,
+    required this.name,
+    required this.bytes,
+  });
+
+  final String path;
+  final String name;
+  final int bytes;
+}
+
+/// Adds newly picked photos to the evidence list: files over [maxBytes] are
+/// refused (the backend's image limit), duplicates are ignored, and the list
+/// is capped at [maxCount]. [message] says what was left out, if anything.
+({List<String> paths, String? message}) mergeEvidence({
+  required List<String> existing,
+  required List<PickedEvidence> picked,
+  required int maxCount,
+  required int maxBytes,
+}) {
+  final oversized = [
+    for (final file in picked)
+      if (file.bytes > maxBytes) file.name,
+  ];
+  final combined = {
+    ...existing,
+    for (final file in picked)
+      if (file.bytes <= maxBytes) file.path,
+  };
+  final dropped = combined.length > maxCount;
+  final megabytes = maxBytes ~/ (1024 * 1024);
+  return (
+    paths: combined.take(maxCount).toList(),
+    message: oversized.isNotEmpty
+        ? '${oversized.join(', ')}: exceeds $megabytes MB and was not added.'
+        : dropped
+        ? 'A report can carry up to $maxCount photos; only the first $maxCount were kept.'
+        : null,
+  );
 }

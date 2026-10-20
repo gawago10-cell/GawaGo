@@ -4,7 +4,7 @@ from django.db import transaction
 from django.http import FileResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from rest_framework import status
+from rest_framework import generics, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,11 +12,13 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import UserProfile
 from apps.accounts.serializers import UserProfileSerializer
-from apps.common.models import VerificationRequest
-from apps.common.permissions import IsPlatformAdmin, is_platform_admin
-from apps.common.serializers import VerificationRequestCreateSerializer, VerificationRequestSerializer
+from apps.common.audit import log_admin_action
+from apps.common.models import AdminActionLog, VerificationRequest
+from apps.common.pagination import paginated_response
+from apps.common.permissions import IsPlatformAdmin, IsPlatformSuperAdmin, is_platform_admin
+from apps.common.serializers import AdminActionLogSerializer, VerificationRequestCreateSerializer, VerificationRequestSerializer
 from apps.notifications.models import Notification
-from apps.notifications.services import create_notification
+from apps.notifications.services import create_notification, notify_admins
 
 
 class VerificationRequestListCreateView(APIView):
@@ -34,7 +36,12 @@ class VerificationRequestListCreateView(APIView):
             if not profile or profile.role not in {UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD}:
                 return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
             requests = requests.filter(worker=request.user)
-        return Response(VerificationRequestSerializer(requests, many=True, context={"request": request}).data)
+        return paginated_response(
+            request,
+            requests.order_by("-submitted_at", "-id"),
+            VerificationRequestSerializer,
+            context={"request": request},
+        )
 
     def post(self, request):
         serializer = VerificationRequestCreateSerializer(data=request.data)
@@ -62,6 +69,7 @@ class VerificationRequestListCreateView(APIView):
 
             request_record = VerificationRequest.objects.create(
                 worker=account,
+                primary_id_type=serializer.validated_data["primary_id_type"],
                 primary_id_name=serializer.validated_data["primary_id_name"],
                 secondary_doc_name=serializer.validated_data["secondary_doc_name"],
                 primary_id_file=serializer.validated_data["primary_id_file"],
@@ -71,6 +79,11 @@ class VerificationRequestListCreateView(APIView):
             if profile.verification_status != "pending":
                 profile.verification_status = "pending"
                 profile.save(update_fields=["verification_status"])
+        notify_admins(
+            title="New verification request",
+            message=f"@{account.username} ({profile.role}) submitted an ID for verification. "
+            "Review it in the Verification Queue.",
+        )
         return Response(
             {
                 "verification_request": VerificationRequestSerializer(request_record, context={"request": request}).data,
@@ -104,6 +117,20 @@ class VerificationRequestReviewView(APIView):
 
     def post(self, request, pk):
         request_record = get_object_or_404(VerificationRequest.objects.select_related("worker", "worker__profile"), pk=pk)
+        # A decided request is closed. Re-deciding one used to flip the
+        # account's verification status each time, so an approved worker could
+        # be quietly un-verified through a stale queue entry. A resubmission
+        # creates a new request, which is what should be reviewed.
+        if request_record.status != VerificationRequest.STATUS_PENDING:
+            return Response(
+                {
+                    "detail": (
+                        f"This request was already {request_record.get_status_display().lower()}. "
+                        "Ask the applicant to resubmit if their documents changed."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         action = request.data.get("action")
         if action == "approve":
             request_record.status = VerificationRequest.STATUS_APPROVED
@@ -129,6 +156,14 @@ class VerificationRequestReviewView(APIView):
             notification_type=Notification.TYPE_VERIFICATION,
             title=notification_title,
             message=notification_message,
+        )
+        log_admin_action(
+            request.user,
+            AdminActionLog.ACTION_VERIFICATION_APPROVED if action == "approve" else AdminActionLog.ACTION_VERIFICATION_REJECTED,
+            target_label=request_record.worker.username,
+            target_type="verification_request",
+            target_id=request_record.id,
+            detail=request_record.review_note,
         )
         request_data = VerificationRequestSerializer(request_record, context={"request": request}).data
         request_data["reviewed_by"] = request.user.get_full_name().strip() or request.user.username or "System Admin"
@@ -192,13 +227,31 @@ class VerificationRequestDocumentView(APIView):
             return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
         if document_type == "primary":
             document = request_record.primary_id_file
-            filename = request_record.primary_id_name
         elif document_type == "secondary":
             document = request_record.secondary_doc_file
-            filename = request_record.secondary_doc_name
         else:
             return Response({"detail": "Document not found."}, status=status.HTTP_404_NOT_FOUND)
         if not document:
             return Response({"detail": "Document not found."}, status=status.HTTP_404_NOT_FOUND)
-        content_type = mimetypes.guess_type(filename or document.name)[0] or "application/octet-stream"
-        return FileResponse(document.open("rb"), content_type=content_type, filename=filename or document.name)
+        # The type comes from the stored file, whose extension was validated
+        # on upload -- never from the uploader-chosen display name, which
+        # could claim .html and make the document render as a page.
+        content_type = mimetypes.guess_type(document.name)[0] or "application/octet-stream"
+        response = FileResponse(document.open("rb"), content_type=content_type)
+        response["Content-Disposition"] = "inline"
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class AdminActionLogListView(generics.ListAPIView):
+    """GET /api/common/admin-action-log/ -- the superadmin Audit Logs
+    screen. Superuser-only, since it surfaces every admin's actions
+    (account suspensions, complaint decisions, verification and
+    certificate reviews, job edits/deletes made as an admin), not just
+    the viewer's own.
+    """
+
+    permission_classes = [IsPlatformSuperAdmin]
+    serializer_class = AdminActionLogSerializer
+    queryset = AdminActionLog.objects.all()

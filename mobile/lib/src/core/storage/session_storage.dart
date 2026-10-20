@@ -50,10 +50,11 @@ class SessionStorage {
 
   static Future<void> save(AuthSession session) async {
     try {
-      await Future.wait([
-        _storage.write(key: _tokenKey, value: session.accessToken),
-        _storage.write(key: _roleKey, value: session.role),
-      ]);
+      // One after the other: on the web the first write creates the
+      // encryption key, and two concurrent first writes each create their
+      // own, leaving one value unreadable (login then bounced to landing).
+      await _storage.write(key: _tokenKey, value: session.accessToken);
+      await _storage.write(key: _roleKey, value: session.role);
     } on MissingPluginException {
       // Widget tests do not register the platform storage plugin.
     }
@@ -72,10 +73,35 @@ class SessionStorage {
     _cachedSession = null;
   }
 
-  static Future<void> expire() async {
+  /// Why the last session ended, when the server said so in words the person
+  /// should read (an admin suspension or block). Null means an ordinary expiry.
+  static String? endedMessage;
+
+  /// Server messages worth showing as-is. A plain expired or revoked token
+  /// is not worth quoting; a suspension or block is the answer to "why am I
+  /// logged out?".
+  static bool isReadableEndReason(String? detail) {
+    if (detail == null) return false;
+    final text = detail.toLowerCase();
+    return text.contains('suspended') ||
+        text.contains('blocked') ||
+        text.contains('security change');
+  }
+
+  static Future<void> expire({String? detail}) async {
+    // Several requests can fail with 401 at once; only the first one ends a
+    // session, so only it announces it (one landing page, one message).
+    // Checked and dropped before the first await: clear() only forgets the
+    // session after its storage writes, so concurrent callers all saw it.
+    final hadSession = _cachedSession != null;
+    _cachedSession = null;
     await clear();
+    if (!hadSession) return;
+    endedMessage = isReadableEndReason(detail) ? detail : null;
     sessionExpired.value++;
   }
+
+  static bool isTokenExpired(String token) => _isExpired(token);
 
   static bool _isExpired(String token) {
     try {

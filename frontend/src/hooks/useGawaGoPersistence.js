@@ -19,7 +19,6 @@ function stripSensitiveFields(value) {
 }
 
 export function useGawaGoPersistence({
-  chatMessages,
   isDemoMode = false,
   notificationReads,
   postedJobs,
@@ -62,13 +61,6 @@ export function useGawaGoPersistence({
     }
     saveStoredValue(STORAGE_KEYS.jobs, postedJobs);
   }, [isDemoMode, postedJobs]);
-
-  useEffect(() => {
-    if (!isDemoMode) {
-      return;
-    }
-    saveStoredValue(STORAGE_KEYS.chatMessages, chatMessages);
-  }, [chatMessages, isDemoMode]);
 
   useEffect(() => {
     saveStoredValue(STORAGE_KEYS.notificationReads, notificationReads);

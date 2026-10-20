@@ -1,6 +1,9 @@
+from django.urls import reverse
 from rest_framework import serializers
 
+from apps.common.sanitize import sanitize_text
 from apps.complaints.models import Complaint, ComplaintEvidence
+from apps.jobs.privacy import masked_location_label
 
 
 class ComplaintEvidenceSerializer(serializers.ModelSerializer):
@@ -11,10 +14,12 @@ class ComplaintEvidenceSerializer(serializers.ModelSerializer):
         fields = ["id", "image_url", "uploaded_at", "order"]
 
     def get_image_url(self, obj):
+        # Points at the permission-checked view, not the file itself: clients
+        # must fetch it with their bearer token.
         if not obj.image:
             return ""
         request = self.context.get("request")
-        url = obj.image.url
+        url = reverse("complaint-evidence", args=[obj.complaint_id, obj.id])
         return request.build_absolute_uri(url) if request else url
 
 
@@ -42,10 +47,12 @@ def _party_detail(user):
 
 
 class ComplaintSerializer(serializers.ModelSerializer):
-    complainant_username = serializers.CharField(source="complainant.username", read_only=True)
-    respondent_username = serializers.CharField(source="respondent.username", read_only=True, allow_null=True)
-    respondent_is_blocked = serializers.SerializerMethodField()
-    respondent_blocked_until = serializers.SerializerMethodField()
+    """What the complainant sees about their own report. Never used for the
+    respondent (who must not learn a report exists) and never carries the
+    internal admin_notes -- see ComplaintAdminSerializer for those."""
+
+    complainant_username = serializers.CharField(source="complainant_label", read_only=True)
+    respondent_username = serializers.CharField(source="respondent_label", read_only=True)
     job_service_type = serializers.CharField(source="job.job_type", read_only=True, allow_null=True)
     job_status = serializers.CharField(source="job.status", read_only=True, allow_null=True)
     job_title = serializers.SerializerMethodField()
@@ -59,8 +66,6 @@ class ComplaintSerializer(serializers.ModelSerializer):
             "complainant_username",
             "respondent",
             "respondent_username",
-            "respondent_is_blocked",
-            "respondent_blocked_until",
             "job",
             "job_title",
             "job_service_type",
@@ -70,7 +75,6 @@ class ComplaintSerializer(serializers.ModelSerializer):
             "evidence",
             "status",
             "resolution",
-            "admin_notes",
             "created_at",
             "updated_at",
         ]
@@ -84,23 +88,63 @@ class ComplaintSerializer(serializers.ModelSerializer):
             "complainant_username",
             "respondent",
             "respondent_username",
-            "respondent_is_blocked",
-            "respondent_blocked_until",
             "job_title",
             "job_service_type",
             "job_status",
             "evidence",
             "status",
             "resolution",
-            "admin_notes",
             "created_at",
             "updated_at",
         ]
 
+    def validate_description(self, value):
+        return sanitize_text(value)
+
     def get_job_title(self, obj):
         if obj.job:
-            return f"{obj.job.title} at {obj.job.location_label}"
+            # Barangay, not the street: a report is filed by people who may
+            # never have been hired for this job.
+            return f"{obj.job.title} at {masked_location_label(obj.job.location_label)}"
         return None
+
+
+class ComplaintAdminSerializer(ComplaintSerializer):
+    """Adds internal admin_notes and the account detail the admin review
+    queue shows for each party. Only used by the superadmin-only views in
+    views.py -- never for household/worker-facing responses.
+
+    Whether the reported account is currently suspended lives here rather
+    than on the filer's own view: the status flow tells a filer how their
+    report is progressing, not what action was taken against the person.
+    """
+
+    job_name = serializers.SerializerMethodField()
+    job_barangay = serializers.SerializerMethodField()
+    complainant_detail = serializers.SerializerMethodField()
+    respondent_detail = serializers.SerializerMethodField()
+    respondent_is_blocked = serializers.SerializerMethodField()
+    respondent_blocked_until = serializers.SerializerMethodField()
+
+    class Meta(ComplaintSerializer.Meta):
+        fields = ComplaintSerializer.Meta.fields + [
+            "admin_notes",
+            "job_name",
+            "job_barangay",
+            "complainant_detail",
+            "respondent_detail",
+            "respondent_is_blocked",
+            "respondent_blocked_until",
+        ]
+        read_only_fields = ComplaintSerializer.Meta.read_only_fields + [
+            "admin_notes",
+            "job_name",
+            "job_barangay",
+            "complainant_detail",
+            "respondent_detail",
+            "respondent_is_blocked",
+            "respondent_blocked_until",
+        ]
 
     def get_respondent_is_blocked(self, obj):
         profile = getattr(obj.respondent, "profile", None)
@@ -113,31 +157,6 @@ class ComplaintSerializer(serializers.ModelSerializer):
         if profile is None or not profile.refresh_block_status() or not profile.blocked_until:
             return None
         return profile.blocked_until.isoformat()
-
-
-class ComplaintAdminSerializer(ComplaintSerializer):
-    """Adds the account detail the admin review queue shows for each party.
-    Never used for the household/worker-facing complaint views -- phone,
-    email and full profile stats are admin-only."""
-
-    job_name = serializers.SerializerMethodField()
-    job_barangay = serializers.SerializerMethodField()
-    complainant_detail = serializers.SerializerMethodField()
-    respondent_detail = serializers.SerializerMethodField()
-
-    class Meta(ComplaintSerializer.Meta):
-        fields = ComplaintSerializer.Meta.fields + [
-            "job_name",
-            "job_barangay",
-            "complainant_detail",
-            "respondent_detail",
-        ]
-        read_only_fields = ComplaintSerializer.Meta.read_only_fields + [
-            "job_name",
-            "job_barangay",
-            "complainant_detail",
-            "respondent_detail",
-        ]
 
     def get_job_name(self, obj):
         return obj.job.title if obj.job else None

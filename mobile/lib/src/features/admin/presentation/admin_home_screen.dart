@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/api/gawago_api.dart';
 import '../../../core/errors/api_error.dart';
 import '../../../core/storage/session_storage.dart';
 import '../../../core/theme/gawago_colors.dart';
@@ -14,8 +15,9 @@ import '../../complaints/presentation/admin_complaints_queue.dart';
 import '../../reports/data/report_repository.dart';
 import '../data/admin_models.dart';
 import '../data/admin_repository.dart';
+import 'admin_credentials_queue.dart';
 
-enum _AdminPage { dashboard, verifications, complaints, reports }
+enum _AdminPage { dashboard, verifications, credentials, complaints, reports }
 
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({
@@ -36,6 +38,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   _AdminPage _page = _AdminPage.dashboard;
 
   Future<void> _logout() async {
+    await GawaGoApi.logout();
     await SessionStorage.clear();
     if (mounted) widget.onLogout();
   }
@@ -55,12 +58,21 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         selected: _page == _AdminPage.verifications,
         onTap: () => setState(() => _page = _AdminPage.verifications),
       ),
+      // Certificate review is open to every admin, like the ID queue.
       GawaGoDrawerDestination(
-        icon: Icons.flag_outlined,
-        label: 'Reported Issues',
-        selected: _page == _AdminPage.complaints,
-        onTap: () => setState(() => _page = _AdminPage.complaints),
+        icon: Icons.workspace_premium_outlined,
+        label: 'Worker Credentials',
+        selected: _page == _AdminPage.credentials,
+        onTap: () => setState(() => _page = _AdminPage.credentials),
       ),
+      // The complaint endpoints are superadmin-only, as on the web.
+      if (widget.isSuperAdmin)
+        GawaGoDrawerDestination(
+          icon: Icons.flag_outlined,
+          label: 'Reported Issues',
+          selected: _page == _AdminPage.complaints,
+          onTap: () => setState(() => _page = _AdminPage.complaints),
+        ),
       GawaGoDrawerDestination(
         icon: Icons.assessment_outlined,
         label: 'Reports',
@@ -80,6 +92,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         child: switch (_page) {
           _AdminPage.dashboard => _AdminDashboard(repository: _repository),
           _AdminPage.verifications => _VerificationQueue(
+            repository: _repository,
+          ),
+          _AdminPage.credentials => AdminCredentialsQueue(
             repository: _repository,
           ),
           _AdminPage.complaints => const AdminComplaintsQueue(
@@ -108,7 +123,9 @@ class _AdminDashboardState extends State<_AdminDashboard> {
       .getDashboardMetrics();
 
   void _reload() {
-    setState(() => _future = widget.repository.getDashboardMetrics());
+    setState(() {
+      _future = widget.repository.getDashboardMetrics();
+    });
   }
 
   @override
@@ -143,6 +160,11 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               ResponsiveMetricGrid(
                 children: [
                   _MetricCard(
+                    label: 'Total Job Postings',
+                    value: '${metrics.totalJobPostings}',
+                    icon: Icons.post_add_outlined,
+                  ),
+                  _MetricCard(
                     label: 'Open Jobs',
                     value: '${metrics.openJobs}',
                     icon: Icons.work_outline,
@@ -163,8 +185,8 @@ class _AdminDashboardState extends State<_AdminDashboard> {
                     icon: Icons.cancel_outlined,
                   ),
                   _MetricCard(
-                    label: 'Verified Workers',
-                    value: '${metrics.verifiedWorkers}',
+                    label: 'Verified Users',
+                    value: '${metrics.verifiedUsers}',
                     icon: Icons.verified_outlined,
                   ),
                   _MetricCard(
@@ -193,6 +215,64 @@ class _AdminDashboardState extends State<_AdminDashboard> {
                 ],
               ),
               const SizedBox(height: 22),
+              const Text(
+                'Hiring Performance',
+                style: TextStyle(
+                  color: GawaGoColors.ink,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ResponsiveMetricGrid(
+                children: [
+                  _MetricCard(
+                    label: 'Hiring Success Rate',
+                    value: '${metrics.hiringSuccessRate.toStringAsFixed(1)}%',
+                    icon: Icons.trending_up,
+                  ),
+                  _MetricCard(
+                    label: 'Job Match Rate',
+                    value: '${metrics.jobMatchRate.toStringAsFixed(1)}%',
+                    icon: Icons.link,
+                  ),
+                  _MetricCard(
+                    label: 'Hired Workers',
+                    value: '${metrics.hiredWorkers}',
+                    icon: Icons.badge_outlined,
+                  ),
+                  _MetricCard(
+                    label: 'Repeat Hires',
+                    value: '${metrics.repeatHires}',
+                    icon: Icons.repeat,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _AnalyticsList(
+                title: 'Applications per Month',
+                emptyMessage: 'No applications yet.',
+                items: metrics.applicationTrend,
+                icon: Icons.timeline,
+                maxItems: 6,
+              ),
+              const SizedBox(height: 16),
+              _AnalyticsList(
+                title: 'Job Postings per Month',
+                emptyMessage: 'No job postings yet.',
+                items: metrics.monthlyJobPostings,
+                icon: Icons.calendar_month_outlined,
+                maxItems: 6,
+              ),
+              const SizedBox(height: 16),
+              _AnalyticsList(
+                title: 'Jobs by Service Type',
+                emptyMessage: 'No job postings yet.',
+                items: metrics.serviceDistribution,
+                icon: Icons.category_outlined,
+                maxItems: 8,
+              ),
+              const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Barangay Job Demand',
                 emptyMessage: 'No job demand data is available yet.',
@@ -212,6 +292,14 @@ class _AdminDashboardState extends State<_AdminDashboard> {
                 emptyMessage: 'No service-rate data is available yet.',
                 items: metrics.averageRates,
                 icon: Icons.payments_outlined,
+              ),
+              const SizedBox(height: 16),
+              _AnalyticsList(
+                title: 'Average Pricing Trend',
+                emptyMessage: 'No pricing data is available yet.',
+                items: metrics.pricingTrends,
+                icon: Icons.show_chart,
+                maxItems: 6,
               ),
               const SizedBox(height: 16),
               _AnalyticsList(
@@ -293,12 +381,14 @@ class _AnalyticsList extends StatelessWidget {
     required this.emptyMessage,
     required this.items,
     required this.icon,
+    this.maxItems = 5,
   });
 
   final String title;
   final String emptyMessage;
   final List<AdminAnalyticsItem> items;
   final IconData icon;
+  final int maxItems;
 
   @override
   Widget build(BuildContext context) {
@@ -331,7 +421,7 @@ class _AnalyticsList extends StatelessWidget {
               )
             else
               ...items
-                  .take(5)
+                  .take(maxItems)
                   .map(
                     (item) => Padding(
                       padding: const EdgeInsets.only(bottom: 9),
@@ -383,7 +473,9 @@ class _VerificationQueueState extends State<_VerificationQueue> {
   String _filter = 'pending';
 
   void _reload() {
-    setState(() => _future = widget.repository.getVerificationRequests());
+    setState(() {
+      _future = widget.repository.getVerificationRequests();
+    });
   }
 
   List<AdminVerificationRequest> _visible(

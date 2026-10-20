@@ -99,8 +99,14 @@ class DashboardMetricsServiceTests(TestCase):
         self.assertEqual(metrics["analytics"]["summary"]["cancelledRequests"], 0)
         self.assertEqual(metrics["analytics"]["summary"]["ongoingMatches"], 0)
         self.assertEqual(metrics["analytics"]["summary"]["verifiedUsers"], 1)
+        # "Pending" is an account with an ID waiting in the queue -- the same
+        # basis apps.reports.services uses. The household's profile defaults
+        # to pending but it never submitted anything, so it is not counted.
         self.assertEqual(metrics["analytics"]["summary"]["pendingVerifications"], 1)
         self.assertEqual(metrics["analytics"]["summary"]["rejectedVerifications"], 1)
+        # The admin queue's depth is a separate number: only one account has
+        # actually submitted a request that is still waiting.
+        self.assertEqual(metrics["analytics"]["summary"]["pendingVerificationRequests"], 1)
         self.assertEqual(metrics["analytics"]["summary"]["averageWorkerRating"], "4.50")
 
     def test_average_worker_rating_is_weighted_by_review_count(self):

@@ -6,21 +6,21 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.pagination import paginated_response
 from apps.jobs.models import JobApplication, JobPosting
 from apps.reviews.models import Review
 from apps.reviews.serializers import ReviewCreateSerializer, ReviewSerializer
-from apps.reviews.services import assign_due_default_worker_ratings, update_worker_reputation
+from apps.reviews.services import (
+    ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS,
+    assign_due_default_worker_ratings_on_read,
+    update_worker_reputation,
+)
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 
 # GET here is AllowAny (reviews are public), but it also sweeps every
-# completed application for reviews due a default rating -- without a
-# cooldown, an anonymous client looping this endpoint drives unbounded DB
-# work on a safe method. cache.add() only succeeds for the first caller in
-# the window, so the sweep still self-triggers on read but at most once
-# per window regardless of request volume.
-ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS = 300
-ASSIGN_DEFAULT_RATINGS_LOCK_KEY = "reviews:assign_due_default_ratings_lock"
+# completed application for reviews due a default rating; the sweep is
+# cooldown-bounded (assign_due_default_worker_ratings_on_read).
 
 
 class ReviewListCreateView(APIView):
@@ -30,8 +30,7 @@ class ReviewListCreateView(APIView):
         return [IsAuthenticated()]
 
     def get(self, request):
-        if cache.add(ASSIGN_DEFAULT_RATINGS_LOCK_KEY, True, ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS):
-            assign_due_default_worker_ratings()
+        assign_due_default_worker_ratings_on_read()
         target_username = request.query_params.get("username") or request.query_params.get("target_username")
         author_username = request.query_params.get("author_username")
         if target_username:
@@ -61,7 +60,7 @@ class ReviewListCreateView(APIView):
                 reviews = reviews.filter(target=request.user)
             else:
                 return Response({"detail": "username or author_username is required."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ReviewSerializer(reviews, many=True).data)
+        return paginated_response(request, reviews.order_by("-created_at", "-id"), ReviewSerializer)
 
     def post(self, request):
         serializer = ReviewCreateSerializer(data=request.data)
@@ -115,7 +114,9 @@ class ReviewListCreateView(APIView):
             return Response({"detail": "This user has already been reviewed for this completed job."}, status=status.HTTP_400_BAD_REQUEST)
 
         review_fields = dict(
-            job_title=serializer.validated_data.get("job_title") or job.title,
+            # Always the real job's title: a client-supplied one was stored
+            # verbatim and shown on the public review.
+            job_title=job.title,
             rating=serializer.validated_data.get("rating"),
             feedback=serializer.validated_data.get("feedback", ""),
             quality_of_work=serializer.validated_data.get("quality_of_work"),
@@ -154,14 +155,24 @@ class ReviewListCreateView(APIView):
         )
         create_notification(
             recipient=target_user,
-            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+            notification_type=Notification.TYPE_REVIEW,
             title="New feedback received" if author_role == "worker" else "New review received",
             message=notification_message,
-            actor=author_user,
+            # Worker feedback is anonymous; the actor would name its author.
+            actor=None if author_role == "worker" else author_user,
             related_job_id=job.id,
             action_type=Notification.ACTION_REVIEW,
             action_url=f"/reviews/jobs/{job.id}",
         )
+        if author_role == Review.ROLE_HOUSEHOLD:
+            # The reminder asked for exactly this review; leaving it as an
+            # unread action item after it was done read as still owed.
+            Notification.objects.filter(
+                recipient=author_user,
+                notification_type=Notification.TYPE_REVIEW_REMINDER,
+                related_job_id=job.id,
+                actor=target_user,
+            ).update(is_read=True, requires_action=False)
         # Update reputation tier and trend after new review
         update_worker_reputation(target_user)
         return Response(ReviewSerializer(review).data, status=response_status)

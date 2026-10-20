@@ -15,8 +15,15 @@ explainability breakdown via _build_score_result().
 
 from django.contrib.auth.models import User
 
+from apps.accounts.models import currently_suspended_q
 from apps.jobs.models import JobPosting
-from apps.matching.services import DISTANCE_UNLIMITED, get_road_route_for_match, normalize_skill_label
+from apps.jobs.privacy import rounded_distance_km
+from apps.matching.services import (
+    DISTANCE_UNLIMITED,
+    get_road_route_for_match,
+    normalize_skill_label,
+    scope_distance_km,
+)
 
 # Relative importance of skill fit vs. proximity in the final score.
 # A skill mismatch makes a job irrelevant regardless of distance, so
@@ -28,10 +35,10 @@ PROXIMITY_WEIGHT = 0.3
 def _tfidf():
     """Import scikit-learn on first use rather than at module import.
 
-    apps.MatchingConfig.ready() pulls this module in for the signal hooks, so
-    a module-level sklearn import made *every* management command -- runserver
-    included -- sit through a ~20s import before doing anything. Only a call
-    that actually scores something should pay that.
+    Serializers and the job-match task import this module, so a module-level
+    sklearn import made *every* management command -- runserver included --
+    sit through a ~20s import before doing anything. Only a call that
+    actually scores something should pay that.
     """
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -99,9 +106,9 @@ def score_job_for_worker(job, profile):
     algorithm as get_recommended_jobs(): TF-IDF skill similarity blended with
     road-distance proximity, gated by the job's hard radius filter.
 
-    Shared by both the pull-based get_recommended_jobs() endpoint and the
-    push-based apps.matching.signals notification hook, so both agree on
-    what counts as a match.
+    Shares its scoring (score_pair_with_distance) with the push-based
+    background task in apps.matching.tasks, so both agree on what counts as
+    a match.
 
     Returns:
         dict with "ai_score", "skill_similarity", "distance_km", plus an
@@ -114,7 +121,7 @@ def score_job_for_worker(job, profile):
         return None
 
     route = get_road_route_for_match(job, profile)
-    distance_km = route["distance_km"]
+    distance_km = scope_distance_km(job, profile, route["distance_km"])
     if not _within_radius(job, distance_km):
         return None
 
@@ -154,6 +161,12 @@ def _build_score_result(job, profile, skill_similarity, distance_km):
     a job matched (e.g. "mostly skill fit" vs. "mostly proximity") instead
     of showing only the combined score.
     """
+    # The proximity score itself is computed from the precise distance --
+    # only the *displayed* distance_km is coarsened. A worker controls their
+    # own registered location, so a precise reading here would let repeated
+    # self-reported moves trilaterate the job's ~1 km-masked pin before
+    # they're hired (SEC-13); 0.1 km resolution is enough to compare
+    # candidates without that.
     proximity_score = _proximity_score(distance_km)
     skill_contribution = skill_similarity * SKILL_WEIGHT
     proximity_contribution = proximity_score * PROXIMITY_WEIGHT
@@ -161,7 +174,7 @@ def _build_score_result(job, profile, skill_similarity, distance_km):
     return {
         "ai_score": round(ai_score, 4),
         "skill_similarity": round(skill_similarity, 4),
-        "distance_km": round(distance_km, 2) if distance_km is not None else None,
+        "distance_km": rounded_distance_km(distance_km),
         "skill_contribution": round(skill_contribution, 4),
         "proximity_contribution": round(proximity_contribution, 4),
         "exact_skill_match": _has_exact_skill_match(profile, job),
@@ -214,9 +227,12 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     if not worker_document.strip():
         return []
 
+    # Same market the job list shows: a suspended household's jobs can't be
+    # applied to, so they must not be recommended either.
     open_jobs = list(
         JobPosting.objects.filter(status=JobPosting.STATUS_OPEN)
         .exclude(household_id=worker.id)
+        .exclude(currently_suspended_q("household__profile__"))
         .select_related("household")
     )
     if not open_jobs:
@@ -234,7 +250,7 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     results = []
     for job, skill_similarity in zip(open_jobs, similarities):
         route = get_road_route_for_match(job, profile)
-        distance_km = route["distance_km"]
+        distance_km = scope_distance_km(job, profile, route["distance_km"])
 
         if not _within_radius(job, distance_km):
             continue
@@ -301,7 +317,7 @@ def get_recommended_workers(job, worker_profiles, limit: int = 20):
     results = []
     for profile, skill_similarity in zip(candidates, similarities):
         route = get_road_route_for_match(job, profile)
-        distance_km = route["distance_km"]
+        distance_km = scope_distance_km(job, profile, route["distance_km"])
 
         if not _within_radius(job, distance_km):
             continue

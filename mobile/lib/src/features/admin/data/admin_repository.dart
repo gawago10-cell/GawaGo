@@ -27,6 +27,36 @@ class AdminRepository {
         .toList();
   }
 
+  /// Worker credentials (TESDA certificates, licences...) for review.
+  /// [status] is "pending", "approved", "rejected" or "all".
+  Future<List<AdminCertificate>> getCertificates({
+    String status = 'all',
+  }) async {
+    final data = await GawaGoApi.getList(
+      '/accounts/admin/certificates/?status=${Uri.encodeQueryComponent(status)}',
+    );
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(AdminCertificate.fromJson)
+        .toList();
+  }
+
+  Future<AdminCertificate> reviewCertificate(
+    int certificateId, {
+    required String status,
+    String notes = '',
+  }) async {
+    return AdminCertificate.fromJson(
+      await GawaGoApi.patch(
+        '/accounts/admin/certificates/$certificateId/',
+        body: {
+          'verification_status': status,
+          'verification_notes': notes.trim(),
+        },
+      ),
+    );
+  }
+
   Future<void> reviewVerification(
     int requestId, {
     required String action,

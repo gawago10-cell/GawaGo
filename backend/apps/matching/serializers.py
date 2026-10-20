@@ -22,10 +22,16 @@ class MatchRequestSerializer(serializers.Serializer):
 
 
 class MatchResultSerializer(serializers.Serializer):
+    """A candidate the household has not hired. Deliberately carries no exact
+    coordinates and no route line -- only a rounded distance and a ~1 km
+    grid-snapped point for the matches map."""
+
     worker_id = serializers.IntegerField()
     worker_username = serializers.CharField()
     worker_name = serializers.CharField()
     worker_location_label = serializers.CharField(allow_blank=True)
+    worker_approximate_latitude = serializers.FloatField(allow_null=True)
+    worker_approximate_longitude = serializers.FloatField(allow_null=True)
     worker_bio = serializers.CharField(allow_blank=True)
     worker_profile_photo_url = serializers.SerializerMethodField()
     worker_rating_count = serializers.IntegerField()
@@ -33,11 +39,8 @@ class MatchResultSerializer(serializers.Serializer):
     skills = serializers.ListField(child=serializers.CharField())
     matches_skill = serializers.BooleanField()
     verification_status = serializers.CharField()
-    worker_latitude = serializers.FloatField(allow_null=True)
-    worker_longitude = serializers.FloatField(allow_null=True)
     distance_km = serializers.FloatField(allow_null=True)
     distance_label = serializers.CharField()
-    route_points = serializers.ListField(child=serializers.ListField(child=serializers.FloatField()), required=False)
     match_score = serializers.FloatField()
     rating_label = serializers.CharField()
     rating_score = serializers.FloatField()

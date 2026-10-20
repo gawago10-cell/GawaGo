@@ -113,7 +113,7 @@ void main() {
             statusLabel: null,
             onDecline: () => declined = true,
             onViewProfile: () {},
-            onSendRequest: () => requested = true,
+            onAccept: () => requested = true,
           ),
         ),
       ),
@@ -122,11 +122,11 @@ void main() {
     expect(find.text('94%'), findsOneWidget);
     expect(find.text('match'), findsOneWidget);
     expect(find.text('Applied 2 hours ago'), findsOneWidget);
-    expect(find.text('Top match'), findsOneWidget);
+    expect(find.text('Top AI match'), findsOneWidget);
     expect(find.text('72 jobs'), findsOneWidget);
 
     await tester.tap(find.text('Decline'));
-    await tester.tap(find.text('Send a Request'));
+    await tester.tap(find.text('Accept'));
     expect(declined, isTrue);
     expect(requested, isTrue);
   });
@@ -154,7 +154,7 @@ void main() {
             statusLabel: 'Hire Requested',
             onDecline: () {},
             onViewProfile: () {},
-            onSendRequest: () {},
+            onAccept: () {},
           ),
         ),
       ),
@@ -163,7 +163,7 @@ void main() {
     expect(find.text('Hire Requested'), findsOneWidget);
     expect(find.text('View Profile'), findsOneWidget);
     expect(find.text('Decline'), findsNothing);
-    expect(find.text('Send a Request'), findsNothing);
+    expect(find.text('Accept'), findsNothing);
     // No score means no ring rather than a 0% one.
     expect(find.text('match'), findsNothing);
   });

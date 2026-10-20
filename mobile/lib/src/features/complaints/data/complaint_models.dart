@@ -20,6 +20,8 @@ class ComplaintReport {
     this.respondentBlockedUntil,
     this.complainantDetail,
     this.respondentDetail,
+    this.jobName = '',
+    this.jobLocation = '',
   });
 
   final int id;
@@ -27,6 +29,19 @@ class ComplaintReport {
   final String respondentUsername;
   final int? jobId;
   final String jobTitle;
+
+  /// Admin-only (`ComplaintAdminSerializer`): the job's own title and its
+  /// full location label, where `jobTitle` carries only a masked barangay.
+  final String jobName;
+  final String jobLocation;
+
+  /// What the admin queue labels the job with: the full name and location
+  /// when the admin fields are present, otherwise the filer-facing title.
+  String get adminJobLabel {
+    if (jobName.isEmpty) return jobTitle;
+    return jobLocation.isEmpty ? jobName : '$jobName · $jobLocation';
+  }
+
   final String complaintType;
   final String description;
   final String status;
@@ -87,6 +102,8 @@ class ComplaintReport {
       respondentDetail: ComplaintPartyDetail.fromJson(
         json['respondent_detail'] as Map<String, dynamic>?,
       ),
+      jobName: _text(json['job_name']),
+      jobLocation: _text(json['job_barangay']),
     );
   }
 }

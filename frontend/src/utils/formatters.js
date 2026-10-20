@@ -17,6 +17,24 @@ export function isImagePreviewUrl(url) {
   return /^data:image\//i.test(normalizedUrl) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(normalizedUrl.split("?")[0]);
 }
 
+/** A job date ("2026-10-04") as "Oct 4, 2026", matching the mobile app's
+ * formatting. Non-date text (a schedule description, "Not set") passes
+ * through unchanged rather than being mangled. */
+export function formatJobDate(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (!/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed;
+  }
+  const parsed = new Date(trimmed.length === 10 ? `${trimmed}T00:00:00` : trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return trimmed;
+  }
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export function formatScheduleLabel(scheduleType) {
   if (typeof scheduleType !== "string") {
     return "";

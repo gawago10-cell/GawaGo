@@ -11,8 +11,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { DashboardSidebar, MetricCard } from "./DashboardLayout";
+import { DashboardSidebar, MetricCard, MobileDashboardTopbar } from "./DashboardLayout";
 import SuperAdminHeatMap from "./SuperAdminHeatMap";
+import AdminPlatformReport from "./AdminPlatformReport";
 import ReportsView from "./ReportsView";
 import AdminComplaintsQueue from "./AdminComplaintsQueue";
 import AdminCredentialsQueue from "./AdminCredentialsQueue";
@@ -21,8 +22,22 @@ import {
   ANALYTICS_CHART_COLORS,
   PHILIPPINES_MAP_CENTER,
 } from "../constants/appConstants";
-import { formatCurrency, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
+import { formatCurrency, formatTimeAgo, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
+import {
+  createAdminAccount,
+  fetchAdminAccounts,
+  fetchAdminAuditLog,
+  setAdminAccountActive,
+} from "../services/backendDataService";
+
+const EMPTY_ADMIN_FORM = {
+  username: "",
+  email: "",
+  firstName: "",
+  lastName: "",
+  password: "",
+};
 
 export default function SuperAdminDashboardView({
   currentUser,
@@ -46,6 +61,108 @@ export default function SuperAdminDashboardView({
   verificationRequests,
 }) {
   const [verificationModalRequestId, setVerificationModalRequestId] = React.useState(null);
+  // Real audit trail from the backend's AdminActionLog -- fetched only when
+  // the tab is actually open, not kept fabricated from verification
+  // requests plus a permanently-fake "Current session" row.
+  const [auditLogs, setAuditLogs] = React.useState([]);
+  const [auditLoading, setAuditLoading] = React.useState(false);
+  const [auditError, setAuditError] = React.useState("");
+  React.useEffect(() => {
+    if (superAdminSection !== "audit") return;
+    let cancelled = false;
+    setAuditLoading(true);
+    setAuditError("");
+    fetchAdminAuditLog()
+      .then((logs) => {
+        if (cancelled) return;
+        if (logs) {
+          setAuditLogs(logs);
+        } else {
+          setAuditError("Unable to load the audit log right now.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuditLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [superAdminSection]);
+  // Registered admins, also from the backend. This table used to be a single
+  // hardcoded row with buttons that did nothing.
+  const [adminAccounts, setAdminAccounts] = React.useState([]);
+  const [adminsLoading, setAdminsLoading] = React.useState(false);
+  const [adminsError, setAdminsError] = React.useState("");
+  const [adminFormOpen, setAdminFormOpen] = React.useState(false);
+  const [adminForm, setAdminForm] = React.useState(EMPTY_ADMIN_FORM);
+  const [adminFormError, setAdminFormError] = React.useState("");
+  const [adminFormSaving, setAdminFormSaving] = React.useState(false);
+  const [adminNotice, setAdminNotice] = React.useState("");
+  const [adminBusyUsername, setAdminBusyUsername] = React.useState("");
+
+  const loadAdminAccounts = React.useCallback(async () => {
+    setAdminsLoading(true);
+    setAdminsError("");
+    try {
+      const accounts = await fetchAdminAccounts();
+      if (accounts) {
+        setAdminAccounts(accounts);
+      } else {
+        setAdminsError("Unable to load the admin list right now.");
+      }
+    } finally {
+      setAdminsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (superAdminSection !== "adminmgmt") return;
+    loadAdminAccounts();
+  }, [superAdminSection, loadAdminAccounts]);
+
+  async function handleCreateAdmin(event) {
+    event.preventDefault();
+    if (adminFormSaving) return;
+    setAdminFormSaving(true);
+    setAdminFormError("");
+    setAdminNotice("");
+    try {
+      const created = await createAdminAccount(adminForm);
+      setAdminForm(EMPTY_ADMIN_FORM);
+      setAdminFormOpen(false);
+      setAdminNotice(`Admin account "${created.username}" created.`);
+      await loadAdminAccounts();
+    } catch (error) {
+      setAdminFormError(error.message);
+    } finally {
+      setAdminFormSaving(false);
+    }
+  }
+
+  async function handleToggleAdminActive(admin) {
+    if (adminBusyUsername) return;
+    const nextActive = !admin.isActive;
+    if (
+      !nextActive &&
+      !window.confirm(
+        `Deactivate "${admin.username}"? They will be signed out immediately and won't be able to log in.`,
+      )
+    ) {
+      return;
+    }
+    setAdminBusyUsername(admin.username);
+    setAdminsError("");
+    setAdminNotice("");
+    try {
+      await setAdminAccountActive(admin.username, nextActive);
+      setAdminNotice(`"${admin.username}" ${nextActive ? "reactivated" : "deactivated"}.`);
+      await loadAdminAccounts();
+    } catch (error) {
+      setAdminsError(error.message);
+    } finally {
+      setAdminBusyUsername("");
+    }
+  }
   const analytics = dashboardMetrics?.analytics || {};
   const analyticsSummary = analytics.summary || {};
   const totalUsers = analyticsSummary.totalUsers ?? registeredWorkers.length + registeredHouseholds.length;
@@ -144,24 +261,6 @@ export default function SuperAdminDashboardView({
         { label: "Rejected", value: rejectedVerificationCount, tone: rejectedVerificationCount > 0 ? "danger" : "neutral" },
         { label: "Average Rating", value: averageWorkerRating, wide: true },
       ],
-    },
-  ];
-  const recentAuditLogs = [
-    ...verificationRequests.slice(0, 6).map((request) => ({
-      id: `verification-${request.id}`,
-      timestamp: request.reviewedAt || request.submittedAt || "Recently",
-      admin: request.reviewedBy || currentUser?.displayName || "Super Admin",
-      action: `${request.status} verification`,
-      target: request.workerName || request.workerUsername,
-      status: request.status,
-    })),
-    {
-      id: "system-login",
-      timestamp: "Current session",
-      admin: currentUser?.displayName || "Super Admin",
-      action: "superadmin_login",
-      target: "GawaGo frontend",
-      status: "Success",
     },
   ];
   const tabs = [
@@ -264,6 +363,9 @@ export default function SuperAdminDashboardView({
   };
   return (
     <div className="app-shell">
+      {/* Below 768px the sidebar slides off-screen; without this burger every
+          section after the first, and Log Out, were unreachable on a phone. */}
+      <MobileDashboardTopbar resetKey={superAdminSection} />
       <main>
         <section className="worker-dashboard superadmin-dashboard">
           <div className="worker-layout">
@@ -368,7 +470,7 @@ export default function SuperAdminDashboardView({
                     <div className="row g-3">
                       <div className="col-12">
                         <div className="card border-0 shadow-sm">
-                          <div className="card-header bg-light fw-bold">Application Trends (Last 12 Months)</div>
+                          <div className="card-header bg-light fw-bold">Application Trends (Last 6 Months)</div>
                           <div className="card-body">
                             {(dashboardMetrics.analytics?.enhancedAnalytics?.applicationTrends || []).length > 0 ? (
                               <ResponsiveContainer width="100%" height={300}>
@@ -377,7 +479,7 @@ export default function SuperAdminDashboardView({
                                   <XAxis dataKey="month" />
                                   <YAxis />
                                   <Tooltip />
-                                  <Line type="monotone" dataKey="applications" stroke="#2d7a4f" strokeWidth={2} />
+                                  <Line type="monotone" dataKey="applications" stroke="#5c7a34" strokeWidth={2} />
                                 </LineChart>
                               </ResponsiveContainer>
                             ) : (
@@ -398,10 +500,10 @@ export default function SuperAdminDashboardView({
                               <ResponsiveContainer width="100%" height={300}>
                                 <BarChart data={dashboardMetrics.analytics.serviceAnalytics}>
                                   <CartesianGrid strokeDasharray="3 3" />
-                                  <XAxis dataKey="serviceType" angle={-45} textAnchor="end" height={100} />
+                                  <XAxis dataKey="service" angle={-45} textAnchor="end" height={100} />
                                   <YAxis />
                                   <Tooltip />
-                                  <Bar dataKey="count" fill="#2d7a4f" />
+                                  <Bar dataKey="requests" fill="#9ebf5e" />
                                 </BarChart>
                               </ResponsiveContainer>
                             ) : (
@@ -423,7 +525,7 @@ export default function SuperAdminDashboardView({
                                   <XAxis dataKey="month" />
                                   <YAxis />
                                   <Tooltip />
-                                  <Bar dataKey="count" fill="#2d7a4f" />
+                                  <Bar dataKey="requests" fill="#9ebf5e" />
                                 </BarChart>
                               </ResponsiveContainer>
                             ) : (
@@ -438,11 +540,14 @@ export default function SuperAdminDashboardView({
                 </>
               )}
               {superAdminSection === "reports" && (
-                <ReportsView
-                  postedJobs={postedJobs}
-                  registeredHouseholds={registeredHouseholds}
-                  registeredWorkers={registeredWorkers}
-                />
+                <>
+                  <AdminPlatformReport />
+                  <ReportsView
+                    postedJobs={postedJobs}
+                    registeredHouseholds={registeredHouseholds}
+                    registeredWorkers={registeredWorkers}
+                  />
+                </>
               )}
               {superAdminSection === "complaints" && (
                 <AdminComplaintsQueue
@@ -728,18 +833,18 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#e1e0d9" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                                 <XAxis
                                   dataKey="month"
                                   tick={{
-                                    fill: "#898781",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#898781",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
@@ -747,7 +852,7 @@ export default function SuperAdminDashboardView({
                                 <Line
                                   type="monotone"
                                   dataKey="requests"
-                                  stroke="#2d7a4f"
+                                  stroke="#5c7a34"
                                   strokeWidth={3}
                                   dot={{
                                     r: 4,
@@ -775,18 +880,18 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#e1e0d9" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                                 <XAxis
                                   dataKey="service"
                                   tick={{
-                                    fill: "#898781",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#898781",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
@@ -918,23 +1023,23 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                                 <XAxis
                                   dataKey="stars"
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <Tooltip />
-                                <Bar dataKey="count" fill="#ffc107" radius={[8, 8, 0, 0]} />
+                                <Bar dataKey="count" fill="#9ebf5e" radius={[8, 8, 0, 0]} />
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
@@ -988,17 +1093,17 @@ export default function SuperAdminDashboardView({
                               bottom: 4,
                             }}
                           >
-                            <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                            <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                             <XAxis
                               dataKey="month"
                               tick={{
-                                fill: "#5f6b7b",
+                                fill: "#6b7460",
                                 fontSize: 12,
                               }}
                             />
                             <YAxis
                               tick={{
-                                fill: "#5f6b7b",
+                                fill: "#6b7460",
                                 fontSize: 12,
                               }}
                               tickFormatter={(value) => formatCurrency(value)}
@@ -1012,7 +1117,7 @@ export default function SuperAdminDashboardView({
                             <Line
                               type="monotone"
                               dataKey="averageRate"
-                              stroke="#28a745"
+                              stroke="#5c7a34"
                               strokeWidth={3}
                               dot={{
                                 r: 4,
@@ -1033,70 +1138,216 @@ export default function SuperAdminDashboardView({
                 <div className="profile-card mt-3">
                   <div className="profile-card-head d-flex justify-content-between align-items-center gap-3 flex-wrap">
                     <span>Registered Admins</span>
-                    <button className="btn btn-primary btn-sm" type="button">
-                      Add Admin
+                    <button
+                      className="btn btn-primary btn-sm"
+                      type="button"
+                      onClick={() => {
+                        setAdminFormOpen((open) => !open);
+                        setAdminFormError("");
+                        setAdminNotice("");
+                      }}
+                    >
+                      {adminFormOpen ? "Cancel" : "Add Admin"}
                     </button>
                   </div>
-                  <div className="table-responsive">
-                    <table className="table align-middle mb-0">
-                      <thead>
-                        <tr>
-                          <th>Admin Name</th>
-                          <th>Username</th>
-                          <th>Role</th>
-                          <th>Status</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td>
-                            <strong>Super Admin</strong>
-                          </td>
-                          <td>superadmin</td>
-                          <td>Full System Control</td>
-                          <td>
-                            <span className="badge text-bg-dark">Owner</span>
-                          </td>
-                          <td>
-                            <button className="btn btn-outline-secondary btn-sm" type="button">
-                              Manage
-                            </button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+
+                  {adminFormOpen && (
+                    <form className="p-3 border-bottom" onSubmit={handleCreateAdmin}>
+                      <div className="row g-3">
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-username">
+                            Username
+                          </label>
+                          <input
+                            id="new-admin-username"
+                            className="form-control"
+                            required
+                            value={adminForm.username}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, username: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-email">
+                            Email
+                          </label>
+                          <input
+                            id="new-admin-email"
+                            type="email"
+                            className="form-control"
+                            required
+                            value={adminForm.email}
+                            onChange={(event) => setAdminForm((form) => ({ ...form, email: event.target.value }))}
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-first-name">
+                            First name
+                          </label>
+                          <input
+                            id="new-admin-first-name"
+                            className="form-control"
+                            value={adminForm.firstName}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, firstName: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-last-name">
+                            Last name
+                          </label>
+                          <input
+                            id="new-admin-last-name"
+                            className="form-control"
+                            value={adminForm.lastName}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, lastName: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-password">
+                            Temporary password
+                          </label>
+                          <input
+                            id="new-admin-password"
+                            type="password"
+                            className="form-control"
+                            required
+                            minLength={8}
+                            autoComplete="new-password"
+                            value={adminForm.password}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, password: event.target.value }))
+                            }
+                          />
+                          <div className="form-text">
+                            At least 8 characters. The new admin should change it after signing in.
+                          </div>
+                        </div>
+                      </div>
+                      {adminFormError && <p className="text-danger mb-0 mt-3">{adminFormError}</p>}
+                      <div className="mt-3">
+                        <button className="btn btn-primary" type="submit" disabled={adminFormSaving}>
+                          {adminFormSaving ? "Creating..." : "Create admin"}
+                        </button>
+                      </div>
+                      <p className="form-text mb-0 mt-2">
+                        New accounts are standard admins. Full system control can't be granted from here.
+                      </p>
+                    </form>
+                  )}
+
+                  {adminNotice && <p className="text-success p-3 mb-0">{adminNotice}</p>}
+                  {adminsLoading && <p className="text-muted p-3 mb-0">Loading admins...</p>}
+                  {!adminsLoading && adminsError && <p className="text-danger p-3 mb-0">{adminsError}</p>}
+                  {!adminsLoading && !adminsError && adminAccounts.length === 0 && (
+                    <p className="text-muted p-3 mb-0">No admin accounts found.</p>
+                  )}
+                  {!adminsLoading && !adminsError && adminAccounts.length > 0 && (
+                    <div className="table-responsive">
+                      <table className="table align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th>Admin Name</th>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Last sign-in</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminAccounts.map((admin) => {
+                            const isSelf = admin.username === currentUser?.username;
+                            return (
+                              <tr key={admin.id}>
+                                <td>
+                                  <strong>{admin.displayName}</strong>
+                                  {admin.email && <div className="text-muted small">{admin.email}</div>}
+                                </td>
+                                <td>{admin.username}</td>
+                                <td>{admin.roleLabel}</td>
+                                <td>
+                                  {admin.isOwner ? (
+                                    <span className="badge text-bg-dark">Owner</span>
+                                  ) : (
+                                    <span className={`badge ${admin.isActive ? "text-bg-success" : "text-bg-secondary"}`}>
+                                      {admin.isActive ? "Active" : "Deactivated"}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="text-muted small">
+                                  {admin.lastLogin ? formatTimeAgo(admin.lastLogin) || admin.lastLogin : "Never"}
+                                </td>
+                                <td>
+                                  {admin.isOwner || isSelf ? (
+                                    <span className="text-muted small">
+                                      {isSelf ? "This is you" : "Protected"}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      className={`btn btn-sm ${
+                                        admin.isActive ? "btn-outline-danger" : "btn-outline-success"
+                                      }`}
+                                      type="button"
+                                      disabled={adminBusyUsername === admin.username}
+                                      onClick={() => handleToggleAdminActive(admin)}
+                                    >
+                                      {adminBusyUsername === admin.username
+                                        ? "Saving..."
+                                        : admin.isActive
+                                          ? "Deactivate"
+                                          : "Reactivate"}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
 
               {superAdminSection === "audit" && (
                 <div className="profile-card mt-3">
                   <div className="profile-card-head">Audit Logs</div>
-                  <div className="table-responsive">
-                    <table className="table align-middle mb-0">
-                      <thead>
-                        <tr>
-                          <th>Timestamp</th>
-                          <th>Admin</th>
-                          <th>Action</th>
-                          <th>Target</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recentAuditLogs.map((log) => (
-                          <tr key={log.id}>
-                            <td>{log.timestamp}</td>
-                            <td>{log.admin}</td>
-                            <td>{log.action}</td>
-                            <td>{log.target}</td>
-                            <td>{renderStatusBadge(log.status)}</td>
+                  {auditLoading && <p className="text-muted p-3 mb-0">Loading audit log...</p>}
+                  {!auditLoading && auditError && <p className="text-danger p-3 mb-0">{auditError}</p>}
+                  {!auditLoading && !auditError && auditLogs.length === 0 && (
+                    <p className="text-muted p-3 mb-0">No admin actions recorded yet.</p>
+                  )}
+                  {!auditLoading && !auditError && auditLogs.length > 0 && (
+                    <div className="table-responsive">
+                      <table className="table align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th>When</th>
+                            <th>Admin</th>
+                            <th>Action</th>
+                            <th>Target</th>
+                            <th>Detail</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {auditLogs.map((log) => (
+                            <tr key={log.id}>
+                              <td>{formatTimeAgo(log.timestamp) || log.timestamp}</td>
+                              <td>{log.admin}</td>
+                              <td>{log.action}</td>
+                              <td>{log.target}</td>
+                              <td className="text-muted small">{log.detail}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

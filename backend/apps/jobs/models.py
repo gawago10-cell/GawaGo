@@ -1,11 +1,16 @@
+import uuid
+from pathlib import Path
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
 
 def job_image_path(instance, filename):
+    # Random name: the original filename is guessable and the public /media/
+    # URL otherwise serves it back verbatim forever.
     dated_path = timezone.now().strftime("jobs/%Y/%m/%d")
-    return f"{dated_path}/{filename}"
+    return f"{dated_path}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
 
 
 class JobPosting(models.Model):
@@ -36,13 +41,22 @@ class JobPosting(models.Model):
     required_skill = models.CharField(max_length=120)
     schedule = models.CharField(max_length=255)
     schedule_type = models.CharField(max_length=80, blank=True, default="")
-    preferred_date = models.DateField(null=True, blank=True)
-    preferred_time = models.TimeField(null=True, blank=True)
     description = models.TextField(blank=True, default="")
     location_label = models.CharField(max_length=255)
     latitude = models.DecimalField(max_digits=10, decimal_places=7)
     longitude = models.DecimalField(max_digits=10, decimal_places=7)
     service_rate = models.DecimalField(max_digits=10, decimal_places=2)
+    # What service_rate is per. Both clients always asked for it, but it had
+    # nowhere to be stored, so every rate displayed as "per day".
+    RATE_PER_DAY = "per_day"
+    RATE_PER_HOUR = "per_hour"
+    RATE_FIXED = "fixed"
+    RATE_TYPE_CHOICES = [
+        (RATE_PER_DAY, "Per Day"),
+        (RATE_PER_HOUR, "Per Hour"),
+        (RATE_FIXED, "Fixed Rate"),
+    ]
+    rate_type = models.CharField(max_length=20, choices=RATE_TYPE_CHOICES, default=RATE_PER_DAY)
     worker_slots = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
 

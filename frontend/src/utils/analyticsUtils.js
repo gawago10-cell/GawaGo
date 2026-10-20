@@ -6,7 +6,7 @@ function formatAnalyticsMonth(date) {
 }
 
 function getAnalyticsJobDate(job) {
-  const parsedDate = new Date(job?.createdAt || job?.created_at || job?.preferredDate || Date.now());
+  const parsedDate = new Date(job?.createdAt || job?.created_at || job?.jobStartDate || Date.now());
   return Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 }
 

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { apiRequest, clearAuthToken, getAuthToken, setAuthToken, setUnauthorizedHandler } from "./api/apiClient";
 import {
   BARANGAYS,
@@ -23,10 +23,17 @@ import {
   formatScheduleLabel,
   getDisplayName,
   getDisplayRating,
-  getHouseholdPhoto,
   getWorkerPhoto,
   sanitizePhilippinesPhone,
 } from "./utils/formatters";
+import {
+  deletePortfolioCertification,
+  deletePortfolioItem,
+  fetchMyAccount,
+  fetchMyPortfolio,
+  fetchWorkerEmploymentHistory,
+  updatePortfolioSkillProficiency,
+} from "./services/backendDataService";
 import { getBarangayCenter, getFallbackBarangay } from "./utils/locationUtils";
 import {
   buildCoordinateLocation,
@@ -76,12 +83,12 @@ import {
   ensureDemoVersion,
   getNotificationReadState,
   getStoredCollection,
-  getStoredObject,
   mergeDemoRecords,
 } from "./utils/storageUtils";
 import { readResponseData } from "./utils/apiUtils";
 import { loadLeafletAssets } from "./utils/mapAssets";
 import { renderBarangayOptions } from "./utils/formOptions";
+import { dashboardViewForRole, getUserRole, isAdminRole, ROLES, resolveGuardedView } from "./utils/roles";
 import "./styles/analytics.css";
 import { useGawaGoNavigation } from "./hooks/useGawaGoNavigation";
 import { useBackendSync } from "./hooks/useBackendSync";
@@ -93,11 +100,12 @@ import { useDashboardMetrics } from "./hooks/useDashboardMetrics";
 import { useBackendPolling } from "./hooks/useBackendPolling";
 import { useGawaGoDomEffects } from "./hooks/useGawaGoDomEffects";
 import { useGawaGoPersistence } from "./hooks/useGawaGoPersistence";
-import FloatingChatWidget from "./components/FloatingChatWidget";
-import ComplaintModal from "./components/ComplaintModal";
+import useViewRouting from "./hooks/useViewRouting";
+import ChatWidget from "./components/ChatWidget";
 
 const AppViews = lazy(() => import("./components/AppViews"));
 const ForgotPasswordView = lazy(() => import("./components/ForgotPasswordView"));
+const SELECTED_JOB_STORAGE_KEY = "gawago-selected-job";
 const SuperAdminDashboardView = lazy(() => import("./components/SuperAdminDashboardView"));
 const MyComplaintsView = lazy(() => import("./components/MyComplaintsView"));
 const WorkerJobDetailView = lazy(() => import("./components/WorkerJobDetailView"));
@@ -171,24 +179,15 @@ function GawaGoToastHost({ toasts, onDismiss }) {
   );
 }
 
-const CHAT_ENABLED_APPLICATION_STATUSES = new Set(["Hire Request", "Hired", "Completed"]);
-
-function formatChatTimestamp(value = new Date()) {
-  const parsedValue = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsedValue.getTime())) {
-    return "Recently";
-  }
-  return parsedValue.toLocaleString("en-PH", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function createChatConversationId(jobId, workerKey) {
-  return `chat-${jobId}-${workerKey}`;
-}
+const EMPTY_CERTIFICATION_FORM = {
+  name: "",
+  certificateType: "",
+  issuer: "",
+  issueDate: "",
+  expiryDate: "",
+  certificateImage: null,
+  certificatePreview: "",
+};
 
 function App() {
   if (IS_DEMO_MODE) {
@@ -205,6 +204,7 @@ function App() {
     password: "",
     role: isAdminPortalPath ? "admin" : "",
   });
+  const [loginError, setLoginError] = useState("");
   const [forgotPasswordStep, setForgotPasswordStep] = useState("email");
   const [forgotPasswordForm, setForgotPasswordForm] = useState({
     email: "",
@@ -237,20 +237,55 @@ function App() {
         )
       : [],
   );
-  const [chatMessagesByConversation, setChatMessagesByConversation] = useState(() =>
-    IS_DEMO_MODE ? getStoredObject(STORAGE_KEYS.chatMessages, {}) : {},
-  );
-  const [activeChatConversationId, setActiveChatConversationId] = useState(null);
   const [backendNotifications, setBackendNotifications] = useState([]);
   const [selectedVerificationRequestId, setSelectedVerificationRequestId] = useState(null);
   const [adminSection, setAdminSection] = useState("verification");
   const [superAdminSection, setSuperAdminSection] = useState("dashboard");
   const [heatMapMetric, setHeatMapMetric] = useState("jobs");
-  const [selectedJobId, setSelectedJobId] = useState(null);
+  // Kept per tab so a reload of a job detail or matches screen shows the
+  // same job: the URL hash only carries the view, and without this the page
+  // fell back to whichever job happened to be first.
+  const [selectedJobId, setSelectedJobId] = useState(() => {
+    try {
+      return window.sessionStorage.getItem(SELECTED_JOB_STORAGE_KEY) || null;
+    } catch (error) {
+      return null;
+    }
+  });
+  // The recommended-workers screen ranks by the AI score by default; Smart
+  // Matching's rule order (AGENTS.md I.B) is one tap away. Each job starts
+  // on the AI ranking again.
+  const [householdMatchRank, setHouseholdMatchRank] = useState("ai");
+  useEffect(() => {
+    setHouseholdMatchRank("ai");
+  }, [selectedJobId]);
+  useEffect(() => {
+    try {
+      if (selectedJobId === null || selectedJobId === undefined || selectedJobId === "") {
+        window.sessionStorage.removeItem(SELECTED_JOB_STORAGE_KEY);
+      } else {
+        window.sessionStorage.setItem(SELECTED_JOB_STORAGE_KEY, String(selectedJobId));
+      }
+    } catch (error) {
+      // Storage can be unavailable (private mode); the page still works.
+    }
+  }, [selectedJobId]);
+  // A sign-out forgets the selection so the next account in this tab starts
+  // fresh. Only a signed-in -> signed-out change counts: currentUser is also
+  // null at mount, before the session is restored.
+  const previousUserRef = useRef(currentUser);
+  useEffect(() => {
+    if (previousUserRef.current && !currentUser) {
+      setSelectedJobId(null);
+    }
+    previousUserRef.current = currentUser;
+  }, [currentUser]);
   const [selectedWorkerId, setSelectedWorkerId] = useState(null);
   const [notificationReads, setNotificationReads] = useState(() => getNotificationReadState());
   const [workerForm, setWorkerForm] = useState(EMPTY_WORKER_FORM);
   const [householdForm, setHouseholdForm] = useState(EMPTY_HOUSEHOLD_FORM);
+  // Per-field errors for the worker/household registration forms.
+  const [registerErrors, setRegisterErrors] = useState({});
   const [householdProfileForm, setHouseholdProfileForm] = useState({
     firstName: "",
     lastName: "",
@@ -268,8 +303,6 @@ function App() {
     serviceType: "",
     customServiceType: "",
     scheduleType: "One-Time",
-    preferredDate: "",
-    preferredTime: "",
     description: "",
     barangay: "",
     streetAddress: "",
@@ -311,11 +344,7 @@ function App() {
   const [showCertificationModal, setShowCertificationModal] = useState(false);
   const [showWorkSampleModal, setShowWorkSampleModal] = useState(false);
   const [showSkillModal, setShowSkillModal] = useState(false);
-  const [certificationForm, setCertificationForm] = useState({
-    name: "",
-    certificateImage: null,
-    certificatePreview: "",
-  });
+  const [certificationForm, setCertificationForm] = useState({ ...EMPTY_CERTIFICATION_FORM });
   const [workSampleForm, setWorkSampleForm] = useState({
     title: "",
     beforeImage: null,
@@ -328,14 +357,12 @@ function App() {
   const [viewingWorkSampleIndex, setViewingWorkSampleIndex] = useState(null);
   const [portfolioGalleryOpen, setPortfolioGalleryOpen] = useState(false);
   const [employmentHistory, setEmploymentHistory] = useState([]);
-  const [ratingModalOpen, setRatingModalOpen] = useState(false);
-  const [ratingJobId, setRatingJobId] = useState(null);
-  const [ratingWorker, setRatingWorker] = useState(null);
-  const [ratingWorkerSkills, setRatingWorkerSkills] = useState([]);
-  const [ratingSkillsLoading, setRatingSkillsLoading] = useState(false);
-  const [ratingExtraSkills, setRatingExtraSkills] = useState([]);
-  const [skillRatings, setSkillRatings] = useState({});
+  const [portfolioRefreshKey, setPortfolioRefreshKey] = useState(0);
   const [verificationForm, setVerificationForm] = useState({
+    primaryIdType: "",
+    // Only used when primaryIdType is "other"; otherwise the backend labels
+    // the request from the chosen type.
+    primaryIdOtherName: "",
     primaryIdName: "",
     primaryIdFile: null,
     secondaryDocName: "",
@@ -638,10 +665,13 @@ function App() {
   const selectedWorker = selectedWorkerRecord
     ? {
         ...selectedWorkerRecord,
-        latitude: selectedWorkerApplication?.workerLatitude ?? selectedWorkerRecord.latitude ?? null,
-        longitude: selectedWorkerApplication?.workerLongitude ?? selectedWorkerRecord.longitude ?? null,
+        // Pin and route come only from this job's application, which the API
+        // fills in once the worker is hired for it -- never from elsewhere.
+        latitude: selectedWorkerApplication?.workerLatitude ?? null,
+        longitude: selectedWorkerApplication?.workerLongitude ?? null,
         distanceKm: selectedWorkerApplication?.routeDistanceKm ?? selectedWorkerRecord.distanceKm ?? null,
-        routePoints: selectedWorkerApplication?.routePoints || selectedWorkerRecord.routePoints || [],
+        distanceLabel: selectedWorkerApplication?.distanceLabel || selectedWorkerRecord.distanceLabel || "",
+        routePoints: selectedWorkerApplication?.routePoints || [],
       }
     : null;
   const selectedWorkerPhoto = getWorkerPhoto(selectedWorker);
@@ -656,19 +686,30 @@ function App() {
         item.notificationType === "application" ||
         item.notificationType === "completion" ||
         item.notificationType === "verification" ||
-        // Report status changes, account block/restore notices, and reviews
-        // received from a worker (reviews/views.py uses TYPE_ACCOUNT_ACTIVITY
-        // for all of these). Households read this list through an allowlist,
-        // so without this entry they never saw these updates at all.
+        // Report status changes and account block/restore notices. Households
+        // read this list through an allowlist, so without this entry they
+        // never saw these updates at all.
         item.notificationType === "account_activity" ||
+        // Feedback received from a worker (reviews/views.py TYPE_REVIEW).
+        item.notificationType === "review" ||
         // A worker accepting or rejecting a household's hire request
         // (jobs/views.py TYPE_ACCEPTED / TYPE_REJECTION go to the household).
         // Without these the household never learns the worker responded.
         item.notificationType === "accepted" ||
-        item.notificationType === "rejection",
+        item.notificationType === "rejection" ||
+        // One per completed worker, with its own read state -- the same
+        // reminders the mobile app shows.
+        item.notificationType === "review_reminder",
     ),
-    ...getHouseholdNotifications(householdJobs, registeredWorkers),
-    ...getHouseholdReviewReminderNotifications(householdJobs, registeredWorkers, currentHousehold),
+    // Offline demo only: with a backend these duplicated the real
+    // notifications, announced an "application" for workers the household
+    // had invited, and reminded about the first worker of a job only.
+    ...(IS_DEMO_MODE
+      ? [
+          ...getHouseholdNotifications(householdJobs, registeredWorkers),
+          ...getHouseholdReviewReminderNotifications(householdJobs, registeredWorkers, currentHousehold),
+        ]
+      : []),
   ]);
   const verificationNotifications = getVerificationNotifications(verificationRequests, registeredWorkers);
   const workerNotifications = dedupeNotifications([
@@ -722,150 +763,6 @@ function App() {
   const currentWorkerJobHousehold = currentWorkerJobDetail
     ? registeredHouseholds.find((item) => item.username === currentWorkerJobDetail.householdUsername)
     : null;
-  const availableChatConversations = useMemo(() => {
-    if (!currentUser?.role) {
-      return [];
-    }
-
-    const conversations = postedJobs.flatMap((job) =>
-      (job.applications || [])
-        .filter((application) => CHAT_ENABLED_APPLICATION_STATUSES.has(application.status))
-        .map((application) => {
-          const registeredWorker =
-            registeredWorkers.find(
-              (worker) =>
-                String(worker.id) === String(application.workerId) ||
-                (worker.username && worker.username === application.workerUsername),
-            ) || null;
-          const registeredHousehold =
-            registeredHouseholds.find((household) => household.username === job.householdUsername) || null;
-          const workerName = getDisplayName(
-            registeredWorker?.firstName,
-            registeredWorker?.lastName,
-            application.workerName || application.workerUsername || "Worker",
-          );
-          const householdName = getDisplayName(
-            registeredHousehold?.firstName,
-            registeredHousehold?.lastName,
-            job.householdName || job.householdUsername || "Household",
-          );
-          const workerKey = application.workerId || application.workerUsername || workerName;
-          const conversationId = createChatConversationId(job.id, workerKey);
-          const isHouseholdParticipant = currentUser.role === "household" && job.householdUsername === currentUser.username;
-          const isWorkerParticipant =
-            currentUser.role === "worker" &&
-            (String(application.workerId) === String(currentWorker?.id) ||
-              (application.workerUsername && application.workerUsername === currentWorker?.username));
-
-          if (!isHouseholdParticipant && !isWorkerParticipant) {
-            return null;
-          }
-
-          return {
-            id: conversationId,
-            jobId: job.id,
-            applicationId: application.id,
-            jobTitle: job.jobTitle || job.serviceType || "Service Request",
-            statusLabel: application.status,
-            rateLabel: formatRate(job.offeredRate, job.rateType),
-            otherPartyName: isHouseholdParticipant ? workerName : householdName,
-            otherPartyPhoto: isHouseholdParticipant ? getWorkerPhoto(registeredWorker) : getHouseholdPhoto(registeredHousehold),
-            currentUserRole: currentUser.role,
-            householdUsername: job.householdUsername,
-            householdName,
-            workerUsername: application.workerUsername || registeredWorker?.username || "",
-            workerName,
-            otherPartyRole: isHouseholdParticipant ? "worker" : "household",
-            otherPartyProfile: isHouseholdParticipant
-              ? {
-                  bio: registeredWorker?.bio || "No background provided yet.",
-                  location: formatLocation(registeredWorker?.barangay, registeredWorker?.streetAddress),
-                  verification: registeredWorker?.verification || "Not Yet Verified",
-                  skills: registeredWorker?.skills || [],
-                  rate: formatRate(registeredWorker?.dailyRate || job.offeredRate, "Per Day"),
-                  phone: registeredWorker?.phone ? `+63${registeredWorker.phone}` : "",
-                  email: registeredWorker?.email || "",
-                }
-              : {
-                  bio: "Household account connected to this hiring request.",
-                  location: formatLocation(registeredHousehold?.barangay, registeredHousehold?.streetAddress),
-                  verification: registeredHousehold?.verification || "Verified Household",
-                  skills: [],
-                  rate: formatRate(job.offeredRate, job.rateType),
-                  phone: registeredHousehold?.phone ? `+63${registeredHousehold.phone}` : "",
-                  email: registeredHousehold?.email || "",
-                },
-          };
-        })
-        .filter(Boolean),
-    );
-
-    return conversations.sort((left, right) => {
-      const leftMessages = chatMessagesByConversation[left.id] || [];
-      const rightMessages = chatMessagesByConversation[right.id] || [];
-      const leftLast = leftMessages[leftMessages.length - 1]?.createdAt || "";
-      const rightLast = rightMessages[rightMessages.length - 1]?.createdAt || "";
-      return String(rightLast).localeCompare(String(leftLast));
-    });
-  }, [chatMessagesByConversation, currentUser?.role, currentUser?.username, currentWorker?.id, currentWorker?.username, postedJobs, registeredHouseholds, registeredWorkers, formatRate]);
-  const activeChatConversation =
-    availableChatConversations.find((conversation) => String(conversation.id) === String(activeChatConversationId)) ||
-    availableChatConversations[0] ||
-    null;
-  const chatMessagesForWidget = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(chatMessagesByConversation).map(([conversationId, messages]) => [
-          conversationId,
-          (messages || []).map((message) => ({
-            ...message,
-            isCurrentUser:
-              message.senderRole !== "system" &&
-              ((currentUser?.role === "household" && message.senderUsername === currentHousehold?.username) ||
-                (currentUser?.role === "worker" && message.senderUsername === currentWorker?.username)),
-          })),
-        ]),
-      ),
-    [chatMessagesByConversation, currentHousehold?.username, currentUser?.role, currentWorker?.username],
-  );
-  useEffect(() => {
-    if (!availableChatConversations.length) {
-      setActiveChatConversationId(null);
-      return;
-    }
-    if (!activeChatConversationId || !availableChatConversations.some((conversation) => conversation.id === activeChatConversationId)) {
-      setActiveChatConversationId(availableChatConversations[0].id);
-    }
-  }, [activeChatConversationId, availableChatConversations]);
-  useEffect(() => {
-    if (!availableChatConversations.length) {
-      return;
-    }
-    setChatMessagesByConversation((prev) => {
-      let changed = false;
-      const nextState = { ...prev };
-      availableChatConversations.forEach((conversation) => {
-        if (nextState[conversation.id]?.length) {
-          return;
-        }
-        changed = true;
-        nextState[conversation.id] = [
-          {
-            id: `${conversation.id}-system`,
-            senderRole: "system",
-            senderLabel: "System",
-            text: `Chat opened for ${conversation.jobTitle}. Messaging is available because a hire request now exists between the household and worker.`,
-            imageUrl: "",
-            imageName: "",
-            isCurrentUser: false,
-            createdAt: new Date().toISOString(),
-            createdAtLabel: formatChatTimestamp(),
-          },
-        ];
-      });
-      return changed ? nextState : prev;
-    });
-  }, [availableChatConversations]);
   useEffect(() => {
     if (view !== "worker-job-detail" || currentUser?.role !== "worker" || !selectedJobId || !getAuthToken()) {
       return;
@@ -936,29 +833,58 @@ function App() {
       setEmploymentHistory([]);
       return;
     }
-    const fetchEmploymentHistory = async () => {
+    const loadEmploymentHistory = async () => {
       try {
-        const response = await apiRequest(`jobs/?worker=${currentWorker.id}&status=completed`, {
-          auth: true,
-        });
-        if (response.ok) {
-          const jobs = await response.json();
-          const historyData = jobs.map((job) => ({
-            id: job.id,
-            title: job.job_title || job.title,
-            household_name: job.household_name,
-            location: job.location,
-            completed_at: job.completed_at,
-            skill_ratings: job.skill_ratings || [],
-          }));
-          setEmploymentHistory(historyData);
+        // Paginated: this used to call .map() on the {count, next, results}
+        // envelope, throw, and swallow the error, so the section was always
+        // empty.
+        const history = await fetchWorkerEmploymentHistory(currentWorker.id);
+        if (history) {
+          setEmploymentHistory(history);
         }
       } catch (error) {
-        console.log("Error fetching employment history:", error);
+        console.error("Error fetching employment history:", error);
       }
     };
-    fetchEmploymentHistory();
+    loadEmploymentHistory();
   }, [currentWorker?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (!currentWorker || currentUser?.role !== "worker" || !getAuthToken()) {
+      return;
+    }
+    const loadPortfolio = async () => {
+      try {
+        const portfolio = await fetchMyPortfolio();
+        if (!portfolio) return;
+        setWorkerProfileForm((prev) => ({
+          ...prev,
+          portfolioSkills: portfolio.portfolioSkills,
+          certifications: portfolio.certifications,
+          workSamples: portfolio.workSamples,
+        }));
+      } catch (error) {
+        console.error("Error fetching portfolio:", error);
+      }
+    };
+    loadPortfolio();
+    // Saving the profile's skills creates or unlists portfolio entries on
+    // the backend, so a skill-list change reloads them too.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWorker?.id, currentUser?.role, portfolioRefreshKey, (currentWorker?.skills || []).join("|")]);
+  const handleSetSkillProficiency = async (skillId, proficiency) => {
+    try {
+      await updatePortfolioSkillProficiency(skillId, proficiency);
+      setWorkerProfileForm((prev) => ({
+        ...prev,
+        portfolioSkills: (prev.portfolioSkills || []).map((skill) =>
+          skill.id === skillId ? { ...skill, proficiency } : skill,
+        ),
+      }));
+    } catch (error) {
+      addToast(error.message || "Unable to update this skill.", "danger");
+    }
+  };
   const adminVisibleWorkers = registeredWorkers.filter((worker) => Boolean(worker.verificationSubmission));
   const pendingVerificationRequests = verificationRequests.filter(
     (item) => item.status === "Pending" || item.status === "Under Review",
@@ -996,6 +922,90 @@ function App() {
     setVerificationRequests,
     setView,
   });
+  // Reloading the page used to show the logged-out home screen while the
+  // stored token stayed in localStorage and kept going out with the
+  // background polling -- so the session was still live even though the UI
+  // said otherwise. Rebuild it from the token, or clear the token.
+  const sessionRestoredRef = useRef(false);
+  // True only while a stored token is being exchanged for an account. The
+  // role guard and the URL router both wait on it: until the session is
+  // known, "not signed in" and "not signed in yet" look identical, and
+  // acting on the first would bounce a deep link to login.
+  const [sessionRestoring, setSessionRestoring] = useState(
+    () => !IS_DEMO_MODE && Boolean(getAuthToken()),
+  );
+  // Runs once on mount only: this deliberately takes no dependencies, so a
+  // re-render cannot cancel the request half-way and leave the session
+  // unrestored. currentUser is always null at mount.
+  useEffect(() => {
+    if (sessionRestoredRef.current || IS_DEMO_MODE) {
+      return;
+    }
+    sessionRestoredRef.current = true;
+    if (!getAuthToken()) {
+      setSessionRestoring(false);
+      return;
+    }
+    (async () => {
+      try {
+      const account = await fetchMyAccount();
+      if (!account) {
+        clearAuthToken();
+        return;
+      }
+      // /accounts/me/ answers { role, user: {...}, profile: {...} }. Reading
+      // it as one flat object left username, name, skills, rating and
+      // verification empty after every reload, so a refreshed worker looked
+      // unverified with no matching jobs and a household saw no jobs at all.
+      const accountUser = account.user || {};
+      const accountProfile = account.profile || null;
+      const role = getUserRole({ role: account.role });
+      if (!role) {
+        clearAuthToken();
+        return;
+      }
+      const username = accountUser.username || accountProfile?.username || "";
+      const displayName = getDisplayName(accountUser.first_name, accountUser.last_name, username);
+      setCurrentUser({
+        id: accountUser.id || accountProfile?.user_id || username,
+        role,
+        username,
+        email: accountUser.email || "",
+        first_name: accountUser.first_name || "",
+        last_name: accountUser.last_name || "",
+        displayName,
+        profile: accountProfile,
+        is_staff: isAdminRole(role),
+        isSuperAdmin: role === ROLES.SUPERADMIN,
+      });
+      if (!isAdminRole(role)) {
+        const backendWorker = normalizeBackendWorkerPayload({
+          user: {
+            id: accountUser.id,
+            username,
+            email: accountUser.email || "",
+            first_name: accountUser.first_name || "",
+            last_name: accountUser.last_name || "",
+            display_name: displayName,
+            is_staff: false,
+          },
+          profile: accountProfile,
+        });
+        if (backendWorker) {
+          mergeBackendWorkerIntoState(backendWorker);
+        }
+      }
+      setView((current) => (current === "home" || current === "login" ? dashboardViewForRole(role) : current));
+      } catch (error) {
+        // A failed restore must not leave a token the UI believes is gone.
+        clearAuthToken();
+        console.error("Unable to restore the previous session:", error);
+      } finally {
+        setSessionRestoring(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const dashboardMetrics = useDashboardMetrics({
     currentUser,
     postedJobs,
@@ -1019,9 +1029,9 @@ function App() {
     setBackendNotifications,
     setCurrentUser,
     view,
+    householdMatchRank,
   });
   useGawaGoPersistence({
-    chatMessages: chatMessagesByConversation,
     isDemoMode: IS_DEMO_MODE,
     notificationReads,
     postedJobs,
@@ -1029,6 +1039,26 @@ function App() {
     registeredWorkers,
     verificationRequests,
   });
+  // Keeps the URL in step with `view` so Back stays inside the app and every
+  // screen is linkable. Waits on the session for the same reason the guard
+  // below does.
+  useViewRouting({
+    view,
+    setView,
+    sessionRestoring,
+    fallbackView: isAdminPortalPath ? "login" : "home",
+  });
+  // Role guard: a view that isn't the current user's (e.g. an admin on a
+  // worker screen) is replaced by that user's own dashboard, or login when
+  // signed out / the role is unknown. Nothing role-specific renders meanwhile.
+  // Suppressed while the session is being restored, when currentUser is still
+  // null for everyone.
+  const guardedView = sessionRestoring ? null : resolveGuardedView(currentUser, view);
+  useEffect(() => {
+    if (guardedView) {
+      setView(guardedView);
+    }
+  }, [guardedView]);
   const {
     goBack,
     goHome,
@@ -1085,6 +1115,7 @@ function App() {
     setHouseholdProfileForm,
     setLoginForm,
     setNotificationReads,
+    setRegisterErrors,
     setSelectedJobId,
     setSelectedVerificationRequestId,
     setSelectedWorkerId,
@@ -1134,6 +1165,7 @@ function App() {
     handleAdminApproveVerification,
     handleAdminRejectVerification,
     isSubmittingJob,
+    isActionPending,
   } = useGawaGoActions({
     EMPTY_HOUSEHOLD_FORM,
     EMPTY_HOUSEHOLD_REVIEW_FORM,
@@ -1191,8 +1223,10 @@ function App() {
     setHouseholdJobImages,
     setHouseholdJobLocationPreview,
     setHouseholdReviewForm,
+    setLoginError,
     setLoginForm,
     setPostedJobs,
+    setRegisterErrors,
     setRegisteredHouseholds,
     setRegisteredWorkers,
     setSelectedJobId,
@@ -1223,7 +1257,9 @@ function App() {
     setHouseholdJobForm,
     setHouseholdJobLocationPreview,
     setHouseholdProfileForm,
+    setLoginError,
     setLoginForm,
+    setRegisterErrors,
     setVerificationForm,
     setWorkerForm,
     setWorkerProfileForm,
@@ -1248,14 +1284,17 @@ function App() {
     verificationRequests,
     view,
   });
-  const addToast = (message, variant = "info") => {
+  // An explicit variant wins; the message is only guessed from when none is
+  // given (e.g. alert() replacements), so a "Unable to ..." success never
+  // shows red and a deliberate warning is never overridden.
+  const addToast = (message, variant) => {
     const toastId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setAppToasts((prev) => [
       ...prev.slice(-3),
       {
         id: toastId,
         message,
-        variant: getToastVariant(message) || variant,
+        variant: variant || getToastVariant(message) || "info",
       },
     ]);
     window.setTimeout(() => {
@@ -1263,144 +1302,87 @@ function App() {
     }, 5200);
   };
 
-  const addRatingExtraSkill = (name) => {
-    const trimmed = (name || "").trim();
-    if (!trimmed) return;
-    const alreadyListed = [
-      ...ratingWorkerSkills.map((skill) => skill.skill_name),
-      ...ratingExtraSkills.map((skill) => skill.name),
-    ].some((existing) => existing.toLowerCase() === trimmed.toLowerCase());
-    if (alreadyListed) {
-      addToast(`${trimmed} is already in this list.`, "warning");
-      return;
-    }
-    setRatingExtraSkills((prev) => [...prev, { tempId: `extra-${Date.now()}-${Math.random()}`, name: trimmed }]);
+  // Certificate and work-sample uploads can take a while (multipart, 90s
+  // timeout); a second click meanwhile used to create a duplicate entry,
+  // and a duplicate certificate needs its own admin review.
+  const portfolioSaveInFlightRef = useRef(false);
+  const [portfolioSaving, setPortfolioSaving] = useState(false);
+  const beginPortfolioSave = () => {
+    if (portfolioSaveInFlightRef.current) return false;
+    portfolioSaveInFlightRef.current = true;
+    setPortfolioSaving(true);
+    return true;
   };
-
-  const removeRatingExtraSkill = (tempId) => {
-    setRatingExtraSkills((prev) => prev.filter((skill) => skill.tempId !== tempId));
-    setSkillRatings((prev) => {
-      const next = { ...prev };
-      delete next[tempId];
-      return next;
-    });
+  const endPortfolioSave = () => {
+    portfolioSaveInFlightRef.current = false;
+    setPortfolioSaving(false);
   };
-
-  const openRatingModal = (job, worker) => {
-    setRatingJobId(job.id);
-    setRatingWorker(worker);
-    setSkillRatings({});
-    setRatingWorkerSkills([]);
-    setRatingExtraSkills([]);
-    setRatingModalOpen(true);
-    (async () => {
-      setRatingSkillsLoading(true);
-      try {
-        const response = await apiRequest(`accounts/profiles/${worker.id}/portfolio/`, { auth: true });
-        const data = await readResponseData(response);
-        if (response.ok) {
-          const portfolioSkills = data?.skills || [];
-          setRatingWorkerSkills(portfolioSkills);
-          // The job's own service type is always rateable, even if the worker
-          // never added it to their portfolio -- otherwise you can't rate the
-          // very work you hired them for.
-          const jobSkill = (job.serviceType || job.requiredSkill || "").trim();
-          const alreadyListed = portfolioSkills.some(
-            (skill) => (skill.skill_name || "").toLowerCase() === jobSkill.toLowerCase(),
-          );
-          if (jobSkill && !alreadyListed) {
-            setRatingExtraSkills([{ tempId: `extra-job-skill-${job.id}`, name: jobSkill }]);
-          }
-        }
-      } catch (error) {
-        // Leave the skill list empty; the modal shows "No skills to rate".
-      } finally {
-        setRatingSkillsLoading(false);
-      }
-    })();
-  };
-
-  const handleSubmitRatings = async () => {
-    if (!ratingJobId || !ratingWorker) return;
-
-    const ratedSkillIds = Object.keys(skillRatings).filter((skillId) => skillRatings[skillId]);
-    if (ratedSkillIds.length === 0) {
-      addToast("Please rate at least one skill", "warning");
-      return;
-    }
-
-    try {
-      if (!getAuthToken()) return;
-
-      const extraSkillByTempId = new Map(ratingExtraSkills.map((skill) => [skill.tempId, skill.name]));
-
-      for (const skillId of ratedSkillIds) {
-        const extraName = extraSkillByTempId.get(skillId);
-        const body = extraName
-          ? { skill_name: extraName, worker_id: ratingWorker.id, rating: skillRatings[skillId] }
-          : { skill: skillId, rating: skillRatings[skillId] };
-        const response = await apiRequest(`accounts/jobs/${ratingJobId}/skill-ratings/`, {
-          method: "POST",
-          auth: true,
-          body,
-        });
-        const data = await readResponseData(response);
-
-        if (!response.ok) {
-          throw new Error(getApiErrorMessage(data, "Failed to submit rating"));
-        }
-      }
-
-      addToast("Ratings submitted successfully", "success");
-      setRatingModalOpen(false);
-      setRatingJobId(null);
-      setRatingWorker(null);
-      setRatingWorkerSkills([]);
-      setRatingExtraSkills([]);
-      setSkillRatings({});
-    } catch (error) {
-      addToast(`Error submitting ratings: ${error.message}`, "danger");
-    }
-  };
-
   const handleAddCertification = async () => {
+    if (!certificationForm.certificateType) {
+      addToast("Please choose the certificate type", "warning");
+      return;
+    }
     if (!certificationForm.name.trim()) {
       addToast("Please enter certification name", "warning");
+      return;
+    }
+    if (
+      certificationForm.issueDate &&
+      certificationForm.expiryDate &&
+      certificationForm.expiryDate < certificationForm.issueDate
+    ) {
+      addToast("The expiry date can't be before the issue date", "warning");
       return;
     }
     if (!certificationForm.certificateImage && !certificationForm.certificatePreview) {
       addToast("Please upload a certificate image", "warning");
       return;
     }
+    if (!getAuthToken() || !beginPortfolioSave()) return;
     try {
-      if (!getAuthToken()) return;
 
       const formData = new FormData();
       formData.append("certificate_name", certificationForm.name);
+      formData.append("certificate_type", certificationForm.certificateType);
+      formData.append("issuer", certificationForm.issuer || "");
+      // Blank dates are left off rather than sent empty, which a date field rejects.
+      if (certificationForm.issueDate) formData.append("issue_date", certificationForm.issueDate);
+      if (certificationForm.expiryDate) formData.append("expiry_date", certificationForm.expiryDate);
       if (certificationForm.certificateImage) {
         formData.append("certificate_file", certificationForm.certificateImage);
       }
 
-      const response = await apiRequest("accounts/me/portfolio/certifications/", {
-        method: "POST",
-        auth: true,
-        body: formData,
-      });
+      // Editing an existing credential has to PATCH it; posting again just
+      // created a second copy.
+      const editingId =
+        editingCertificationIndex !== null
+          ? workerProfileForm.certifications?.[editingCertificationIndex]?.id
+          : null;
+      const response = await apiRequest(
+        editingId
+          ? `accounts/me/portfolio/certifications/${editingId}/`
+          : "accounts/me/portfolio/certifications/",
+        {
+          method: editingId ? "PATCH" : "POST",
+          auth: true,
+          body: formData,
+        },
+      );
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.detail || "Failed to save certification");
       }
 
-      const updatedCertifications = [...(workerProfileForm.certifications || [])];
-      updatedCertifications.push({ name: certificationForm.name, certificatePreview: certificationForm.certificatePreview });
-      setWorkerProfileForm((prev) => ({ ...prev, certifications: updatedCertifications }));
-      setCertificationForm({ name: "", certificateImage: null, certificatePreview: "" });
+      setCertificationForm({ ...EMPTY_CERTIFICATION_FORM });
       setEditingCertificationIndex(null);
       setShowCertificationModal(false);
+      setPortfolioRefreshKey((key) => key + 1);
       addToast("Certification saved", "success");
     } catch (error) {
       addToast(`Error: ${error.message}`, "danger");
+    } finally {
+      endPortfolioSave();
     }
   };
   const handleAddWorkSample = async () => {
@@ -1412,8 +1394,8 @@ function App() {
       addToast("Please upload both before and after images", "warning");
       return;
     }
+    if (!getAuthToken() || !beginPortfolioSave()) return;
     try {
-      if (!getAuthToken()) return;
 
       const formData = new FormData();
       formData.append("title", workSampleForm.title);
@@ -1426,41 +1408,69 @@ function App() {
         formData.append("after_image", workSampleForm.afterImage);
       }
 
-      const response = await apiRequest("accounts/me/portfolio/items/", {
-        method: "POST",
-        auth: true,
-        body: formData,
-      });
+      const editingId =
+        editingWorkSampleIndex !== null
+          ? workerProfileForm.workSamples?.[editingWorkSampleIndex]?.id
+          : null;
+      const response = await apiRequest(
+        editingId ? `accounts/me/portfolio/items/${editingId}/` : "accounts/me/portfolio/items/",
+        {
+          method: editingId ? "PATCH" : "POST",
+          auth: true,
+          body: formData,
+        },
+      );
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.detail || "Failed to save work sample");
       }
 
-      const updatedSamples = [...(workerProfileForm.workSamples || [])];
-      updatedSamples.push({
-        title: workSampleForm.title,
-        beforePreview: workSampleForm.beforePreview,
-        afterPreview: workSampleForm.afterPreview
-      });
-      setWorkerProfileForm((prev) => ({ ...prev, workSamples: updatedSamples }));
       setWorkSampleForm({ title: "", beforeImage: null, beforePreview: "", afterImage: null, afterPreview: "" });
       setEditingWorkSampleIndex(null);
       setShowWorkSampleModal(false);
+      setPortfolioRefreshKey((key) => key + 1);
       addToast("Work sample saved", "success");
+    } catch (error) {
+      addToast(`Error: ${error.message}`, "danger");
+    } finally {
+      endPortfolioSave();
+    }
+  };
+  // These used to drop the row from local state only -- and call an
+  // undefined showToast(), so the click threw before even doing that. The
+  // credential has to be removed on the server or it comes back on reload.
+  const handleDeleteCertification = async (index) => {
+    const certification = workerProfileForm.certifications?.[index];
+    if (!certification) return;
+    try {
+      if (certification.id) {
+        await deletePortfolioCertification(certification.id);
+      }
+      setWorkerProfileForm((prev) => ({
+        ...prev,
+        certifications: (prev.certifications || []).filter((_, i) => i !== index),
+      }));
+      addToast("Certification deleted", "success");
     } catch (error) {
       addToast(`Error: ${error.message}`, "danger");
     }
   };
-  const handleDeleteCertification = (index) => {
-    const updatedCertifications = workerProfileForm.certifications.filter((_, i) => i !== index);
-    setWorkerProfileForm((prev) => ({ ...prev, certifications: updatedCertifications }));
-    showToast("Certification deleted", "success");
-  };
-  const handleDeleteWorkSample = (index) => {
-    const updatedSamples = workerProfileForm.workSamples.filter((_, i) => i !== index);
-    setWorkerProfileForm((prev) => ({ ...prev, workSamples: updatedSamples }));
-    showToast("Work sample deleted", "success");
+  const handleDeleteWorkSample = async (index) => {
+    const sample = workerProfileForm.workSamples?.[index];
+    if (!sample) return;
+    try {
+      if (sample.id) {
+        await deletePortfolioItem(sample.id);
+      }
+      setWorkerProfileForm((prev) => ({
+        ...prev,
+        workSamples: (prev.workSamples || []).filter((_, i) => i !== index),
+      }));
+      addToast("Work sample deleted", "success");
+    } catch (error) {
+      addToast(`Error: ${error.message}`, "danger");
+    }
   };
   const handleEditCertification = (index) => {
     setEditingCertificationIndex(index);
@@ -1474,7 +1484,7 @@ function App() {
   };
   const handleOpenCertificationModal = () => {
     setEditingCertificationIndex(null);
-    setCertificationForm({ name: "", certificateImage: null, certificatePreview: "" });
+    setCertificationForm({ ...EMPTY_CERTIFICATION_FORM });
     setShowCertificationModal(true);
   };
   const handleOpenWorkSampleModal = () => {
@@ -1482,46 +1492,16 @@ function App() {
     setWorkSampleForm({ title: "", beforeImage: null, beforePreview: "", afterImage: null, afterPreview: "" });
     setShowWorkSampleModal(true);
   };
-  const handleSendChatMessage = (conversationId, payload) => {
-    const text = String(payload?.text || "").trim();
-    const imageUrl = String(payload?.imageUrl || "");
-    const imageName = String(payload?.imageName || "");
-    if (!conversationId || (!text && !imageUrl) || !currentUser?.role) {
-      return;
-    }
-    const senderDisplayName =
-      currentUser.role === "household"
-        ? getDisplayName(currentHousehold?.firstName, currentHousehold?.lastName, currentHousehold?.username)
-        : getDisplayName(currentWorker?.firstName, currentWorker?.lastName, currentWorker?.username);
-    const message = {
-      id: `${conversationId}-${Date.now()}`,
-      senderRole: currentUser.role,
-      senderUsername: currentUser.username,
-      senderLabel: senderDisplayName,
-      text,
-      imageUrl,
-      imageName,
-      createdAt: new Date().toISOString(),
-      createdAtLabel: formatChatTimestamp(),
-    };
-    setChatMessagesByConversation((prev) => ({
-      ...prev,
-      [conversationId]: [...(prev[conversationId] || []), message],
-    }));
-  };
   const renderWithToasts = (content) => (
     <>
       <GawaGoToastHost toasts={appToasts} onDismiss={dismissToast} />
       {content}
-      <FloatingChatWidget
-        conversations={availableChatConversations}
-        currentConversationId={activeChatConversation?.id || null}
-        messagesByConversation={chatMessagesForWidget}
-        onSelectConversation={setActiveChatConversationId}
-        onSendMessage={handleSendChatMessage}
-      />
+      <ChatWidget currentUser={currentUser} />
     </>
   );
+  if (guardedView) {
+    return renderWithToasts(<ViewLoading />);
+  }
   if (view === "worker-job-detail") {
     return renderWithToasts(
       <Suspense fallback={<ViewLoading />}>
@@ -1538,6 +1518,8 @@ function App() {
           openWorkerDashboard={openWorkerDashboard}
           openWorkerFindJobs={openWorkerFindJobs}
           openWorkerGetVerified={openWorkerGetVerified}
+          openWorkerMyJobs={openWorkerMyJobs}
+          openMyComplaints={openMyComplaints}
           openWorkerNotifications={openWorkerNotifications}
           openWorkerProfile={openWorkerProfile}
           workerApplicationUnreadCount={workerApplicationUnreadCount}
@@ -1611,6 +1593,7 @@ function App() {
           openWorkerFindJobs={openWorkerFindJobs}
           openWorkerProfile={openWorkerProfile}
           openWorkerApplications={openWorkerApplications}
+          openWorkerMyJobs={openWorkerMyJobs}
           openWorkerGetVerified={openWorkerGetVerified}
           openWorkerNotifications={openWorkerNotifications}
           workerApplicationUnreadCount={workerApplicationUnreadCount}
@@ -1651,6 +1634,11 @@ function App() {
       handleHouseholdJobChange={handleHouseholdJobChange}
       handleHouseholdJobSubmit={handleHouseholdJobSubmit}
       isSubmittingJob={isSubmittingJob}
+      isActionPending={isActionPending}
+      portfolioSaving={portfolioSaving}
+      handleSetSkillProficiency={handleSetSkillProficiency}
+      householdMatchRank={householdMatchRank}
+      setHouseholdMatchRank={setHouseholdMatchRank}
       recommendedWorkersLoading={recommendedWorkersLoading}
       handleHouseholdProfileChange={handleHouseholdProfileChange}
       handleHouseholdProfileSave={handleHouseholdProfileSave}
@@ -1668,6 +1656,7 @@ function App() {
       handleWorkerFeedbackForReviewSubmit={handleWorkerFeedbackForReviewSubmit}
       handleWorkerRegisterSubmit={handleWorkerRegisterSubmit}
       householdForm={householdForm}
+      registerErrors={registerErrors}
       householdJobCoordinates={householdJobCoordinates}
       householdJobForm={householdJobForm}
       householdJobImages={{ files: householdJobImages, onChange: setHouseholdJobImages }}
@@ -1680,6 +1669,7 @@ function App() {
       householdProfileForm={householdProfileForm}
       householdReviewForm={householdReviewForm}
       householdUnreadCount={householdUnreadCount}
+      loginError={loginError}
       loginForm={loginForm}
       markAllNotificationsRead={markAllNotificationsRead}
       markNotificationRead={markNotificationRead}
@@ -1758,19 +1748,6 @@ function App() {
       portfolioGalleryOpen={portfolioGalleryOpen}
       setPortfolioGalleryOpen={setPortfolioGalleryOpen}
       employmentHistory={employmentHistory}
-      ratingModalOpen={ratingModalOpen}
-      setRatingModalOpen={setRatingModalOpen}
-      ratingJobId={ratingJobId}
-      ratingWorker={ratingWorker}
-      ratingWorkerSkills={ratingWorkerSkills}
-      ratingSkillsLoading={ratingSkillsLoading}
-      ratingExtraSkills={ratingExtraSkills}
-      addRatingExtraSkill={addRatingExtraSkill}
-      removeRatingExtraSkill={removeRatingExtraSkill}
-      skillRatings={skillRatings}
-      setSkillRatings={setSkillRatings}
-      openRatingModal={openRatingModal}
-      handleSubmitRatings={handleSubmitRatings}
       verificationForm={verificationForm}
       verificationRequests={verificationRequests}
       view={view}

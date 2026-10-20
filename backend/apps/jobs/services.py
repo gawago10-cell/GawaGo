@@ -28,6 +28,10 @@ class HiringWorkerVerificationError(HiringError):
     pass
 
 
+class HiringWorkerSuspendedError(HiringError):
+    pass
+
+
 def get_user_display_name(user) -> str:
     return user.get_full_name().strip() or user.username
 
@@ -90,6 +94,10 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
             or worker_profile.verification_status != "verified"
         ):
             raise HiringWorkerVerificationError
+        # A worker suspended after applying is out of the market: the invite
+        # path already refuses them, and an instant accept must too.
+        if worker_profile.refresh_block_status():
+            raise HiringWorkerSuspendedError
 
         hired_count = job.applications.filter(status=JobApplication.STATUS_HIRED).exclude(
             pk=application.pk
@@ -102,33 +110,61 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
 
         application.status = JobApplication.STATUS_HIRED
         application.save(update_fields=["status", "updated_at"])
-        job.status = JobPosting.STATUS_ASSIGNED
-        job.save(update_fields=["status"])
+        # Never move a job *backwards*: hiring another worker onto a job that
+        # was already awaiting completion confirmation used to reset it to
+        # "assigned" and silently discard the worker's completion request.
+        # A job with openings left still accepts applications while assigned
+        # (see JobApplicationView), so this does not close it early.
+        if job.status == JobPosting.STATUS_OPEN:
+            job.status = JobPosting.STATUS_ASSIGNED
+            job.save(update_fields=["status"])
 
         record_application_status_event(
             application, previous_application_status, application.status, actor=actor
         )
-        record_job_status_event(job, previous_job_status, job.status, actor=actor)
+        if job.status != previous_job_status:
+            record_job_status_event(job, previous_job_status, job.status, actor=actor)
 
+        crowded_out = []
         if hired_count + 1 >= job.worker_slots:
-            crowded_out = list(
-                job.applications.filter(
-                    status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
-                ).exclude(pk=application.pk)
+            crowded_out = close_open_applications(
+                job, actor=actor, note="Closed automatically: job reached its worker limit."
             )
-            for other in crowded_out:
-                previous_status = other.status
-                other.status = JobApplication.STATUS_CLOSED
-                other.save(update_fields=["status", "updated_at"])
-                record_application_status_event(
-                    other,
-                    previous_status,
-                    other.status,
-                    actor=actor,
-                    note="Closed automatically: job reached its worker limit.",
-                )
 
+    notify_closed_applicants(job, crowded_out, "was filled by another worker")
     return application
+
+
+def close_open_applications(job, actor=None, note=""):
+    """Close every application still waiting on a decision (pending or
+    invited) and return them, so nobody is left pending on a job that no
+    longer needs them."""
+    closed = list(
+        job.applications.select_related("worker").filter(
+            status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
+        )
+    )
+    for other in closed:
+        previous_status = other.status
+        other.status = JobApplication.STATUS_CLOSED
+        other.save(update_fields=["status", "updated_at"])
+        record_application_status_event(other, previous_status, other.status, actor=actor, note=note)
+    return closed
+
+
+def notify_closed_applicants(job, applications, reason):
+    for other in applications:
+        create_notification(
+            recipient=other.worker,
+            notification_type=Notification.TYPE_REJECTION,
+            title="Position filled",
+            message=f"{job.title} {reason}. Your application has been closed.",
+            actor=job.household,
+            related_job_id=job.id,
+            related_application_id=other.id,
+            action_type=Notification.ACTION_JOB_DETAIL,
+            action_url=f"/worker/jobs/{job.id}",
+        )
 
 
 def create_household_review_reminder(job: JobPosting, application: JobApplication) -> None:
@@ -173,6 +209,8 @@ def complete_job(job: JobPosting, actor=None, previous_status=None) -> JobPostin
         job.completed_at = timezone.now()
     job.save(update_fields=["status", "completed_at"])
     record_job_status_event(job, previous_job_status, job.status, actor=actor)
+    leftover = close_open_applications(job, actor=actor, note="Closed automatically: job was completed.")
+    notify_closed_applicants(job, leftover, "has been completed by another worker")
 
     hired_applications = list(
         job.applications.select_related("worker").filter(status=JobApplication.STATUS_HIRED)

@@ -20,6 +20,8 @@ from django.db.models import Avg, Count, F, Q, Sum
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
+from apps.analytics.services import pending_account_verifications
+from apps.common.barangays import barangay_from_location_label
 from apps.jobs.models import JobApplication, JobPosting
 from apps.reviews.models import Review
 
@@ -310,14 +312,21 @@ def build_platform_report(period):
     # of", letting the rate exceed 100%.
     job_list_ids = {job.id for job in job_list}
     matched_job_ids = {app.job_id for app in hired if app.job_id in job_list_ids}
+    finished_job_ids = set(
+        JobPosting.objects.filter(
+            id__in={app.job_id for app in application_list},
+            status__in=[JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED],
+        ).values_list("id", flat=True)
+    )
 
-    profiles = UserProfile.objects.all()
+    # Admin accounts can carry a UserProfile; only households and workers
+    # are platform members (the same basis as the analytics dashboard).
+    profiles = UserProfile.objects.filter(user__is_staff=False)
     workers = profiles.filter(role=UserProfile.ROLE_WORKER)
     households = profiles.filter(role=UserProfile.ROLE_HOUSEHOLD)
 
     verification_counts = profiles.aggregate(
         verified=Count("id", filter=Q(verification_status="verified")),
-        pending=Count("id", filter=Q(verification_status="pending")),
         rejected=Count("id", filter=Q(verification_status="rejected")),
     )
 
@@ -341,7 +350,7 @@ def build_platform_report(period):
     for job in job_list:
         service = job.required_skill or job.job_type or "Unspecified"
         by_service[service] = by_service.get(service, 0) + 1
-        barangay = (job.location_label or "Unspecified").split(",")[0].strip() or "Unspecified"
+        barangay = barangay_from_location_label(job.location_label) or "Unspecified"
         by_barangay[barangay] = by_barangay.get(barangay, 0) + 1
 
     monthly = _monthly_counts(period, job_list)
@@ -351,19 +360,26 @@ def build_platform_report(period):
         tier_counts[tier] = workers.filter(reputation_tier=tier).count()
 
     summary = {
-        "totalAccounts": User.objects.count(),
+        "totalAccounts": profiles.count(),
         "totalWorkers": workers.count(),
         "totalHouseholds": households.count(),
         "jobsPosted": len(job_list),
         "completedJobs": len(completed),
         "cancelledJobs": len(cancelled),
-        "activeApplications": sum(1 for app in application_list if app.status == JobApplication.STATUS_PENDING),
+        "activeApplications": sum(
+            1
+            for app in application_list
+            if app.status == JobApplication.STATUS_PENDING and app.job_id not in finished_job_ids
+        ),
         "hiringSuccessRate": _percent(len(hired), len(application_list)),
         "jobMatchRate": _percent(len(matched_job_ids), len(job_list)),
         "verifiedUsers": verification_counts["verified"],
-        "pendingVerifications": verification_counts["pending"],
+        "pendingVerifications": pending_account_verifications(),
         "rejectedVerifications": verification_counts["rejected"],
         "averageWorkerRating": round(_float(average_rating), 2) if average_rating is not None else None,
+        # Agreed rates for work that reached Completed (AGENTS.md IV.B), not
+        # a payment ledger: GawaGo does not process payments.
+        "completedJobValue": round(sum(_float(job.service_rate) for job in completed), 2),
     }
 
     sections = [

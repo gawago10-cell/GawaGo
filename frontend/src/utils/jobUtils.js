@@ -52,6 +52,19 @@ export function findJobApplicationForWorker(job, worker) {
   }) || null;
 }
 
+/**
+ * The status wording to show a user.
+ *
+ * The backend owns status labels, so render the label it sent rather than a
+ * second mapping maintained here -- that is how the same assigned job came to
+ * read "Already found a worker" on web, "Assigned" on the phone and
+ * "In progress" in the API. The internal `status` string stays as the key the
+ * client branches on, and is only a display fallback.
+ */
+export function getJobStatusText(job) {
+  return job?.statusLabel || job?.status || "Open";
+}
+
 export function getJobStatusBadgeClass(status) {
   if (status === "Cancelled") {
     return "gg-status-badge gg-status-cancelled";
@@ -175,8 +188,7 @@ export function createJobRecord(jobForm, currentHousehold, jobId) {
     jobTitle: jobForm.jobTitle.trim() || jobForm.serviceType,
     serviceType: jobForm.serviceType,
     scheduleType: jobForm.scheduleType,
-    preferredDate: jobForm.preferredDate,
-    preferredTime: jobForm.preferredTime,
+    jobStartDate: jobForm.jobStartDate,
     description: jobForm.description.trim(),
     barangay: jobForm.barangay.trim(),
     streetAddress: jobForm.streetAddress.trim(),
@@ -206,11 +218,11 @@ export function createDemoJobPostings() {
     return { barangay, streetAddress: `Demo Street ${index}`, latitude, longitude };
   };
   return [
-    { id: "demo-job-1", householdUsername: "Household 1", householdName: "Household One", jobTitle: "House Cleaning Help", serviceType: "House Cleaning", scheduleType: "One-Time", preferredDate: "2026-05-18", preferredTime: "09:00", description: "General house cleaning for a small family home.", ...location(1), offeredRate: "700.00", rateType: "Per Day", workersNeeded: "1", status: "Open", matchedWorkerIds: ["demo-worker-1", "demo-worker-5"], applications: [{ id: "demo-app-1", workerId: "demo-worker-1", workerUsername: "Worker1", workerName: "Worker One", status: "Pending", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(0, 3) },
-    { id: "demo-job-2", householdUsername: "Household 2", householdName: "Household Two", jobTitle: "Kitchen Plumbing Repair", serviceType: "Plumbing", scheduleType: "One-Time", preferredDate: "2026-05-20", preferredTime: "13:00", description: "Fix leaking kitchen sink.", ...location(2), offeredRate: "950.00", rateType: "Fixed Rate", workersNeeded: "1", status: "Completed", matchedWorkerIds: ["demo-worker-2"], applications: [{ id: "demo-app-2", workerId: "demo-worker-2", workerUsername: "Worker2", workerName: "Worker Two", status: "Completed", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(1, 5) },
-    { id: "demo-job-3", householdUsername: "Household 3", householdName: "Household Three", jobTitle: "Electrical Outlet Check", serviceType: "Electrical Work", scheduleType: "One-Time", preferredDate: "2026-04-12", preferredTime: "10:00", description: "Inspect and repair two electrical outlets.", ...location(3), offeredRate: "1200.00", rateType: "Fixed Rate", workersNeeded: "1", status: "Completed", matchedWorkerIds: ["demo-worker-3"], applications: [{ id: "demo-app-3", workerId: "demo-worker-3", workerUsername: "Worker3", workerName: "Worker Three", status: "Completed", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(2, 9) },
-    { id: "demo-job-4", householdUsername: "Household 4", householdName: "Household Four", jobTitle: "Laundry Assistance", serviceType: "Laundry", scheduleType: "Part-Time", preferredDate: "2026-03-22", preferredTime: "08:00", description: "Weekly laundry help.", ...location(4), offeredRate: "500.00", rateType: "Per Day", workersNeeded: "1", status: "Cancelled", matchedWorkerIds: ["demo-worker-5"], applications: [], createdAt: getDemoCreatedAt(3, 12) },
-    { id: "demo-job-5", householdUsername: "Household 5", householdName: "Household Five", jobTitle: "Childcare Support", serviceType: "Childcare", scheduleType: "Part-Time", preferredDate: "2026-02-15", preferredTime: "14:00", description: "Afternoon childcare support.", ...location(5), offeredRate: "750.00", rateType: "Per Day", workersNeeded: "1", status: "Open", matchedWorkerIds: ["demo-worker-4"], applications: [{ id: "demo-app-5", workerId: "demo-worker-4", workerUsername: "Worker4", workerName: "Worker Four", status: "Pending", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(4, 15) },
-    { id: "demo-job-6", householdUsername: "Household 1", householdName: "Household One", jobTitle: "Cooking Support", serviceType: "Cooking", scheduleType: "One-Time", preferredDate: "2026-01-28", preferredTime: "16:00", description: "Meal preparation for family gathering.", ...location(1), offeredRate: "650.00", rateType: "Per Day", workersNeeded: "1", status: "Completed", matchedWorkerIds: ["demo-worker-5"], applications: [{ id: "demo-app-6", workerId: "demo-worker-5", workerUsername: "Worker5", workerName: "Worker Five", status: "Completed", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(5, 18) },
+    { id: "demo-job-1", householdUsername: "Household 1", householdName: "Household One", jobTitle: "House Cleaning Help", serviceType: "House Cleaning", scheduleType: "One-Time", jobStartDate: "2026-05-18", description: "General house cleaning for a small family home.", ...location(1), offeredRate: "700.00", rateType: "Per Day", workersNeeded: "1", status: "Open", matchedWorkerIds: ["demo-worker-1", "demo-worker-5"], applications: [{ id: "demo-app-1", workerId: "demo-worker-1", workerUsername: "Worker1", workerName: "Worker One", status: "Pending", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(0, 3) },
+    { id: "demo-job-2", householdUsername: "Household 2", householdName: "Household Two", jobTitle: "Kitchen Plumbing Repair", serviceType: "Plumbing", scheduleType: "One-Time", jobStartDate: "2026-05-20", description: "Fix leaking kitchen sink.", ...location(2), offeredRate: "950.00", rateType: "Fixed Rate", workersNeeded: "1", status: "Completed", matchedWorkerIds: ["demo-worker-2"], applications: [{ id: "demo-app-2", workerId: "demo-worker-2", workerUsername: "Worker2", workerName: "Worker Two", status: "Completed", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(1, 5) },
+    { id: "demo-job-3", householdUsername: "Household 3", householdName: "Household Three", jobTitle: "Electrical Outlet Check", serviceType: "Electrical Work", scheduleType: "One-Time", jobStartDate: "2026-04-12", description: "Inspect and repair two electrical outlets.", ...location(3), offeredRate: "1200.00", rateType: "Fixed Rate", workersNeeded: "1", status: "Completed", matchedWorkerIds: ["demo-worker-3"], applications: [{ id: "demo-app-3", workerId: "demo-worker-3", workerUsername: "Worker3", workerName: "Worker Three", status: "Completed", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(2, 9) },
+    { id: "demo-job-4", householdUsername: "Household 4", householdName: "Household Four", jobTitle: "Laundry Assistance", serviceType: "Laundry", scheduleType: "Part-Time", jobStartDate: "2026-03-22", description: "Weekly laundry help.", ...location(4), offeredRate: "500.00", rateType: "Per Day", workersNeeded: "1", status: "Cancelled", matchedWorkerIds: ["demo-worker-5"], applications: [], createdAt: getDemoCreatedAt(3, 12) },
+    { id: "demo-job-5", householdUsername: "Household 5", householdName: "Household Five", jobTitle: "Childcare Support", serviceType: "Childcare", scheduleType: "Part-Time", jobStartDate: "2026-02-15", description: "Afternoon childcare support.", ...location(5), offeredRate: "750.00", rateType: "Per Day", workersNeeded: "1", status: "Open", matchedWorkerIds: ["demo-worker-4"], applications: [{ id: "demo-app-5", workerId: "demo-worker-4", workerUsername: "Worker4", workerName: "Worker Four", status: "Pending", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(4, 15) },
+    { id: "demo-job-6", householdUsername: "Household 1", householdName: "Household One", jobTitle: "Cooking Support", serviceType: "Cooking", scheduleType: "One-Time", jobStartDate: "2026-01-28", description: "Meal preparation for family gathering.", ...location(1), offeredRate: "650.00", rateType: "Per Day", workersNeeded: "1", status: "Completed", matchedWorkerIds: ["demo-worker-5"], applications: [{ id: "demo-app-6", workerId: "demo-worker-5", workerUsername: "Worker5", workerName: "Worker Five", status: "Completed", appliedAt: "Recently" }], createdAt: getDemoCreatedAt(5, 18) },
   ];
 }

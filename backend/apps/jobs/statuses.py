@@ -40,8 +40,12 @@ def get_application_stage(application_status, job_status=None):
         return STAGE_REJECTED
     if application_status == JobApplication.STATUS_CLOSED:
         return STAGE_CLOSED
-    if application_status == JobApplication.STATUS_COMPLETED or job_status == JobPosting.STATUS_COMPLETED:
+    if application_status == JobApplication.STATUS_COMPLETED:
         return STAGE_COMPLETED
+    # A job finishing only completes the work of whoever was hired; anyone
+    # still pending or invited never worked it.
+    if job_status == JobPosting.STATUS_COMPLETED:
+        return STAGE_COMPLETED if application_status == JobApplication.STATUS_HIRED else STAGE_CLOSED
     if application_status == JobApplication.STATUS_HIRED:
         if job_status == JobPosting.STATUS_COMPLETION_REQUESTED:
             return STAGE_AWAITING_CONFIRMATION

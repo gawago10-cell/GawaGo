@@ -4,11 +4,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../core/api/gawago_api.dart';
+import '../core/auth/account_role.dart';
 import '../core/errors/api_error.dart';
 import '../core/storage/session_storage.dart';
 import '../core/theme/gawago_colors.dart';
 import '../shared/constants/gawago_options.dart';
 import '../shared/utils/map_tile_guard.dart';
+import '../shared/widgets/authenticated_shell.dart' show gawagoTextTheme;
+import '../shared/widgets/otp_code_field.dart';
 import '../features/worker/presentation/worker_home_screen.dart';
 import '../features/household/presentation/household_home_screen.dart';
 import '../features/admin/presentation/admin_home_screen.dart';
@@ -43,9 +46,12 @@ class _GawaGoAppState extends State<GawaGoApp> {
         MaterialPageRoute(builder: (_) => const LandingPage()),
         (route) => false,
       );
+      final reason = SessionStorage.endedMessage;
+      SessionStorage.endedMessage = null;
       _messengerKey.currentState?.showSnackBar(
-        const SnackBar(
-          content: Text('Your session expired. Please log in again.'),
+        SnackBar(
+          content: Text(reason ?? 'Your session expired. Please log in again.'),
+          duration: Duration(seconds: reason == null ? 4 : 8),
         ),
       );
     });
@@ -59,17 +65,27 @@ class _GawaGoAppState extends State<GawaGoApp> {
       scaffoldMessengerKey: _messengerKey,
       title: 'GawaGo',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: GawaGoColors.deepGreen,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: GawaGoColors.primary,
-          brightness: Brightness.dark,
-        ),
-      ),
+      theme: _landingTheme(),
       home: const _SessionGate(),
     );
   }
+}
+
+ThemeData _landingTheme() {
+  final base = ThemeData(
+    useMaterial3: true,
+    fontFamily: GawaGoColors.fontBody,
+    scaffoldBackgroundColor: GawaGoColors.deepGreen,
+    colorScheme:
+        ColorScheme.fromSeed(
+          seedColor: GawaGoColors.primary,
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: GawaGoColors.primary,
+          onPrimary: GawaGoColors.onPrimary,
+        ),
+  );
+  return base.copyWith(textTheme: gawagoTextTheme(base.textTheme));
 }
 
 class _SessionGate extends StatefulWidget {
@@ -100,36 +116,86 @@ class _SessionGateState extends State<_SessionGate> {
         if (session == null || !session.isAuthenticated) {
           return const LandingPage();
         }
-        if (session.role == 'household') {
-          return HouseholdHomeScreen(
-            onLogout: () {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LandingPage()),
-                (route) => false,
-              );
-            },
+        void onLogout() {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LandingPage()),
+            (route) => false,
           );
         }
-        if (session.role == 'admin' || session.role == 'superadmin') {
-          return AdminHomeScreen(
-            isSuperAdmin: session.role == 'superadmin',
-            onLogout: () {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LandingPage()),
-                (route) => false,
-              );
-            },
-          );
-        }
-        return WorkerHomeScreen(
-          onLogout: () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const LandingPage()),
-              (route) => false,
-            );
-          },
-        );
+
+        return switch (accountRoleFrom(session.role)) {
+          AccountRole.household => HouseholdHomeScreen(onLogout: onLogout),
+          AccountRole.admin || AccountRole.superadmin => AdminHomeScreen(
+            isSuperAdmin:
+                accountRoleFrom(session.role) == AccountRole.superadmin,
+            onLogout: onLogout,
+          ),
+          AccountRole.worker => WorkerHomeScreen(onLogout: onLogout),
+          // A stored session with an unknown role never opens the worker app.
+          null => const UnsupportedAccountScreen(),
+        };
       },
+    );
+  }
+}
+
+/// Shown instead of any role's home when a stored session carries a role the
+/// app doesn't recognise. Clears that session so the next launch starts clean.
+class UnsupportedAccountScreen extends StatefulWidget {
+  const UnsupportedAccountScreen({super.key});
+
+  @override
+  State<UnsupportedAccountScreen> createState() =>
+      _UnsupportedAccountScreenState();
+}
+
+class _UnsupportedAccountScreenState extends State<UnsupportedAccountScreen> {
+  @override
+  void initState() {
+    super.initState();
+    GawaGoApi.logout();
+    SessionStorage.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.no_accounts_outlined,
+                  size: 48,
+                  color: Colors.white70,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  "This account type isn't supported in the app.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Please sign in again, or contact support if this keeps happening.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const LandingPage()),
+                    (route) => false,
+                  ),
+                  child: const Text('Back to sign in'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -192,7 +258,7 @@ class _LandingPageState extends State<LandingPage> {
           gradient: RadialGradient(
             center: Alignment(0.72, -0.12),
             radius: 1.08,
-            colors: [Color(0xFF135736), GawaGoColors.deepGreen],
+            colors: [Color(0xFF34432A), GawaGoColors.deepGreen],
             stops: [0.0, 0.72],
           ),
         ),
@@ -318,7 +384,7 @@ class _NavButton extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(7),
             side: outlined
-                ? const BorderSide(color: Color(0xFF71907E))
+                ? const BorderSide(color: Color(0x47F5F1E6))
                 : BorderSide.none,
           ),
         ),
@@ -343,7 +409,7 @@ class _LocationPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF124A31),
+        color: const Color(0x269EBF5E),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: GawaGoColors.borderGreen),
       ),
@@ -465,7 +531,7 @@ class _ActionButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(7),
             side: filled
                 ? BorderSide.none
-                : const BorderSide(color: Color(0xFF789586)),
+                : const BorderSide(color: Color(0x47F5F1E6)),
           ),
         ),
         child: Text(
@@ -829,6 +895,7 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
   }
 
   Future<void> _submit() async {
+    if (_isSubmitting) return;
     final missing = [
       if (_firstNameController.text.trim().isEmpty) 'first name',
       if (_lastNameController.text.trim().isEmpty) 'last name',
@@ -1028,6 +1095,9 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                 ),
                 const SizedBox(height: 18),
                 _WorkerLocationPreview(
+                  label: isWorker
+                      ? 'Exact Worker Location'
+                      : 'Exact Household Location',
                   value: _selectedLocation,
                   onChanged: (value) =>
                       setState(() => _selectedLocation = value),
@@ -1285,8 +1355,17 @@ class _SignupDropdownField extends StatelessWidget {
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: value,
+          // Without this, a long barangay name doesn't wrap or ellipsize --
+          // it just overflows the dropdown's fixed intrinsic width at phone
+          // sizes (F-07).
+          isExpanded: true,
           items: items
-              .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+              .map(
+                (item) => DropdownMenuItem(
+                  value: item,
+                  child: Text(item, overflow: TextOverflow.ellipsis),
+                ),
+              )
               .toList(),
           onChanged: onChanged,
           dropdownColor: GawaGoColors.cream,
@@ -1329,8 +1408,13 @@ class _SignupDropdownField extends StatelessWidget {
 }
 
 class _WorkerLocationPreview extends StatefulWidget {
-  const _WorkerLocationPreview({required this.value, required this.onChanged});
+  const _WorkerLocationPreview({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
 
+  final String label;
   final LatLng? value;
   final ValueChanged<LatLng> onChanged;
 
@@ -1374,31 +1458,36 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
     return Container(
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
-        color: const Color(0xFF0C3A27),
+        color: GawaGoColors.cardGreen,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: GawaGoColors.borderGreen),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Expanded(
                 child: Text(
-                  'Exact Worker Location',
-                  style: TextStyle(
+                  widget.label,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              Text(
-                'Pin required for accurate distance',
-                style: TextStyle(
-                  color: GawaGoColors.primaryLight,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
+              // Fixed-width, unwrapped text here overflowed the row at
+              // phone widths once the label took its share (F-07).
+              const Flexible(
+                child: Text(
+                  'Pin required for accurate distance',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: GawaGoColors.primaryLight,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
@@ -1443,27 +1532,16 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
             ),
           ),
           const SizedBox(height: 11),
-          Row(
-            children: [
-              Expanded(
-                child: _MiniMapButton(
-                  label: _locating ? 'Locating...' : 'Use My Current Location',
-                  onPressed: _locating ? null : _useCurrentLocation,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: _MiniMapButton(
-                  label: 'Pin on Map Manually',
-                  outlined: true,
-                  onPressed: null,
-                ),
-              ),
-            ],
+          // Manual pinning already works by tapping the map above -- the
+          // second button here used to claim a separate "manual" mode that
+          // was permanently disabled and did nothing (F-24).
+          _MiniMapButton(
+            label: _locating ? 'Locating...' : 'Use My Current Location',
+            onPressed: _locating ? null : _useCurrentLocation,
           ),
           const SizedBox(height: 8),
           const Text(
-            'Use browser location or click the map so households can see accurate distance and routes.',
+            'Use your current location, or tap the map so households can see accurate distance and routes.',
             style: TextStyle(
               color: GawaGoColors.mutedText,
               fontSize: 9,
@@ -1614,7 +1692,7 @@ class _SkillsBoxState extends State<_SkillsBox> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'SKILLS  (select all that apply)',
+          'SKILLS  (select up to $maxWorkerSkills)',
           style: TextStyle(
             color: GawaGoColors.primaryLight,
             fontSize: 10,
@@ -1643,6 +1721,17 @@ class _SkillsBoxState extends State<_SkillsBox> {
                         value: widget.selectedSkills.contains(skill),
                         onChanged: (checked) {
                           final next = Set<String>.of(widget.selectedSkills);
+                          if ((checked ?? false) &&
+                              next.length >= maxWorkerSkills) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'You can select up to $maxWorkerSkills skills only.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
                           setState(() {
                             if (checked ?? false) {
                               next.add(skill);
@@ -1707,6 +1796,7 @@ class _LoginPanelState extends State<_LoginPanel> {
   }
 
   Future<void> _login() async {
+    if (_isSubmitting) return;
     if (_usernameController.text.trim().isEmpty ||
         _passwordController.text.isEmpty) {
       _showMessage('Please enter your username/email and password.');
@@ -1731,120 +1821,10 @@ class _LoginPanelState extends State<_LoginPanel> {
     }
   }
 
-  /// Two-step reset in one dialog: request a code by email, then submit
-  /// that code with the new password. The email field locks once the code
-  /// has gone out so the two steps cannot disagree.
-  Future<void> _openForgotPasswordDialog() async {
-    final email = TextEditingController();
-    final code = TextEditingController();
-    final newPassword = TextEditingController();
-    var codeSent = false;
-    var busy = false;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          Future<void> sendCode() async {
-            if (email.text.trim().isEmpty) {
-              _showMessage('Enter the email on your account.');
-              return;
-            }
-            setDialogState(() => busy = true);
-            try {
-              await GawaGoApi.requestPasswordReset(email.text);
-              setDialogState(() => codeSent = true);
-              _showMessage(
-                'If that email is registered, a code is on its way.',
-              );
-            } catch (error) {
-              _showMessage(friendlyApiError(error));
-            } finally {
-              setDialogState(() => busy = false);
-            }
-          }
-
-          Future<void> submitReset() async {
-            if (code.text.trim().isEmpty) {
-              _showMessage('Enter the reset code from your email.');
-              return;
-            }
-            if (newPassword.text.length < 8) {
-              _showMessage('Password must be at least 8 characters.');
-              return;
-            }
-            setDialogState(() => busy = true);
-            try {
-              await GawaGoApi.resetPassword(
-                email: email.text,
-                token: code.text,
-                newPassword: newPassword.text,
-              );
-              if (!dialogContext.mounted) return;
-              Navigator.of(dialogContext).pop();
-              _showMessage('Password updated. You can log in now.');
-            } catch (error) {
-              _showMessage(friendlyApiError(error));
-            } finally {
-              setDialogState(() => busy = false);
-            }
-          }
-
-          return AlertDialog(
-            title: const Text('Reset your password'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: email,
-                  enabled: !codeSent,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Email'),
-                ),
-                if (codeSent) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: code,
-                    decoration: const InputDecoration(labelText: 'Reset code'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: newPassword,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'New password',
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: busy
-                    ? null
-                    : () => Navigator.of(dialogContext).pop(),
-                child: const Text('Cancel'),
-              ),
-              if (codeSent)
-                FilledButton(
-                  onPressed: busy ? null : submitReset,
-                  child: Text(busy ? 'Saving...' : 'Reset Password'),
-                )
-              else
-                FilledButton(
-                  onPressed: busy ? null : sendCode,
-                  child: Text(busy ? 'Sending...' : 'Send Code'),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-
-    email.dispose();
-    code.dispose();
-    newPassword.dispose();
+  void _openForgotPassword() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()));
   }
 
   void _showMessage(String message) {
@@ -1918,7 +1898,7 @@ class _LoginPanelState extends State<_LoginPanel> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: _openForgotPasswordDialog,
+              onPressed: _openForgotPassword,
               style: TextButton.styleFrom(
                 foregroundColor: GawaGoColors.primary,
                 padding: EdgeInsets.zero,
@@ -1973,6 +1953,347 @@ class _LoginPanelState extends State<_LoginPanel> {
   }
 }
 
+/// 3-step reset screen matching the web app's forgot-password page exactly:
+/// enter email, enter the OTP in boxed digit fields, then set a new
+/// password -- each its own step rather than one combined dialog.
+class ForgotPasswordScreen extends StatefulWidget {
+  const ForgotPasswordScreen({super.key});
+
+  @override
+  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+}
+
+enum _ResetStep { email, verify, reset, done }
+
+class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+  static const _codeLength = 6;
+
+  final _email = TextEditingController();
+  final _newPassword = TextEditingController();
+  final _confirmPassword = TextEditingController();
+  String _code = '';
+  _ResetStep _step = _ResetStep.email;
+  bool _busy = false;
+  String? _notice;
+  String? _error;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _newPassword.dispose();
+    _confirmPassword.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendCode() async {
+    if (_email.text.trim().isEmpty) {
+      setState(() => _error = 'Enter your email address.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      await GawaGoApi.requestPasswordReset(_email.text);
+      if (!mounted) return;
+      setState(() {
+        _step = _ResetStep.verify;
+        _notice = 'Reset code sent to your email.';
+      });
+    } catch (error) {
+      setState(() => _error = friendlyApiError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _verifyCode() async {
+    if (_code.length != _codeLength) {
+      setState(() => _error = 'Enter the $_codeLength-digit code.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      await GawaGoApi.verifyPasswordResetToken(
+        email: _email.text,
+        token: _code,
+      );
+      if (!mounted) return;
+      setState(() {
+        _step = _ResetStep.reset;
+        _notice = 'Code verified.';
+      });
+    } catch (error) {
+      setState(() => _error = friendlyApiError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _submitNewPassword() async {
+    if (_newPassword.text.length < 8) {
+      setState(() => _error = 'Password must be at least 8 characters.');
+      return;
+    }
+    if (_newPassword.text != _confirmPassword.text) {
+      setState(() => _error = 'Passwords do not match.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      await GawaGoApi.resetPassword(
+        email: _email.text,
+        token: _code,
+        newPassword: _newPassword.text,
+      );
+      if (!mounted) return;
+      setState(() {
+        _step = _ResetStep.done;
+        _notice = 'Password reset successful.';
+      });
+    } catch (error) {
+      setState(() => _error = friendlyApiError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: GawaGoColors.deepGreen,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(26, 28, 26, 30),
+                decoration: BoxDecoration(
+                  color: GawaGoColors.cardGreen.withValues(alpha: 0.97),
+                  borderRadius: BorderRadius.circular(17),
+                  border: Border.all(color: GawaGoColors.borderGreen),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        _BackChip(
+                          label: 'Back',
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                        const Text(
+                          'Reset your password',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 21,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    if (_notice != null) ...[
+                      _InlineBanner(text: _notice!, isError: false),
+                      const SizedBox(height: 14),
+                    ],
+                    if (_error != null) ...[
+                      _InlineBanner(text: _error!, isError: true),
+                      const SizedBox(height: 14),
+                    ],
+                    ..._buildStep(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildStep() {
+    switch (_step) {
+      case _ResetStep.email:
+        return [
+          const Text(
+            'We will send a reset code to your email address.',
+            style: TextStyle(
+              color: GawaGoColors.mutedText,
+              fontSize: 13,
+              height: 1.45,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 18),
+          const _FormLabel('Email address'),
+          const SizedBox(height: 8),
+          _TextInput(
+            hint: 'Enter your email address',
+            controller: _email,
+            keyboardType: TextInputType.emailAddress,
+          ),
+          const SizedBox(height: 20),
+          _PrimaryButton(
+            label: _busy ? 'Sending...' : 'Send Code',
+            onPressed: _busy ? null : _sendCode,
+          ),
+        ];
+      case _ResetStep.verify:
+        return [
+          Text(
+            'Enter the $_codeLength-digit code',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'We sent it to ${_email.text.trim().isEmpty ? "your email" : _email.text.trim()}.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: GawaGoColors.mutedText,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 18),
+          OtpCodeField(
+            length: _codeLength,
+            enabled: !_busy,
+            onChanged: (value) => setState(() => _code = value),
+          ),
+          const SizedBox(height: 20),
+          _PrimaryButton(
+            label: _busy ? 'Verifying...' : 'Verify Code',
+            onPressed: (_busy || _code.length != _codeLength)
+                ? null
+                : _verifyCode,
+          ),
+        ];
+      case _ResetStep.reset:
+        return [
+          const _FormLabel('New Password'),
+          const SizedBox(height: 8),
+          _TextInput(
+            hint: 'At least 8 characters',
+            controller: _newPassword,
+            obscureText: true,
+          ),
+          const SizedBox(height: 17),
+          const _FormLabel('Confirm Password'),
+          const SizedBox(height: 8),
+          _TextInput(
+            hint: 'Re-enter your new password',
+            controller: _confirmPassword,
+            obscureText: true,
+          ),
+          const SizedBox(height: 20),
+          _PrimaryButton(
+            label: _busy ? 'Resetting...' : 'Reset Password',
+            onPressed: _busy ? null : _submitNewPassword,
+          ),
+        ];
+      case _ResetStep.done:
+        return [
+          const Text(
+            'You can now log in with your new password.',
+            style: TextStyle(
+              color: GawaGoColors.mutedText,
+              fontSize: 13,
+              height: 1.45,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 20),
+          _PrimaryButton(
+            label: 'Back to Login',
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ];
+    }
+  }
+}
+
+class _InlineBanner extends StatelessWidget {
+  const _InlineBanner({required this.text, required this.isError});
+
+  final String text;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isError ? GawaGoColors.danger : GawaGoColors.primary;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryButton extends StatelessWidget {
+  const _PrimaryButton({required this.label, required this.onPressed});
+
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: GawaGoColors.primary,
+          foregroundColor: GawaGoColors.onPrimary,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        onPressed: onPressed,
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+}
+
 class _BackChip extends StatelessWidget {
   const _BackChip({required this.label, required this.onPressed});
 
@@ -1987,7 +2308,7 @@ class _BackChip extends StatelessWidget {
         onPressed: onPressed,
         style: TextButton.styleFrom(
           foregroundColor: GawaGoColors.primaryLight,
-          backgroundColor: const Color(0xFF124A31),
+          backgroundColor: const Color(0x269EBF5E),
           padding: const EdgeInsets.symmetric(horizontal: 13),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(999),
@@ -2191,7 +2512,7 @@ class _LivePill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF124A31),
+        color: const Color(0x269EBF5E),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: GawaGoColors.borderGreen),
       ),

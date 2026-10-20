@@ -20,6 +20,7 @@ export default function SkillRatingForm({
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   const addExtraSkill = (name) => {
     const trimmed = (name || "").trim();
@@ -55,11 +56,9 @@ export default function SkillRatingForm({
       }
       const workerSkills = data?.skills || [];
       setSkills(workerSkills);
-      const initialRatings = {};
-      workerSkills.forEach((skill) => {
-        initialRatings[skill.id] = 5;
-      });
-      setSkillRatings(initialRatings);
+      // Nothing is pre-rated: a household that only meant to rate one skill
+      // used to submit 5 stars for every other skill too. Matches mobile.
+      setSkillRatings({});
       // The job's own service type is always rateable, even if the worker never
       // added it to their portfolio -- otherwise you can't rate the very work
       // you hired them for.
@@ -86,12 +85,14 @@ export default function SkillRatingForm({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (Object.values(skillRatings).filter(r => r).length === 0) {
-      alert("Please rate at least one skill");
+    if (submitting) return;
+    if (Object.values(skillRatings).filter((r) => r).length === 0) {
+      setError("Rate at least one skill, or choose Skip.");
       return;
     }
 
     try {
+      setError("");
       setSubmitting(true);
       const extraSkillByTempId = new Map(extraSkills.map((skill) => [skill.tempId, skill.name]));
       for (const [skillId, rating] of Object.entries(skillRatings)) {
@@ -111,11 +112,9 @@ export default function SkillRatingForm({
           }
         }
       }
-      alert("Skills rated successfully!");
       if (onSubmitSuccess) onSubmitSuccess();
-    } catch (error) {
-      console.error("Failed to submit ratings:", error);
-      alert(error.message || "Failed to submit ratings");
+    } catch (submitError) {
+      setError(submitError.message || "Unable to submit skill ratings.");
     } finally {
       setSubmitting(false);
     }
@@ -169,7 +168,7 @@ export default function SkillRatingForm({
 
         .skill-level-badge {
           background: var(--gg-accent-2);
-          color: var(--gg-primary-strong);
+          color: var(--gg-leaf-text);
           padding: 0.25rem 0.75rem;
           border-radius: 4px;
           font-size: 0.75rem;
@@ -184,16 +183,22 @@ export default function SkillRatingForm({
 
         .star {
           cursor: pointer;
-          color: #ddd;
+          color: #b8b2a2;
           transition: color 0.2s;
+          background: none;
+          border: none;
+          padding: 0;
+          font-size: inherit;
+          line-height: 1;
         }
 
         .star.active {
-          color: #ffc107;
+          color: #c98a00;
         }
 
-        .star:hover {
-          color: #ffc107;
+        .star:hover,
+        .star:focus-visible {
+          color: #c98a00;
         }
 
         .rating-value {
@@ -256,8 +261,9 @@ export default function SkillRatingForm({
         }
 
         .btn-cancel {
-          background: var(--gg-bg);
-          color: var(--gg-dark);
+          /* --gg-bg is the dark sidebar green; on it the dark label vanished. */
+          background: var(--gg-card-muted);
+          color: var(--gg-ink);
           border: 1px solid var(--gg-border);
           padding: 0.75rem 2rem;
           border-radius: 6px;
@@ -278,21 +284,26 @@ export default function SkillRatingForm({
             <div className="skill-rating-label">
               <div>
                 {skill.skill_name}
-                <span className="skill-level-badge" style={{ marginLeft: "0.5rem" }}>
-                  {skill.proficiency}
-                </span>
+                {skill.proficiency && (
+                  <span className="skill-level-badge" style={{ marginLeft: "0.5rem" }}>
+                    {skill.proficiency}
+                  </span>
+                )}
               </div>
             </div>
 
             <div className="rating-stars">
               {[1, 2, 3, 4, 5].map((star) => (
-                <span
+                <button
+                  type="button"
                   key={star}
                   className={`star ${skillRatings[skill.id] >= star ? "active" : ""}`}
+                  aria-label={`${skill.skill_name}: ${star} star${star > 1 ? "s" : ""}`}
+                  aria-pressed={skillRatings[skill.id] === star}
                   onClick={() => handleRatingChange(skill.id, star)}
                 >
                   ★
-                </span>
+                </button>
               ))}
             </div>
             <div className="rating-value">
@@ -323,13 +334,16 @@ export default function SkillRatingForm({
 
             <div className="rating-stars">
               {[1, 2, 3, 4, 5].map((star) => (
-                <span
+                <button
+                  type="button"
                   key={star}
                   className={`star ${skillRatings[skill.tempId] >= star ? "active" : ""}`}
+                  aria-label={`${skill.name}: ${star} star${star > 1 ? "s" : ""}`}
+                  aria-pressed={skillRatings[skill.tempId] === star}
                   onClick={() => handleRatingChange(skill.tempId, star)}
                 >
                   ★
-                </span>
+                </button>
               ))}
             </div>
             <div className="rating-value">
@@ -395,6 +409,12 @@ export default function SkillRatingForm({
           />
         </div>
 
+        {error && (
+          <div className="alert alert-warning" role="alert">
+            {error}
+          </div>
+        )}
+
         <div className="action-buttons">
           <button
             type="submit"
@@ -409,7 +429,7 @@ export default function SkillRatingForm({
             onClick={onCancel}
             disabled={submitting}
           >
-            Cancel
+            Skip
           </button>
         </div>
       </form>

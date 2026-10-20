@@ -15,6 +15,18 @@ String applicationStatusLabel(String status) {
   return labels[normalized] ?? formatStatus(status);
 }
 
+/// The wording the backend chose for a status, falling back to title-casing
+/// the raw value.
+///
+/// The backend owns status labels, so showing anything else is how the same
+/// assigned job came to read "Assigned" here, "Already found a worker" on
+/// web and "In progress" in the API.
+String statusText(String label, String status) {
+  final trimmed = label.trim();
+  if (trimmed.isNotEmpty) return trimmed;
+  return formatStatus(status.isEmpty ? 'open' : status);
+}
+
 String formatStatus(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty) return 'Unknown';
@@ -38,6 +50,30 @@ String formatLocalDateTime(String value, {String fallback = 'Not available'}) {
   final period = date.hour >= 12 ? 'PM' : 'AM';
   return '${_month(date.month)} ${date.day}, ${date.year} '
       '$hour:$minute $period';
+}
+
+/// Digits only, leading zero stripped, capped at 10 digits -- matches the
+/// web client's sanitizePhilippinesPhone(). Without this, mobile stored
+/// whatever was typed (often with the leading 0) and then displayed it with
+/// +63 prefixed to that same 0, producing "+6309171234567".
+String sanitizePhilippinesPhone(String value) {
+  final digitsOnly = value.replaceAll(RegExp(r'[^0-9]'), '');
+  final withoutLeadingZeros = digitsOnly.replaceFirst(RegExp(r'^0+'), '');
+  return withoutLeadingZeros.length > 10
+      ? withoutLeadingZeros.substring(0, 10)
+      : withoutLeadingZeros;
+}
+
+/// A job date ("2026-10-04") as "Oct 4, 2026" -- without this, some job
+/// screens showed the raw ISO string while others (via formatLocalDateTime)
+/// showed a formatted one.
+String formatJobDate(String? value, {String fallback = 'Not set'}) {
+  final normalized = (value ?? '').trim();
+  if (normalized.isEmpty) return fallback;
+  final date = DateTime.tryParse(normalized);
+  if (date == null) return normalized;
+  final local = date.toLocal();
+  return '${_month(local.month)} ${local.day}, ${local.year}';
 }
 
 String formatDateOrText(String value) {

@@ -9,14 +9,27 @@ export function useGawaGoFormHandlers({
   setHouseholdJobForm,
   setHouseholdJobLocationPreview,
   setHouseholdProfileForm,
+  setLoginError,
   setLoginForm,
+  setRegisterErrors,
   setVerificationForm,
   setWorkerForm,
   setWorkerProfileForm,
   syncHouseholdJobBarangayLocation,
 }) {
+  // Typing into a flagged field clears just that field's error, so the red
+  // state goes away as soon as the person starts fixing it.
+  function clearRegisterError(name) {
+    setRegisterErrors?.((prev) => {
+      if (!prev || !prev[name]) return prev;
+      const { [name]: _removed, ...rest } = prev;
+      return rest;
+    });
+  }
+
   function handleLoginChange(event) {
     const { name, value } = event.target;
+    setLoginError("");
     setLoginForm((prev) => ({
       ...prev,
       [name]: value,
@@ -25,6 +38,9 @@ export function useGawaGoFormHandlers({
 
   function handleWorkerChange(event) {
     const { name, value } = event.target;
+    clearRegisterError(name);
+    if (name === "barangay") clearRegisterError("streetAddress");
+    if (name === "password") clearRegisterError("confirmPassword");
     if (name === "phone") {
       setWorkerForm((prev) => ({
         ...prev,
@@ -75,6 +91,8 @@ export function useGawaGoFormHandlers({
 
   function handleHouseholdChange(event) {
     const { name, value } = event.target;
+    clearRegisterError(name);
+    if (name === "password") clearRegisterError("confirmPassword");
     if (name === "phone") {
       setHouseholdForm((prev) => ({
         ...prev,

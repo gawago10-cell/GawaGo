@@ -121,4 +121,23 @@ void main() {
     expect(review.rating, 4.5);
     expect(review.displayDate, 'Jun 10, 2026');
   });
+
+  test('a completed job parses the skill ratings the worker received', () {
+    final job = WorkerJob.fromJson({
+      'id': 9,
+      'title': 'House Cleaning',
+      'status': 'completed',
+      'skill_ratings': [
+        {'skill_name': 'House Cleaning', 'rating': '5.0'},
+        {'skill_name': 'Laundry', 'rating': 4},
+      ],
+    });
+
+    expect(job.skillRatings.map((rating) => rating.skillName), [
+      'House Cleaning',
+      'Laundry',
+    ]);
+    expect(job.skillRatings.first.rating, 5.0);
+    expect(job.skillRatings.last.rating, 4.0);
+  });
 }

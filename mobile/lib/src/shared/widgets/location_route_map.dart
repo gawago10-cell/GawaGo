@@ -79,7 +79,7 @@ class LocationRouteMap extends StatelessWidget {
               children: [
                 Icon(
                   routeAvailable ? Icons.route : Icons.info_outline,
-                  color: routeAvailable ? GawaGoColors.primary : Colors.orange,
+                  color: routeAvailable ? GawaGoColors.leafDeep : Colors.orange,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -154,7 +154,7 @@ class LocationRouteMap extends StatelessWidget {
             polylines: [
               Polyline(
                 points: routePoints,
-                color: GawaGoColors.primary,
+                color: GawaGoColors.leafDeep,
                 strokeWidth: 5,
               ),
             ],
@@ -197,7 +197,7 @@ class LocationRouteMap extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: GawaGoColors.surface,
               borderRadius: BorderRadius.circular(5),
               boxShadow: const [
                 BoxShadow(color: Colors.black26, blurRadius: 3),
@@ -238,7 +238,7 @@ class _CoordinatesUnavailablePanel extends StatelessWidget {
       height: 190,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: const Color(0xFFEDF1F4),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -285,7 +285,7 @@ class _RouteUnavailableNotice extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1EEE6),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -294,7 +294,7 @@ class _RouteUnavailableNotice extends StatelessWidget {
           const Text(
             'Driving route unavailable',
             style: TextStyle(
-              color: GawaGoColors.primary,
+              color: GawaGoColors.leafDeep,
               fontSize: 14,
               fontWeight: FontWeight.w800,
               letterSpacing: 0,

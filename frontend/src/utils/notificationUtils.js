@@ -2,7 +2,8 @@ import { STATUS_PRIORITY } from "../constants/appConstants";
 import { getDisplayName } from "./formatters";
 
 export function getHouseholdNotifications(jobs, workers) {
-  return jobs.flatMap((job) => (job.applications || []).map((application) => {
+  // A worker the household invited never applied, so they get no "applied" notice.
+  return jobs.flatMap((job) => (job.applications || []).filter((application) => application.status !== "Hire Request").map((application) => {
     const worker = workers.find((item) => item.id === application.workerId);
     return {
       id: `application-${job.id}-${application.workerId}-${application.appliedAt}`,

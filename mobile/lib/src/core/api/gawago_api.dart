@@ -6,6 +6,8 @@ import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../../shared/utils/display_formatters.dart';
+import '../auth/account_role.dart';
 import '../config/api_config.dart';
 import '../errors/api_error.dart';
 import '../storage/session_storage.dart';
@@ -55,7 +57,7 @@ class GawaGoApi {
         'email': email.trim(),
         'password': password,
         'role': role,
-        'phone': phone.trim(),
+        'phone': sanitizePhilippinesPhone(phone),
         'location_label': [
           if (streetAddress.trim().isNotEmpty) streetAddress.trim(),
           if (barangay.trim().isNotEmpty) barangay.trim(),
@@ -87,11 +89,18 @@ class GawaGoApi {
     );
     final result = AuthResult(
       token: data['access']?.toString() ?? '',
-      role: data['role']?.toString() ?? 'worker',
+      role: data['role']?.toString().trim().toLowerCase() ?? '',
     );
     if (result.token.isEmpty) {
       throw const ApiException(
         'Login response did not include an access token.',
+      );
+    }
+    // An unknown role used to default to "worker" and open the worker app.
+    if (accountRoleFrom(result.role) == null) {
+      throw const ApiException(
+        "This account type isn't supported in the app. Please contact support.",
+        type: ApiErrorType.forbidden,
       );
     }
     await SessionStorage.save(
@@ -100,11 +109,48 @@ class GawaGoApi {
     return result;
   }
 
+  /// True while a deliberate logout request is in flight: its 401 (an
+  /// already-expired token) is not a session expiry and must not show
+  /// "Your session expired" on top of the logout.
+  static bool _loggingOut = false;
+
+  static Future<void> logout() async {
+    // Best-effort: the token is being cleared from local storage regardless,
+    // but without this call it stays valid server-side (revoked only by
+    // jti) until it expires on its own, up to an hour later (F-14). An
+    // expired token is already dead, so there is nothing to revoke.
+    final token = SessionStorage.accessToken;
+    if (token == null ||
+        token.isEmpty ||
+        SessionStorage.isTokenExpired(token)) {
+      return;
+    }
+    _loggingOut = true;
+    try {
+      await post('/accounts/logout/', body: const {});
+    } catch (_) {
+      // Already logging the user out locally either way.
+    } finally {
+      _loggingOut = false;
+    }
+  }
+
   static Future<void> requestPasswordReset(String email) async {
     await post(
       '/accounts/forgot-password/',
       authenticated: false,
       body: {'email': email.trim()},
+    );
+  }
+
+  static Future<void> verifyPasswordResetToken({
+    required String email,
+    required String token,
+  }) async {
+    await post(
+      '/accounts/verify-reset-token/',
+      authenticated: false,
+      body: {'email': email.trim(), 'token': token.trim()},
     );
   }
 
@@ -127,9 +173,11 @@ class GawaGoApi {
   static Future<Map<String, dynamic>> get(
     String path, {
     bool authenticated = true,
+    Duration? timeout,
   }) async {
     final data = await _send(
       () => _client.get(_uri(path), headers: _headers(authenticated)),
+      timeout: timeout,
     );
     return _asMap(data);
   }
@@ -164,9 +212,6 @@ class GawaGoApi {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return response.bodyBytes;
     }
-    if (response.statusCode == 401) {
-      await SessionStorage.expire();
-    }
     Map<String, dynamic> body = const {};
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
@@ -174,6 +219,11 @@ class GawaGoApi {
     } catch (_) {
       // Non-JSON error body (e.g. an HTML 404 page) -- fall through to the
       // generic message below.
+    }
+    if (response.statusCode == 401) {
+      if (!_loggingOut) {
+        await SessionStorage.expire(detail: body['detail']?.toString());
+      }
     }
     throw ApiException(
       _errorMessage(body),
@@ -191,12 +241,14 @@ class GawaGoApi {
   static Future<List<dynamic>> getList(
     String path, {
     bool authenticated = true,
+    Duration? timeout,
   }) async {
     final records = <dynamic>[];
     Uri uri = _uri(path);
     for (var page = 0; page < _maxListPages; page++) {
       final data = await _send(
         () => _client.get(uri, headers: _headers(authenticated)),
+        timeout: timeout,
       );
       if (data is List<dynamic>) return data;
       if (data is Map<String, dynamic> && data['results'] is List<dynamic>) {
@@ -250,6 +302,21 @@ class GawaGoApi {
     );
   }
 
+  /// Encodes a JSON-ish value map into multipart text fields.
+  ///
+  /// Lists and maps are JSON-encoded rather than run through toString(): a
+  /// Dart list stringifies to `[House Cleaning, Laundry]`, which the API
+  /// cannot parse back into a list.
+  static Map<String, String> multipartFields(Map<String, dynamic> values) {
+    return values.map((key, value) {
+      if (value == null) return MapEntry(key, '');
+      if (value is Iterable || value is Map) {
+        return MapEntry(key, jsonEncode(value));
+      }
+      return MapEntry(key, value.toString());
+    });
+  }
+
   // All three multipart methods route through _send() (like every other
   // method here) instead of calling _client.send() directly, so a dropped
   // connection during an upload gets the same friendly, classified
@@ -270,7 +337,7 @@ class GawaGoApi {
       }
       final streamed = await _client.send(request);
       return http.Response.fromStream(streamed);
-    });
+    }, timeout: ApiConfig.uploadTimeout);
     return _asMap(data);
   }
 
@@ -289,7 +356,7 @@ class GawaGoApi {
       }
       final streamed = await _client.send(request);
       return http.Response.fromStream(streamed);
-    });
+    }, timeout: ApiConfig.uploadTimeout);
     return _asMap(data);
   }
 
@@ -307,7 +374,7 @@ class GawaGoApi {
       }
       final streamed = await _client.send(request);
       return http.Response.fromStream(streamed);
-    });
+    }, timeout: ApiConfig.uploadTimeout);
     return _asMap(data);
   }
 
@@ -323,13 +390,36 @@ class GawaGoApi {
   ) async {
     final file = XFile(path);
     if (kIsWeb) {
+      final bytes = await file.readAsBytes();
       return http.MultipartFile.fromBytes(
         field,
-        await file.readAsBytes(),
-        filename: file.name.isEmpty ? 'upload' : file.name,
+        bytes,
+        // A blob: URL carries no name, and the API accepts uploads by
+        // extension, so "upload" alone was rejected for every file.
+        filename: file.name.isEmpty
+            ? 'upload${_extensionFor(bytes)}'
+            : file.name,
       );
     }
     return http.MultipartFile.fromPath(field, path);
+  }
+
+  /// File extension from the leading "magic" bytes of the formats the API
+  /// accepts (images and PDF); empty when unrecognised.
+  static String _extensionFor(List<int> bytes) {
+    bool startsWith(List<int> prefix, [int offset = 0]) =>
+        bytes.length >= offset + prefix.length &&
+        List.generate(prefix.length, (i) => bytes[offset + i]).join(',') ==
+            prefix.join(',');
+    if (startsWith([0x89, 0x50, 0x4E, 0x47])) return '.png';
+    if (startsWith([0xFF, 0xD8, 0xFF])) return '.jpg';
+    if (startsWith([0x25, 0x50, 0x44, 0x46])) return '.pdf';
+    if (startsWith([0x52, 0x49, 0x46, 0x46]) &&
+        startsWith([0x57, 0x45, 0x42, 0x50], 8)) {
+      return '.webp';
+    }
+    if (startsWith([0x66, 0x74, 0x79, 0x70], 4)) return '.heic';
+    return '';
   }
 
   static Future<Map<String, dynamic>> delete(String path) async {
@@ -337,6 +427,14 @@ class GawaGoApi {
       () => _client.delete(_uri(path), headers: _headers(true)),
     );
     return _asMap(data);
+  }
+
+  /// A file URL the API returned (absolute, built from the request host) as
+  /// a path on the configured API, so the bearer token is only ever sent to
+  /// that API and never to whatever host a URL happens to name.
+  static String apiPath(String url) {
+    final index = url.indexOf('/api/');
+    return index == -1 ? url : url.substring(index + 4);
   }
 
   static Uri _uri(String path) {
@@ -365,9 +463,12 @@ class GawaGoApi {
     _client = http.Client();
   }
 
-  static Future<dynamic> _send(Future<http.Response> Function() request) async {
+  static Future<dynamic> _send(
+    Future<http.Response> Function() request, {
+    Duration? timeout,
+  }) async {
     try {
-      final response = await request().timeout(ApiConfig.timeout);
+      final response = await request().timeout(timeout ?? ApiConfig.timeout);
       return await _decodeResponse(response);
     } on TimeoutException {
       throw ApiException(
@@ -401,7 +502,11 @@ class GawaGoApi {
       return body;
     }
     if (response.statusCode == 401) {
-      await SessionStorage.expire();
+      if (!_loggingOut) {
+        await SessionStorage.expire(
+          detail: body is Map ? body['detail']?.toString() : null,
+        );
+      }
     }
     final type = _errorType(response.statusCode);
     throw ApiException(

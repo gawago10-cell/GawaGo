@@ -47,6 +47,13 @@ export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = typeof handler === "function" ? handler : null;
 }
 
+// A stuck request (dead connection, server hung) used to leave the UI on
+// "Posting..." forever with no feedback and no way to retry, and background
+// polls piled up behind it. File uploads get longer: a multipart body with
+// several photos legitimately takes longer than a plain JSON call.
+const DEFAULT_TIMEOUT_MS = 30000;
+const UPLOAD_TIMEOUT_MS = 90000;
+
 export async function apiRequest(path, options = {}) {
   const {
     method = "GET",
@@ -55,16 +62,21 @@ export async function apiRequest(path, options = {}) {
     auth = true,
     suppressUnauthorized = false,
     credentials = "omit",
+    timeoutMs,
     ...rest
   } = options;
 
   const requestHeaders = { ...headers };
+  const sentToken = auth ? getAuthToken() : null;
   if (auth) {
     Object.assign(requestHeaders, getAuthHeaders());
   }
   if (body != null && !(body instanceof FormData) && !(body instanceof Blob) && typeof body !== "string") {
     requestHeaders["Content-Type"] = requestHeaders["Content-Type"] || "application/json";
   }
+
+  const effectiveTimeoutMs =
+    timeoutMs ?? (body instanceof FormData ? UPLOAD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
 
   let response;
   try {
@@ -79,15 +91,29 @@ export async function apiRequest(path, options = {}) {
           : requestHeaders["Content-Type"] === "application/json" && typeof body !== "string"
             ? JSON.stringify(body)
             : body,
+      // rest.signal (if a caller ever passes one) wins; most calls don't,
+      // so this is what actually bounds the request.
+      signal: rest.signal || AbortSignal.timeout(effectiveTimeoutMs),
       ...rest,
     });
   } catch (error) {
-    const targetUrl = buildUrl(path);
-    throw new Error(`Unable to reach backend at ${targetUrl}. Make sure Django is running on port 8000.`);
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new Error("That took too long to respond. Please try again.");
+    }
+    throw new Error("Can't connect to GawaGo right now. Check your internet connection and try again.");
   }
 
-  if (response.status === 401 && !suppressUnauthorized && unauthorizedHandler) {
-    unauthorizedHandler(response.clone());
+  if (response.status === 401 && unauthorizedHandler) {
+    if (!suppressUnauthorized) {
+      unauthorizedHandler(response.clone());
+    } else if (sentToken && sentToken === getAuthToken()) {
+      // Background refreshes suppress 401s, but a 401 on the token still in
+      // use means the session itself ended (suspended, expired, revoked), so
+      // sign out instead of leaving a dashboard whose every request fails.
+      // Clearing first makes the other in-flight refreshes skip this branch.
+      clearAuthToken();
+      unauthorizedHandler(response.clone());
+    }
   }
 
   return response;

@@ -4,6 +4,7 @@ export default function HomeView({
   dashboardMetrics,
   initialShowLogin = false,
   isAdminPortal = false,
+  loginError = "",
   loginForm,
   onLoginChange,
   onLoginSubmit,
@@ -59,12 +60,17 @@ export default function HomeView({
               <p>Use an administrator or superadmin account to continue.</p>
             </div>
             <form onSubmit={onLoginSubmit}>
+              {loginError && (
+                <div className="home-login-error" role="alert">
+                  {loginError}
+                </div>
+              )}
               <div className="mb-3">
                 <label className="form-label fw-semibold" htmlFor="admin-login-username">
                   Email or Username
                 </label>
                 <input
-                  className="form-control"
+                  className={`form-control${loginError ? " is-invalid" : ""}`}
                   id="admin-login-username"
                   name="username"
                   onChange={onLoginChange}
@@ -78,7 +84,7 @@ export default function HomeView({
                   Password
                 </label>
                 <input
-                  className="form-control"
+                  className={`form-control${loginError ? " is-invalid" : ""}`}
                   id="admin-login-password"
                   name="password"
                   onChange={onLoginChange}
@@ -226,20 +232,22 @@ export default function HomeView({
                 {authMode === "login" && (
                   <form onSubmit={onLoginSubmit}>
                     <div className="home-login-form-head">
-                      <button type="button" onClick={() => setShowLogin(false)}>
-                        Back
-                      </button>
                       <div>
                         <h2>Login to GawaGo</h2>
                         <p>Enter your credentials. We will open the right dashboard for your account.</p>
                       </div>
                     </div>
+                    {loginError && (
+                      <div className="home-login-error" role="alert">
+                        {loginError}
+                      </div>
+                    )}
                     <div className="mb-3">
                       <label className="form-label fw-semibold" htmlFor="home-login-username">
                         Email or Username
                       </label>
                       <input
-                        className="form-control"
+                        className={`form-control${loginError ? " is-invalid" : ""}`}
                         id="home-login-username"
                         name="username"
                         onChange={onLoginChange}
@@ -253,7 +261,7 @@ export default function HomeView({
                         Password
                       </label>
                       <input
-                        className="form-control"
+                        className={`form-control${loginError ? " is-invalid" : ""}`}
                         id="home-login-password"
                         name="password"
                         onChange={onLoginChange}

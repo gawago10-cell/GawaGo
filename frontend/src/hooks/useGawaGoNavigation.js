@@ -1,7 +1,9 @@
-import { apiRequest, clearAuthToken, getApiBaseUrl } from "../api/apiClient";
+import { apiRequest, clearAuthToken } from "../api/apiClient";
+import { openProtectedFile } from "../utils/protectedFiles";
 import { EMPTY_HOUSEHOLD_FORM, EMPTY_WORKER_FORM } from "../constants/appConstants";
 import { getSavedHouseholdLocation } from "../utils/locationServices";
 import { markBackendNotificationRead } from "../services/backendDataService";
+import { dashboardViewForRole, getUserRole, ROLES } from "../utils/roles";
 
 export function useGawaGoNavigation({
   backendNotifications,
@@ -24,6 +26,7 @@ export function useGawaGoNavigation({
   setHouseholdProfileForm,
   setLoginForm,
   setNotificationReads,
+  setRegisterErrors,
   setSelectedJobId,
   setSelectedVerificationRequestId,
   setSelectedWorkerId,
@@ -38,23 +41,13 @@ export function useGawaGoNavigation({
   }
 
   function goBack() {
-    if (currentUser?.role === "superadmin") {
-      setView("superadmin-dashboard");
-      return;
+    const role = getUserRole(currentUser);
+    if (role === ROLES.ADMIN) {
+      // The admin dashboard is one view with sections; without resetting the
+      // section, "Back" from Workers History left the admin where they were.
+      setAdminSection?.("verification");
     }
-    if (currentUser?.role === "admin") {
-      setView("admin-dashboard");
-      return;
-    }
-    if (currentUser?.role === "household") {
-      setView("household-dashboard");
-      return;
-    }
-    if (currentUser?.role === "worker") {
-      setView("worker-dashboard");
-      return;
-    }
-    setView("home");
+    setView(currentUser ? dashboardViewForRole(role) : "home");
   }
 
   function handleLogout() {
@@ -95,11 +88,13 @@ export function useGawaGoNavigation({
 
   function openWorkerRegister() {
     setWorkerForm(EMPTY_WORKER_FORM);
+    setRegisterErrors?.({});
     setView("register-worker");
   }
 
   function openHouseholdRegister() {
     setHouseholdForm(EMPTY_HOUSEHOLD_FORM);
+    setRegisterErrors?.({});
     setView("register-household");
   }
 
@@ -146,8 +141,9 @@ export function useGawaGoNavigation({
         availability: true,
         availabilityWindows: currentWorker.availabilityWindows || [],
         profilePhotoFile: null,
-        profilePhotoPreview:
-          currentWorker.profilePhotoPreview || currentWorker.verificationSubmission?.primaryIdPreview || "",
+        // Never the government ID image: it's a private verification
+        // document, not something to show as the worker's public photo.
+        profilePhotoPreview: currentWorker.profilePhotoPreview || "",
       });
     }
     setView("worker-profile");
@@ -329,32 +325,8 @@ export function useGawaGoNavigation({
     });
   }
 
-  async function openFilePreview(fileUrl) {
-    if (!fileUrl) return;
-    const normalizedUrl = String(fileUrl);
-    const apiBaseUrl = getApiBaseUrl();
-    const apiIndex = normalizedUrl.indexOf("/api/");
-    const isProtectedApiDocument = normalizedUrl.startsWith("/api/") || normalizedUrl.startsWith(apiBaseUrl);
-    if (!isProtectedApiDocument && apiIndex === -1) {
-      window.open(normalizedUrl, "_blank", "noopener,noreferrer");
-      return;
-    }
-    const apiPath = normalizedUrl.startsWith(apiBaseUrl)
-      ? normalizedUrl.slice(apiBaseUrl.length).replace(/^\/+/, "")
-      : normalizedUrl.slice(apiIndex + "/api/".length);
-    try {
-      const response = await apiRequest(apiPath, { auth: true });
-      if (!response.ok) {
-        window.alert("You are not allowed to view this document, or it is no longer available.");
-        return;
-      }
-      const blob = await response.blob();
-      const objectUrl = window.URL.createObjectURL(blob);
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (error) {
-      window.alert("Unable to open this document right now.");
-    }
+  function openFilePreview(fileUrl) {
+    return openProtectedFile(fileUrl);
   }
 
   function openMatchedWorkerProfile(worker, jobId = selectedJob?.id) {

@@ -40,7 +40,7 @@ List endpoints are paginated by DRF at **20 items per page**. Once a collection 
 {"count": 57, "next": "http://localhost:8000/api/jobs/?page=2", "previous": null, "results": [...]}
 ```
 
-**Clients must follow `next` until it is `null`.** Reading only `results` silently drops every record past the first page, with no error to signal it — jobs and users simply start disappearing from lists once the platform passes 20 of them. Both shapes have to be handled, since a short collection still returns a plain array.
+**Clients must follow `next` until it is `null`.** Reading only `results` silently drops every record past the first page, with no error to signal it — jobs and users simply start disappearing from lists once the platform passes 20 of them. Every record collection (jobs, applications, reviews, notifications, complaints, verification requests, admin certificate queue) is paginated; the matching endpoints (`/api/matching/recommended-workers/`, `/api/matching/recommended-jobs/`) return their full ranked result set unpaginated, so clients should accept both shapes.
 
 ## Roles
 
@@ -242,19 +242,11 @@ Supply either an existing `skill` id, or `skill_name` plus `worker_id` to rate w
 | GET | `/api/accounts/admin/certificates/?status=pending` | Bearer required, `IsPlatformAdmin` | Lists worker certificates by `verification_status` (`pending`/`approved`/`rejected`). |
 | PATCH | `/api/accounts/admin/certificates/{cert_id}/` | Bearer required, `IsPlatformAdmin` | Body: `{"verification_status": "approved"|"rejected", "verification_notes": "..."}`. |
 
-Approving sets `is_verified` and stamps `verified_by`/`verified_at`; either decision notifies the worker (type `verification`). Any other `verification_status` value returns 400. Each row includes `worker_username` so the queue can show whose certificate it is.
+Approving sets `is_verified` and stamps `verified_by`/`verified_at`; either decision notifies the worker (type `verification`). Each row carries `certificate_file_type` (`image`, `pdf`, `file` or empty) because `certificate_file_url` is an authenticated route with no extension. A worker who changes an already reviewed certificate's file, name, type, issuer or dates sends it back to `pending` (badge removed) and admins are alerted again. Any other `verification_status` value returns 400. Each row includes `worker_username` so the queue can show whose certificate it is.
 
 ### Identity Documents
 
-A **second, multi-ID-type** identity system, separate from the Verification Requests flow below that the shipped UI uses for worker identity. Supports 8 ID types: `national_id`, `passport`, `drivers_license`, `voter_id`, `tin`, `umid`, `postal_id`, `other`.
-
-| Method | Endpoint | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/api/accounts/me/verification-documents/` | Bearer required | The caller's own documents only. |
-| POST | `/api/accounts/me/verification-documents/` | Bearer required | Multipart: `id_type`, `id_number`, `document_file`, `is_primary`. The owner is taken from the token — a client-supplied `user` is ignored. |
-| DELETE | `/api/accounts/me/verification-documents/{doc_id}/` | Bearer required, owner only | Removes one of the caller's documents. |
-| GET | `/api/accounts/admin/verification-documents/?status=pending` | Bearer required, `IsPlatformAdmin` | Review queue; rows include `user_username` and `id_type_label`. |
-| PATCH | `/api/accounts/admin/verification-documents/{doc_id}/` | Bearer required, `IsPlatformAdmin` | Body: `{"verification_status": "approved"|"rejected", "verification_notes": "..."}`. Notifies the owner. |
+The former second identity system (`/api/accounts/me/verification-documents/` and its admin queue) has been removed: its approval never reached `profile.verification_status`. Identity verification runs only through [Verification Requests](#verification-requests), whose `primary_id_type` takes the same 8 ID types: `national_id`, `passport`, `drivers_license`, `voter_id`, `tin`, `umid`, `postal_id`, `other`.
 
 ### Password Reset
 
@@ -278,10 +270,9 @@ Representative fields:
   "title": "Weekend house cleaning",
   "job_type": "Domestic Helper",
   "required_skill": "cleaning",
-  "schedule": "Weekend on 2026-06-01 at 09:00",
+  "schedule": "Weekend starting 2026-06-01",
   "schedule_type": "Weekend",
-  "preferred_date": "2026-06-01",
-  "preferred_time": "09:00:00",
+  "job_start_date": "2026-06-01",
   "description": "General cleaning",
   "location_label": "Barangay Wakas, Tayabas City",
   "latitude": "14.0250000",
@@ -297,6 +288,12 @@ Representative fields:
 ```
 
 Job statuses: `open`, `assigned`, `completed`, `cancelled`.
+
+For the job's household (or staff), `applications` is ordered by Smart Matching's rule order -- skill match, then verification, then road distance, then rating and rate -- rather than by application time. Each application's `worker_match_score` is the separate AI content-based score (0-1). Live applications come before rejected/closed ones, and `GET /api/jobs/applications/?job_id=` returns the household the same order. `household_can_review` says whether the household can still review that particular worker (several workers can be hired on one job).
+
+`skill_ratings` (`[{"skill_name": "House Cleaning", "rating": 4.5}]`) lists the per-skill ratings a worker received on that job. It is only filled on a worker's employment history (`GET /api/jobs/?worker=<user_id>&status=completed`) and is an empty list everywhere else.
+
+The search radius is set with `geographic_boundary` (`1km`, `2km`, `5km`, `10km`, `unlimited`); `max_distance_km` always follows from it, on create and on edit, and a PATCH that sends `max_distance_km` alone is rejected with 400.
 
 Application statuses: `pending`, `hired`, `rejected`, `closed`, `completed`.
 
@@ -335,8 +332,7 @@ Accepts JSON or multipart form data. Multipart field `images` accepts up to 5 im
   "job_type": "Domestic Helper",
   "required_skill": "cleaning",
   "schedule_type": "Weekend",
-  "preferred_date": "2026-06-01",
-  "preferred_time": "09:00",
+  "job_start_date": "2026-06-01",
   "description": "General cleaning",
   "location_label": "Barangay Wakas, Tayabas City",
   "latitude": "14.0250000",
@@ -346,7 +342,7 @@ Accepts JSON or multipart form data. Multipart field `images` accepts up to 5 im
 }
 ```
 
-Either `schedule` or both `preferred_date` and `preferred_time` are required. New jobs must start as `open`.
+Either `schedule` or `job_start_date` is required. New jobs must start as `open`.
 
 ### Job Detail
 
@@ -501,7 +497,7 @@ Query options:
 - `username` or `target_username`: reviews received by a user.
 - `author_username`: reviews written by a user.
 
-If no query parameter is provided, authenticated users receive reviews targeting themselves. Anonymous requests without a username return `400`.
+If no query parameter is provided, authenticated users receive reviews targeting themselves. Anonymous requests without a username return `400`. The list is paginated (newest first).
 
 Worker-to-household feedback is anonymous in API responses. For anonymous worker feedback, `author` is `null`, `author_username` is empty, and `author_name` is `Anonymous worker`. Public `author_username` queries do not expose worker-authored anonymous feedback.
 
@@ -535,6 +531,7 @@ Rules:
 | --- | --- | --- | --- |
 | GET | `/api/notifications/` | Bearer required | Lists current user's notifications. |
 | PATCH | `/api/notifications/{id}/read/` | Bearer required | Marks one notification as read. |
+| GET | `/api/notifications/unread-count/` | Bearer required | `{"unread": n}` -- the badge number, without paging through every notification. |
 
 Notification types:
 
@@ -544,9 +541,12 @@ Notification types:
 - `hiring`
 - `rejection`
 - `verification`
-- `analytics`
 - `completion`
 - `review_reminder`
+- `review` — a rating/feedback was submitted about the recipient
+- `job_match` — a newly posted job scored above the AI match threshold (no email)
+- `admin_alert` — sent to admins when a verification request or certificate is submitted, and to superadmins only when a report is filed
+- `analytics` — legacy, no longer sent
 
 Notification object:
 
@@ -571,7 +571,7 @@ Notification object:
 
 Auth: Bearer required.
 
-Staff users receive all verification requests ordered by latest submission. Worker users receive only their own requests. Household users are rejected with `403`.
+Staff users receive all verification requests ordered by latest submission. Worker and household users receive only their own requests. Paginated.
 
 ### Submit Verification Request
 
@@ -662,7 +662,7 @@ Exportable activity reports for the three audiences described in `AGENTS.md` IV.
 
 `GET /api/reports/me/` — the signed-in user's own report. Auth: Bearer required. The backend picks the household or worker report from the caller's profile role, so clients do not choose.
 
-`GET /api/reports/platform/` — platform-wide report. Auth: Staff/admin required.
+`GET /api/reports/platform/` — platform-wide report. Auth: Staff/admin required. Head counts cover household and worker accounts only (admins excluded); `pendingVerifications` counts accounts with an ID waiting in the queue; `completedJobValue` is the sum of the agreed service rate of jobs completed in the period (not a payment ledger).
 
 Both accept the same query parameters:
 

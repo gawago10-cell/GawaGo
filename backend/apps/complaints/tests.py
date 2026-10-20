@@ -137,6 +137,21 @@ class ComplaintCreateViewTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_non_numeric_respondent_is_rejected_cleanly_not_a_500(self):
+        authenticate(self.client, self.household)
+
+        response = self.client.post(
+            reverse("complaint-create"),
+            {
+                "job": self.job.id,
+                "respondent": "not-a-number",
+                "complaint_type": "other",
+                "description": "Malformed respondent id.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
 
 class ComplaintAdminViewTests(TestCase):
     def setUp(self):
@@ -162,7 +177,7 @@ class ComplaintAdminViewTests(TestCase):
         response = self.client.get(reverse("complaint-list-admin"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
+        self.assertEqual(len(response.data["results"]), 1)
 
     def test_non_superadmin_cannot_list_complaints(self):
         authenticate(self.client, self.household)
@@ -209,7 +224,7 @@ class ComplaintAdminViewTests(TestCase):
         authenticate(self.client, self.household)
         notifications = self.client.get(reverse("notification-list"))
         matching = [
-            item for item in notifications.data if "report" in item["message"].lower()
+            item for item in notifications.data["results"] if "report" in item["message"].lower()
         ]
         self.assertTrue(matching)
         # The web household notification list is an allowlist of types, so the
@@ -217,10 +232,10 @@ class ComplaintAdminViewTests(TestCase):
         self.assertEqual(matching[0]["notification_type"], "account_activity")
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), PRIVATE_MEDIA_ROOT=tempfile.mkdtemp())
 class ComplaintEvidenceAndBlockingTests(TestCase):
-    """Uploads go to a temp MEDIA_ROOT so test runs don't litter the real
-    media/ directory with fixture images."""
+    """Uploads go to temp directories so test runs don't litter the real
+    media/ or private_media/ directories with fixture images."""
 
     def setUp(self):
         self.household = User.objects.create_user(username="ev-household", password="testpass")
@@ -429,3 +444,171 @@ class ComplaintEvidenceAndBlockingTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(login.status_code, 403)
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), PRIVATE_MEDIA_ROOT=tempfile.mkdtemp())
+class ComplaintConfidentialityTests(TestCase):
+    """A report must stay invisible to the person it names while under
+    review: only the complainant (and superadmins, through the admin
+    endpoints) may see it, its evidence, or its internal notes."""
+
+    def setUp(self):
+        self.household = User.objects.create_user(username="conf-household", password="password")
+        UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD)
+        self.worker = User.objects.create_user(username="conf-worker", password="password")
+        UserProfile.objects.create(user=self.worker, role=UserProfile.ROLE_WORKER)
+        self.outsider = User.objects.create_user(username="conf-outsider", password="password")
+        UserProfile.objects.create(user=self.outsider, role=UserProfile.ROLE_WORKER)
+        self.superadmin = User.objects.create_user(
+            username="conf-superadmin", password="password", is_staff=True, is_superuser=True
+        )
+
+        self.job = JobPosting.objects.create(
+            household=self.household,
+            title="Deep clean",
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="Saturday",
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+        )
+        JobApplication.objects.create(job=self.job, worker=self.worker)
+
+        authenticate(self.client, self.household)
+        created = self.client.post(
+            reverse("complaint-create"),
+            {
+                "job": self.job.id,
+                "respondent": self.worker.id,
+                "complaint_type": Complaint.TYPE_QUALITY_OF_WORK,
+                "description": "Broke a vase and hid it.",
+                "evidence": [SimpleUploadedFile("IMG_0001.png", PNG_1X1, content_type="image/png")],
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        self.complaint = Complaint.objects.get(pk=created.json()["id"])
+        self.evidence = self.complaint.evidence.get()
+
+        authenticate(self.client, self.superadmin)
+        self.client.patch(
+            reverse("complaint-update-admin", args=[self.complaint.id]),
+            {"status": "under_review", "admin_notes": "INTERNAL: checking CCTV"},
+            content_type="application/json",
+        )
+        self.detail_url = reverse("complaint-detail", args=[self.complaint.id])
+        self.evidence_url = reverse("complaint-evidence", args=[self.complaint.id, self.evidence.id])
+
+    def test_complainant_sees_their_complaint_in_list_and_detail(self):
+        authenticate(self.client, self.household)
+
+        listed = self.client.get(reverse("complaint-list"))
+        detail = self.client.get(self.detail_url)
+
+        self.assertEqual([c["id"] for c in listed.json()["results"]], [self.complaint.id])
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["description"], "Broke a vase and hid it.")
+
+    def test_respondent_gets_empty_list_and_404_on_detail(self):
+        authenticate(self.client, self.worker)
+
+        self.assertEqual(self.client.get(reverse("complaint-list")).json()["results"], [])
+        self.assertEqual(self.client.get(reverse("complaint-list"), {"status": "under_review"}).json()["results"], [])
+        self.assertEqual(self.client.get(self.detail_url).status_code, 404)
+
+    def test_unrelated_user_gets_empty_list_and_404_on_detail(self):
+        authenticate(self.client, self.outsider)
+
+        self.assertEqual(self.client.get(reverse("complaint-list")).json()["results"], [])
+        self.assertEqual(self.client.get(self.detail_url).status_code, 404)
+
+    def test_respondent_404_is_indistinguishable_from_a_missing_complaint(self):
+        authenticate(self.client, self.worker)
+        missing = self.client.get(reverse("complaint-detail", args=[999999]))
+        real = self.client.get(self.detail_url)
+        self.assertEqual((real.status_code, real.json()), (missing.status_code, missing.json()))
+
+    def test_non_admin_responses_never_contain_admin_notes(self):
+        authenticate(self.client, self.household)
+
+        listed = self.client.get(reverse("complaint-list"))
+        detail = self.client.get(self.detail_url)
+        created = self.client.post(
+            reverse("complaint-create"),
+            {"job": self.job.id, "respondent": self.worker.id, "complaint_type": "other", "description": "x"},
+            content_type="application/json",
+        )
+
+        for body in (listed.json()["results"][0], detail.json(), created.json()):
+            self.assertNotIn("admin_notes", body)
+        self.assertNotIn("INTERNAL", listed.content.decode() + detail.content.decode())
+
+    def test_admin_endpoints_still_return_admin_notes(self):
+        authenticate(self.client, self.superadmin)
+
+        listed = self.client.get(reverse("complaint-list-admin"))
+        updated = self.client.patch(
+            reverse("complaint-update-admin", args=[self.complaint.id]),
+            {"resolution": "Worker warned."},
+            content_type="application/json",
+        )
+        blocked = self.client.post(
+            reverse("complaint-block-admin", args=[self.complaint.id]),
+            {"blocked": False},
+            content_type="application/json",
+        )
+
+        self.assertEqual(listed.json()["results"][0]["admin_notes"], "INTERNAL: checking CCTV")
+        self.assertEqual(updated.json()["admin_notes"], "INTERNAL: checking CCTV")
+        self.assertEqual(blocked.json()["admin_notes"], "INTERNAL: checking CCTV")
+
+    def test_evidence_is_served_only_to_complainant_and_superadmin(self):
+        authenticate(self.client, self.household)
+        own = self.client.get(self.evidence_url)
+        self.assertEqual(own.status_code, 200)
+        self.assertEqual(b"".join(own.streaming_content), PNG_1X1)
+        self.assertEqual(own["X-Content-Type-Options"], "nosniff")
+
+        authenticate(self.client, self.superadmin)
+        self.assertEqual(self.client.get(self.evidence_url).status_code, 200)
+
+        for user in (self.worker, self.outsider):
+            authenticate(self.client, user)
+            self.assertEqual(self.client.get(self.evidence_url).status_code, 404)
+
+        self.client.defaults.pop("HTTP_AUTHORIZATION", None)
+        self.assertEqual(self.client.get(self.evidence_url).status_code, 401)
+
+    def test_evidence_is_stored_privately_under_a_random_name(self):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        name = self.evidence.image.name
+        self.assertNotIn("IMG_0001", name)
+        self.assertTrue((Path(settings.PRIVATE_MEDIA_ROOT) / name).exists())
+        self.assertFalse((Path(settings.MEDIA_ROOT) / name).exists())
+
+        authenticate(self.client, self.household)
+        url = self.client.get(self.detail_url).json()["evidence"][0]["image_url"]
+        self.assertTrue(url.endswith(self.evidence_url))
+        self.assertNotIn("/media/", url)
+
+    def test_respondent_is_never_notified_about_the_report(self):
+        authenticate(self.client, self.superadmin)
+        for new_status in ("resolved", "closed"):
+            self.client.patch(
+                reverse("complaint-update-admin", args=[self.complaint.id]),
+                {"status": new_status},
+                content_type="application/json",
+            )
+
+        authenticate(self.client, self.worker)
+        notifications = self.client.get(reverse("notification-list")).json()["results"]
+        self.assertEqual(notifications, [])

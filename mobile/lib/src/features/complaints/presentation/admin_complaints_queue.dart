@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/errors/api_error.dart';
@@ -32,7 +34,9 @@ class _AdminComplaintsQueueState extends State<AdminComplaintsQueue> {
       widget.repository.getAdminComplaints(status: _statusFilter);
 
   void _reload() {
-    setState(() => _future = _load());
+    setState(() {
+      _future = _load();
+    });
   }
 
   Future<void> _openReviewSheet(ComplaintReport complaint) async {
@@ -180,9 +184,9 @@ class _QueueRow extends StatelessWidget {
                       fontSize: 12,
                     ),
                   ),
-                  if (complaint.jobTitle.isNotEmpty)
+                  if (complaint.adminJobLabel.isNotEmpty)
                     Text(
-                      complaint.jobTitle,
+                      complaint.adminJobLabel,
                       style: const TextStyle(
                         color: GawaGoColors.textMuted,
                         fontSize: 11,
@@ -421,7 +425,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
             Text(
               '${widget.complaint.complainantDetail?.displayName ?? widget.complaint.complainantUsername} reported '
               '${widget.complaint.respondentDetail?.displayName ?? (widget.complaint.respondentUsername.isEmpty ? "an unspecified user" : widget.complaint.respondentUsername)}'
-              '${widget.complaint.jobTitle.isEmpty ? "" : " on ${widget.complaint.jobTitle}"}',
+              '${widget.complaint.adminJobLabel.isEmpty ? "" : " on ${widget.complaint.adminJobLabel}"}',
               style: const TextStyle(
                 color: GawaGoColors.textMuted,
                 fontSize: 12,
@@ -464,16 +468,9 @@ class _ReviewSheetState extends State<_ReviewSheet> {
                       const SizedBox(width: 8),
                   itemBuilder: (context, index) => ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      _current.evidenceUrls[index],
-                      width: 96,
-                      height: 96,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stack) => Container(
-                        width: 96,
-                        height: 96,
-                        color: Colors.black12,
-                        child: const Icon(Icons.broken_image_outlined),
+                    child: _EvidenceThumb(
+                      loader: () => widget.repository.getEvidenceBytes(
+                        _current.evidenceUrls[index],
                       ),
                     ),
                   ),
@@ -579,6 +576,74 @@ class _ReviewSheetState extends State<_ReviewSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// One evidence photo, fetched with the bearer token (the route is
+/// permission-checked, so Image.network can't load it) and shown from memory.
+class _EvidenceThumb extends StatefulWidget {
+  const _EvidenceThumb({required this.loader});
+
+  final Future<Uint8List> Function() loader;
+
+  @override
+  State<_EvidenceThumb> createState() => _EvidenceThumbState();
+}
+
+class _EvidenceThumbState extends State<_EvidenceThumb> {
+  late final Future<Uint8List> _bytes = widget.loader();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List>(
+      future: _bytes,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          return GestureDetector(
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (_) => Dialog(
+                child: InteractiveViewer(child: Image.memory(snapshot.data!)),
+              ),
+            ),
+            child: Image.memory(
+              snapshot.data!,
+              width: 96,
+              height: 96,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stack) =>
+                  const _ThumbPlaceholder(icon: Icons.broken_image_outlined),
+            ),
+          );
+        }
+        return _ThumbPlaceholder(
+          icon: snapshot.hasError ? Icons.broken_image_outlined : null,
+        );
+      },
+    );
+  }
+}
+
+class _ThumbPlaceholder extends StatelessWidget {
+  const _ThumbPlaceholder({this.icon});
+
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 96,
+      height: 96,
+      color: Colors.black12,
+      alignment: Alignment.center,
+      child: icon == null
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(icon),
     );
   }
 }

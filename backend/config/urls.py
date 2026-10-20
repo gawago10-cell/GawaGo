@@ -32,6 +32,7 @@ urlpatterns = [
     path("api/common/", include("apps.common.urls")),
     path("api/complaints/", include("apps.complaints.urls")),
     path("api/reports/", include("apps.reports.urls")),
+    path("api/conversations/", include("apps.chat.urls")),
 ]
 
 if settings.DEBUG:

@@ -1,6 +1,8 @@
 from django.urls import path
 
 from apps.accounts.views import (
+    AdminAccountDetailView,
+    AdminAccountListCreateView,
     ForgotPasswordRequestView,
     LoginView,
     LogoutView,
@@ -15,11 +17,10 @@ from apps.accounts.views import (
     WorkerPortfolioView,
     WorkerSkillView,
     WorkerCertificationView,
+    WorkerCertificationFileView,
     WorkerPortfolioItemView,
     SkillRatingView,
     CertificateVerificationAdminView,
-    VerificationDocumentView,
-    VerificationDocumentAdminView,
 )
 
 
@@ -31,6 +32,7 @@ urlpatterns = [
     path("me/portfolio/skills/<int:skill_id>/", WorkerSkillView.as_view(), name="worker-skill-detail"),
     path("me/portfolio/certifications/", WorkerCertificationView.as_view(), name="worker-certification"),
     path("me/portfolio/certifications/<int:cert_id>/", WorkerCertificationView.as_view(), name="worker-certification-detail"),
+    path("portfolio/certifications/<int:cert_id>/file/", WorkerCertificationFileView.as_view(), name="worker-certification-file"),
     path("me/portfolio/items/", WorkerPortfolioItemView.as_view(), name="worker-portfolio-item"),
     path("me/portfolio/items/<int:item_id>/", WorkerPortfolioItemView.as_view(), name="worker-portfolio-item-detail"),
     path("profiles/", UserProfileListView.as_view(), name="profile-list"),
@@ -56,10 +58,12 @@ urlpatterns += [
     path("admin/certificates/<int:cert_id>/", CertificateVerificationAdminView.as_view(), name="certificate-admin-verify"),
 ]
 
+# Superadmin "Admin Management" endpoints
+urlpatterns += [
+    path("admin/admins/", AdminAccountListCreateView.as_view(), name="admin-account-list"),
+    path("admin/admins/<str:username>/", AdminAccountDetailView.as_view(), name="admin-account-detail"),
+]
+
 # Verification document endpoints
 urlpatterns += [
-    path("me/verification-documents/", VerificationDocumentView.as_view(), name="verification-documents"),
-    path("me/verification-documents/<int:doc_id>/", VerificationDocumentView.as_view(), name="verification-document-detail"),
-    path("admin/verification-documents/", VerificationDocumentAdminView.as_view(), name="verification-documents-admin"),
-    path("admin/verification-documents/<int:doc_id>/", VerificationDocumentAdminView.as_view(), name="verification-documents-admin-verify"),
 ]

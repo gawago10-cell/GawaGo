@@ -16,7 +16,8 @@ void main() {
 
     expect(find.text('Application: Hire Requested'), findsOneWidget);
     final label = tester.widget<Text>(find.text('Application: Hire Requested'));
-    expect(label.style?.color, Colors.orange);
+    expect(label.style?.color, statusColor('pending'));
+    expect(label.style?.color, isNot(statusColor(null)));
   });
 
   testWidgets('shows a readable status and distinct card metadata', (

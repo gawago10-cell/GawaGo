@@ -192,7 +192,8 @@ class PlatformReportTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["scope"], "platform")
-        self.assertEqual(response.data["summary"]["totalAccounts"], 2)
+        # The admin's own profile is not a platform member.
+        self.assertEqual(response.data["summary"]["totalAccounts"], 1)
         self.assertEqual(response.data["summary"]["totalWorkers"], 1)
 
     def test_average_worker_rating_is_weighted_by_review_count(self):

@@ -52,4 +52,14 @@ class ApiConfig {
   }
 
   static const Duration timeout = Duration(seconds: 12);
+
+  /// Uploads carry up to five photos, so 12 seconds is not enough on a slow
+  /// connection: the request was reported as timed out while the server went
+  /// on to finish it, and posting again created a duplicate job.
+  static const Duration uploadTimeout = Duration(seconds: 90);
+
+  /// The AI matching endpoints score every candidate and call a routing
+  /// service, which takes around ten seconds on a cold call (the web client
+  /// allows 25).
+  static const Duration matchingTimeout = Duration(seconds: 45);
 }

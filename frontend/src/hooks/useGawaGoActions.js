@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
 
-import { BARANGAY_CENTERS } from "../constants/appConstants";
+import { BARANGAY_CENTERS, MAX_WORKER_SKILLS } from "../constants/appConstants";
 import { getBarangayCenter, normalizeBarangayName } from "../utils/locationUtils";
+import { dashboardViewForRole, getUserRole, isAdminRole, ROLES } from "../utils/roles";
+import { focusFirstInvalidField, validateRegistration } from "../utils/registrationValidation";
 
 function getBarangayCenterCoordinates(barangay) {
   const normalizedBarangay = normalizeBarangayName(barangay);
@@ -72,6 +74,8 @@ export function useGawaGoActions({
   setHouseholdJobImages,
   setHouseholdJobLocationPreview,
   setHouseholdReviewForm,
+  setLoginError,
+  setRegisterErrors,
   setLoginForm,
   setPostedJobs,
   setRegisteredHouseholds,
@@ -95,6 +99,27 @@ export function useGawaGoActions({
   // POST resolves, silently resetting a plain variable's guard.
   const isSubmittingJobRef = useRef(false);
   const [isSubmittingJob, setIsSubmittingJob] = useState(false);
+  // Same double-click guard for every other request-sending action: a second
+  // click while the first request is in flight is ignored instead of sending
+  // a duplicate that the server rejects with a contradictory message.
+  const actionsInFlightRef = useRef(new Set());
+  const [, setActionsInFlightVersion] = useState(0);
+  function isActionPending(key) {
+    return actionsInFlightRef.current.has(key);
+  }
+  async function runExclusive(key, task) {
+    if (actionsInFlightRef.current.has(key)) {
+      return false;
+    }
+    actionsInFlightRef.current.add(key);
+    setActionsInFlightVersion((version) => version + 1);
+    try {
+      return await task();
+    } finally {
+      actionsInFlightRef.current.delete(key);
+      setActionsInFlightVersion((version) => version + 1);
+    }
+  }
 
   function handleApplyToJob(jobId) {
     if (!currentWorker) {
@@ -110,7 +135,7 @@ export function useGawaGoActions({
       window.alert("Applications are unavailable for this job right now.");
       return;
     }
-    (async () => {
+    runExclusive(`apply-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/apply/`, {
           method: "POST",
@@ -153,7 +178,7 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to apply for this job. Please try again.");
       }
-    })();
+    });
   }
   function handleHireWorker() {
     if (!currentHousehold) {
@@ -195,7 +220,7 @@ export function useGawaGoActions({
       refreshJobsFromBackend();
       return;
     }
-    (async () => {
+    runExclusive(`hire-${selectedJob.id}-${selectedWorker.id}`, async () => {
       const requestedAt = new Date().toLocaleString("en-PH");
       // Applying is itself consent, so accepting an applicant hires them
       // outright. A worker who never applied was surfaced by matching and has
@@ -306,7 +331,7 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to complete this action.");
       }
-    })();
+    });
   }
   function handleWorkerHireDecision(applicationId, decision) {
     if (!currentWorker) {
@@ -319,7 +344,7 @@ export function useGawaGoActions({
       return;
     }
     const normalizedDecision = decision === "accept" ? "accept" : "reject";
-    (async () => {
+    runExclusive(`hire-decision-${applicationId}`, async () => {
       try {
         const response = await apiRequest(`jobs/applications/${applicationId}/decision/`, {
           method: "PATCH",
@@ -352,7 +377,7 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to respond to hire request.");
       }
-    })();
+    });
   }
   function handleWorkerRequestCompletion(jobId, note = "") {
     if (!currentWorker) {
@@ -378,7 +403,7 @@ export function useGawaGoActions({
       refreshJobsFromBackend();
       return;
     }
-    (async () => {
+    runExclusive(`request-completion-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${job.id}/request-completion/`, {
           method: "POST",
@@ -405,7 +430,7 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to request completion. Please try again.");
       }
-    })();
+    });
   }
   function handleRejectApplication(workerId = selectedWorker?.id, jobId = selectedJob?.id) {
     if (currentHousehold?.verification !== "Verified") {
@@ -433,10 +458,10 @@ export function useGawaGoActions({
       refreshJobsFromBackend();
       return;
     }
-    (async () => {
+    const applicationStatusTargetId = existingApplication.id;
+    runExclusive(`reject-application-${applicationStatusTargetId}`, async () => {
       const rejectedAt = new Date().toLocaleString("en-PH");
       const message = `Thank you for applying to ${job.jobTitle || job.serviceType}. The household chose another applicant for now, but you can still apply to other open jobs.`;
-      const applicationStatusTargetId = existingApplication.id;
       try {
         const response = await apiRequest(`jobs/applications/${applicationStatusTargetId}/status/`, {
           method: "PATCH",
@@ -501,16 +526,17 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to reject application.");
       }
-    })();
+    });
   }
   function handleLoginSubmit(event) {
     event.preventDefault();
     const username = loginForm.username.trim();
+    setLoginError("");
     if (!username || !loginForm.password) {
-      window.alert("Please enter your username and password.");
+      setLoginError("Please enter your username and password.");
       return;
     }
-    (async () => {
+    runExclusive("login-submit", async () => {
       try {
         const response = await apiRequest("accounts/login/", {
           method: "POST",
@@ -526,9 +552,16 @@ export function useGawaGoActions({
           loginError.status = response.status;
           throw loginError;
         }
+        // The account role comes from the login response only -- never from
+        // profile.role, which defaults to "worker" even for admin accounts.
+        const resolvedRole = getUserRole({ role: data?.role, is_staff: data?.is_staff });
+        if (!resolvedRole) {
+          const roleError = new Error("This account type isn't supported here. Please contact support.");
+          roleError.status = 403;
+          throw roleError;
+        }
         setAuthToken(data?.access || "");
-        const resolvedRole = data?.role || data?.profile?.role || (data?.is_staff ? "superadmin" : "worker");
-        const isSuperAdmin = resolvedRole === "superadmin";
+        const isSuperAdmin = resolvedRole === ROLES.SUPERADMIN;
         setCurrentUser({
           id: data?.id || data?.user_id || username,
           role: resolvedRole,
@@ -553,18 +586,10 @@ export function useGawaGoActions({
           },
           profile: data?.profile || null,
         });
-        if (backendWorker) {
+        if (backendWorker && !isAdminRole(resolvedRole)) {
           mergeBackendWorkerIntoState(backendWorker);
         }
-        setView(
-          isSuperAdmin
-            ? "superadmin-dashboard"
-            : resolvedRole === "admin"
-              ? "admin-dashboard"
-              : resolvedRole === "household"
-                ? "household-dashboard"
-                : "worker-dashboard",
-        );
+        setView(dashboardViewForRole(resolvedRole));
         // The jobs list is fetched anonymously before login (no per-user
         // application data), and the background poll that would otherwise
         // pick up the authenticated view can take several seconds. Refresh
@@ -574,41 +599,28 @@ export function useGawaGoActions({
         refreshNotificationsFromBackend();
       } catch (error) {
         if (error.status === 403) {
-          window.alert(error.message || "Account is not verified yet.");
+          setLoginError(error.message || "Account is not verified yet.");
           return;
         }
         clearAuthToken();
-        window.alert(error.message || "Login failed. Please check your username and password.");
+        setLoginError(error.message || "Login failed. Please check your username and password.");
       }
-    })();
+    });
   }
   function handleWorkerRegisterSubmit(event) {
     event.preventDefault();
-    const requiredFields = [
-      workerForm.firstName,
-      workerForm.lastName,
-      workerForm.username,
-      workerForm.email,
-      workerForm.phone,
-      workerForm.barangay,
-      workerForm.streetAddress,
-      workerForm.password,
-      workerForm.confirmPassword,
-    ];
-    if (requiredFields.some((field) => !String(field || "").trim())) {
-      window.alert("Please complete all required fields.");
+    const formErrors = validateRegistration(workerForm);
+    setRegisterErrors(formErrors);
+    if (Object.keys(formErrors).length > 0) {
+      focusFirstInvalidField(formErrors, event.currentTarget);
       return;
     }
-    if (!isValidGmailAddress(workerForm.email)) {
-      window.alert("Please enter a complete Gmail address, for example example@gmail.com.");
-      return;
-    }
-    if (workerForm.password.length < 8) {
-      window.alert("Password must be at least 8 characters long.");
-      return;
-    }
-    if (workerForm.password !== workerForm.confirmPassword) {
-      window.alert("Worker passwords do not match.");
+    const registrationSkills = new Set([
+      ...(workerForm.skills || []),
+      ...(workerForm.customSkill.trim() ? [workerForm.customSkill.trim()] : []),
+    ]);
+    if (registrationSkills.size > MAX_WORKER_SKILLS) {
+      window.alert(`You can list up to ${MAX_WORKER_SKILLS} skills, including a custom skill.`);
       return;
     }
     const usernameTaken = registeredWorkers.some(
@@ -618,7 +630,7 @@ export function useGawaGoActions({
       window.alert("Username already exists for a worker account.");
       return;
     }
-    (async () => {
+    runExclusive("register", async () => {
       try {
         let resolvedLocation = null;
         try {
@@ -719,45 +731,25 @@ export function useGawaGoActions({
       } catch (error) {
         window.alert(error.message || "Unable to create worker account.");
       }
-    })();
+    });
   }
   function handleHouseholdRegisterSubmit(event) {
     event.preventDefault();
-    const requiredFields = [
-      householdForm.firstName,
-      householdForm.lastName,
-      householdForm.username,
-      householdForm.email,
-      householdForm.phone,
-      householdForm.barangay,
-      householdForm.streetAddress,
-      householdForm.password,
-      householdForm.confirmPassword,
-    ];
-    if (requiredFields.some((field) => !String(field || "").trim())) {
-      window.alert("Please complete all required fields.");
+    const formErrors = validateRegistration(householdForm);
+    if (
+      !formErrors.username &&
+      registeredHouseholds.some(
+        (item) => item.username.toLowerCase() === householdForm.username.trim().toLowerCase(),
+      )
+    ) {
+      formErrors.username = "That username is already taken.";
+    }
+    setRegisterErrors(formErrors);
+    if (Object.keys(formErrors).length > 0) {
+      focusFirstInvalidField(formErrors, event.currentTarget);
       return;
     }
-    if (!isValidGmailAddress(householdForm.email)) {
-      window.alert("Please enter a complete Gmail address, for example example@gmail.com.");
-      return;
-    }
-    if (householdForm.password.length < 8) {
-      window.alert("Password must be at least 8 characters long.");
-      return;
-    }
-    if (householdForm.password !== householdForm.confirmPassword) {
-      window.alert("Household passwords do not match.");
-      return;
-    }
-    const usernameTaken = registeredHouseholds.some(
-      (item) => item.username.toLowerCase() === householdForm.username.trim().toLowerCase(),
-    );
-    if (usernameTaken) {
-      window.alert("Username already exists for a household account.");
-      return;
-    }
-    (async () => {
+    runExclusive("register", async () => {
       try {
         const resolvedLocation = await resolveLocationCoordinates(
           householdForm.barangay,
@@ -805,7 +797,7 @@ export function useGawaGoActions({
       } catch (error) {
         window.alert(error.message || "Unable to create household account.");
       }
-    })();
+    });
   }
   function handleWorkerProfileSave(event) {
     event.preventDefault();
@@ -813,7 +805,7 @@ export function useGawaGoActions({
       window.alert("No worker account is currently logged in.");
       return;
     }
-    (async () => {
+    runExclusive("worker-profile-save", async () => {
       let resolvedLocation = null;
       try {
         resolvedLocation = await resolveLocationCoordinates(
@@ -981,7 +973,7 @@ export function useGawaGoActions({
       } catch (error) {
         window.alert(error.message || "Unable to update worker profile.");
       }
-    })();
+    });
   }
   function handleVerificationSubmit(event) {
     event.preventDefault();
@@ -992,6 +984,14 @@ export function useGawaGoActions({
       !verificationForm.secondaryDocFile
     ) {
       window.alert("Please upload both required verification documents.");
+      return;
+    }
+    if (!verificationForm.primaryIdType) {
+      window.alert("Please choose which government ID you are uploading.");
+      return;
+    }
+    if (verificationForm.primaryIdType === "other" && !(verificationForm.primaryIdOtherName || "").trim()) {
+      window.alert("Please name the government ID you are uploading.");
       return;
     }
     const account = currentUser?.role === "worker" ? currentWorker : registeredHouseholds.find(
@@ -1013,9 +1013,14 @@ export function useGawaGoActions({
       );
       return;
     }
-    (async () => {
+    runExclusive("verification-submit", async () => {
       const requestRecord = new FormData();
-      requestRecord.append("primary_id_name", verificationForm.primaryIdName);
+      requestRecord.append("primary_id_type", verificationForm.primaryIdType || "other");
+      // The backend fills the label from the chosen type; it only reads this
+      // when the type is "other".
+      if ((verificationForm.primaryIdType || "other") === "other") {
+        requestRecord.append("primary_id_name", verificationForm.primaryIdOtherName || "");
+      }
       requestRecord.append("secondary_doc_name", verificationForm.secondaryDocName);
       requestRecord.append("primary_id_file", verificationForm.primaryIdFile);
       requestRecord.append("secondary_doc_file", verificationForm.secondaryDocFile);
@@ -1119,7 +1124,7 @@ export function useGawaGoActions({
         // verification is under review when the request actually failed.
         window.alert(error.message || "Unable to submit verification documents. Please try again.");
       }
-    })();
+    });
   }
   function handleHouseholdProfileSave(event) {
     event.preventDefault();
@@ -1127,7 +1132,7 @@ export function useGawaGoActions({
       window.alert("No household account is currently logged in.");
       return;
     }
-    (async () => {
+    runExclusive("household-profile-save", async () => {
       let savedProfilePhoto = householdProfileForm.profilePhotoPreview || "";
       try {
         if (getAuthToken()) {
@@ -1218,14 +1223,14 @@ export function useGawaGoActions({
       }),
     );
     window.alert("Household profile updated.");
-    })();
+    });
   }
   function handleCancelJob(jobId) {
     const job = postedJobs.find((item) => item.id === jobId);
     if (!job) {
       return;
     }
-    (async () => {
+    runExclusive(`cancel-job-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/`, {
           method: "PATCH",
@@ -1253,7 +1258,7 @@ export function useGawaGoActions({
           setSelectedJobId(null);
         }
       }
-    })();
+    });
   }
   function handleConfirmJobCompleted(jobId = selectedJob?.id) {
     if (currentHousehold?.verification !== "Verified") {
@@ -1265,7 +1270,7 @@ export function useGawaGoActions({
       window.alert("Select a job first.");
       return;
     }
-    (async () => {
+    runExclusive(`complete-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/`, {
           method: "PATCH",
@@ -1290,7 +1295,7 @@ export function useGawaGoActions({
         await refreshJobsFromBackend();
         window.alert(error.message || "Unable to complete job. Please try again.");
       }
-    })();
+    });
   }
   // Returns whether the review was actually saved, so the modal that hosts
   // this form only closes on success -- it used to close unconditionally
@@ -1312,7 +1317,7 @@ export function useGawaGoActions({
       window.alert("Select a completed job first.");
       return false;
     }
-    return (async () => {
+    return runExclusive(`review-${selectedJob.id}-${selectedWorker.id}`, async () => {
       try {
         const body = {
           target_username: selectedWorker.username,
@@ -1349,7 +1354,7 @@ export function useGawaGoActions({
         window.alert(error.message || "Unable to submit review. Please try again.");
         return false;
       }
-    })();
+    });
   }
   function handleWorkerFeedbackSubmit(event) {
     event.preventDefault();
@@ -1367,7 +1372,7 @@ export function useGawaGoActions({
       window.alert("Please select a household rating first.");
       return;
     }
-    (async () => {
+    runExclusive(`worker-feedback-${selectedJob.id}`, async () => {
       try {
         const body = {
           target_username: household.username,
@@ -1399,7 +1404,7 @@ export function useGawaGoActions({
         await refreshReviewsFromBackend();
         window.alert(error.message || "Unable to submit feedback. Please try again.");
       }
-    })();
+    });
   }
   function handleWorkerFeedbackForReviewSubmit(review, feedbackText, ratingValue = "5") {
     if (!currentWorker) {
@@ -1433,7 +1438,7 @@ export function useGawaGoActions({
       window.alert("Unable to determine which job this review is for. Please try again.");
       return;
     }
-    (async () => {
+    runExclusive(`worker-feedback-reply-${review.jobId}`, async () => {
       try {
         const response = await apiRequest("reviews/", {
           method: "POST",
@@ -1457,7 +1462,7 @@ export function useGawaGoActions({
         await refreshReviewsFromBackend();
         window.alert(error.message || "Unable to submit anonymous feedback. Please try again.");
       }
-    })();
+    });
   }
   function handleHouseholdJobSubmit(event) {
     event.preventDefault();
@@ -1475,11 +1480,10 @@ export function useGawaGoActions({
       : householdJobForm.serviceType;
     if (
       !serviceType ||
-      !householdJobForm.preferredDate ||
-      !householdJobForm.preferredTime ||
+      !householdJobForm.jobStartDate ||
       getWorkersNeeded(householdJobForm) < 1
     ) {
-      window.alert("Please complete the service type, preferred date, preferred time, and number of workers needed.");
+      window.alert("Please complete the service type, job start date, and number of workers needed.");
       return;
     }
     if (isSubmittingJobRef.current) {
@@ -1496,7 +1500,7 @@ export function useGawaGoActions({
       const resolvedLocation =
         householdJobLocationPreview ||
         (await resolveLocationCoordinates(householdJobForm.barangay, householdJobForm.streetAddress, true));
-      const scheduledLabel = `${formatScheduleLabel(householdJobForm.scheduleType)}${householdJobForm.preferredDate ? ` on ${householdJobForm.preferredDate}` : ""}${householdJobForm.preferredTime ? ` at ${householdJobForm.preferredTime}` : ""}`;
+      const scheduledLabel = `${formatScheduleLabel(householdJobForm.scheduleType)}${householdJobForm.jobStartDate ? ` starting ${householdJobForm.jobStartDate}` : ""}`;
       const resolvedLatitude =
         resolvedLocation?.latitude ??
         householdJobCoordinates?.latitude ??
@@ -1530,15 +1534,17 @@ export function useGawaGoActions({
         required_skill: serviceType,
         schedule: scheduledLabel,
         schedule_type: householdJobForm.scheduleType,
-        preferred_date: householdJobForm.preferredDate,
-        preferred_time: householdJobForm.preferredTime,
         description: householdJobForm.description.trim(),
-        location_label:
-          resolvedLocation?.locationLabel ||
-          formatLocation(householdJobForm.barangay.trim(), householdJobForm.streetAddress.trim()),
+        // The geocoder only supplies coordinates when a barangay was chosen:
+        // its label is often just "Tayabas, QZ, Philippines", which drops the
+        // barangay that workers and the demand-by-barangay analytics rely on.
+        location_label: householdJobForm.barangay.trim()
+          ? formatLocation(householdJobForm.barangay.trim(), householdJobForm.streetAddress.trim())
+          : resolvedLocation?.locationLabel || formatLocation("", householdJobForm.streetAddress.trim()),
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         service_rate: householdJobForm.offeredRate,
+        rate_type: { "Per Hour": "per_hour", "Fixed Rate": "fixed" }[householdJobForm.rateType] || "per_day",
         worker_slots: getWorkersNeeded(householdJobForm),
         job_start_date: householdJobForm.jobStartDate || null,
         job_end_date: householdJobForm.jobEndDate || null,
@@ -1588,8 +1594,6 @@ export function useGawaGoActions({
             serviceType: "",
             customServiceType: "",
             scheduleType: "One-Time",
-            preferredDate: "",
-            preferredTime: "",
             description: "",
             barangay: savedLocation.barangay,
             streetAddress: savedLocation.streetAddress,
@@ -1621,7 +1625,7 @@ export function useGawaGoActions({
     }
     const request = verificationRequests.find((item) => item.id === requestId);
     if (!request) return;
-    (async () => {
+    runExclusive(`verification-review-${requestId}`, async () => {
       try {
         const response = await apiRequest(`common/verification-requests/${requestId}/review/`, {
           method: "POST",
@@ -1646,7 +1650,9 @@ export function useGawaGoActions({
             verification: "Verified",
             verificationReviewedAt: reviewedAt,
             verificationReviewedBy: currentUser?.displayName || "Admin",
-            profilePhotoPreview: normalizedRequest.primaryIdPreview || backendWorker.profilePhotoPreview || "",
+            // Never the government ID image -- it's a private verification
+            // document, not the worker's public profile photo.
+            profilePhotoPreview: backendWorker.profilePhotoPreview || "",
             verificationNotifications: [
               {
                 id: `approved-${normalizedRequest.id}`,
@@ -1666,7 +1672,7 @@ export function useGawaGoActions({
                     verification: "Verified",
                     verificationReviewedAt: reviewedAt,
                     verificationReviewedBy: currentUser?.displayName || "Admin",
-                    profilePhotoPreview: normalizedRequest.primaryIdPreview || worker.profilePhotoPreview || "",
+                    profilePhotoPreview: worker.profilePhotoPreview || "",
                     verificationNotifications: [
                       {
                         id: `approved-${normalizedRequest.id}`,
@@ -1707,7 +1713,7 @@ export function useGawaGoActions({
         // didn't, and navigating away regardless hid that nothing changed.
         window.alert(error.message || "Unable to approve this verification request. Please try again.");
       }
-    })();
+    });
   }
   function handleAdminRejectVerification(requestId) {
     if (!getAuthToken()) {
@@ -1716,16 +1722,23 @@ export function useGawaGoActions({
     }
     const request = verificationRequests.find((item) => item.id === requestId);
     if (!request) return;
-    const reviewNote =
-      window.prompt("Enter rejection note:", "Please resubmit clearer documents.") || "Rejected by admin.";
-    (async () => {
+    // prompt() returns null when the admin cancels; the old `|| fallback`
+    // turned that into a rejection they never confirmed.
+    const reviewNote = window.prompt("Enter rejection note:", "Please resubmit clearer documents.");
+    if (reviewNote === null) return;
+    const trimmedNote = reviewNote.trim();
+    if (!trimmedNote) {
+      window.alert("Please give a rejection reason so the applicant knows what to fix.");
+      return;
+    }
+    runExclusive(`verification-review-${requestId}`, async () => {
       try {
         const response = await apiRequest(`common/verification-requests/${requestId}/review/`, {
           method: "POST",
           auth: true,
           body: {
             action: "reject",
-            review_note: reviewNote,
+            review_note: trimmedNote,
           },
         });
         const data = await readResponseData(response);
@@ -1744,13 +1757,13 @@ export function useGawaGoActions({
             verification: "Rejected",
             verificationReviewedAt: reviewedAt,
             verificationReviewedBy: currentUser?.displayName || "Admin",
-            verificationRejectionNote: reviewNote,
+            verificationRejectionNote: trimmedNote,
             profilePhotoPreview: backendWorker.profilePhotoPreview || "",
             verificationNotifications: [
               {
                 id: `rejected-${normalizedRequest.id}`,
                 title: "Verification Rejected",
-                message: reviewNote,
+                message: trimmedNote,
                 date: reviewedAt,
                 unread: true,
               },
@@ -1765,13 +1778,13 @@ export function useGawaGoActions({
                     verification: "Rejected",
                     verificationReviewedAt: reviewedAt,
                     verificationReviewedBy: currentUser?.displayName || "Admin",
-                    verificationRejectionNote: reviewNote,
+                    verificationRejectionNote: trimmedNote,
                     profilePhotoPreview: worker.profilePhotoPreview || "",
                     verificationNotifications: [
                       {
                         id: `rejected-${normalizedRequest.id}`,
                         title: "Verification Rejected",
-                        message: reviewNote,
+                        message: trimmedNote,
                         date: reviewedAt,
                         unread: true,
                       },
@@ -1790,7 +1803,7 @@ export function useGawaGoActions({
                     verification: "Rejected",
                     verificationReviewedAt: reviewedAt,
                     verificationReviewedBy: currentUser?.displayName || "Admin",
-                    verificationRejectionNote: reviewNote,
+                    verificationRejectionNote: trimmedNote,
                     verificationSubmission: normalizedRequest,
                   }
                 : household,
@@ -1807,7 +1820,7 @@ export function useGawaGoActions({
         // handleAdminApproveVerification above.
         window.alert(error.message || "Unable to reject this verification request. Please try again.");
       }
-    })();
+    });
   }
   return {
     handleApplyToJob,
@@ -1830,5 +1843,6 @@ export function useGawaGoActions({
     handleAdminApproveVerification,
     handleAdminRejectVerification,
     isSubmittingJob,
+    isActionPending,
   };
 }

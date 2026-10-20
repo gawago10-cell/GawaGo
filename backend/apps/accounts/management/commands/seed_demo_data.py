@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
+from apps.accounts.services import ensure_portfolio_skills
 from apps.common.models import VerificationRequest
 from apps.jobs.models import JobApplication, JobPosting
 from apps.reviews.models import Review
@@ -184,6 +185,8 @@ class Command(BaseCommand):
             profile.average_rating = Decimal(account["rating"]) if account["rating"] else None
             profile.rating_count = account["rating_count"]
         profile.save()
+        if role == UserProfile.ROLE_WORKER:
+            ensure_portfolio_skills(user, profile.skills)
         return profile
 
     def _upsert_job(self, users, job_data):

@@ -32,8 +32,9 @@ export function useGawaGoDomEffects({
     if (currentUser?.role !== "household") {
       return;
     }
+    // Nothing loaded yet (or no jobs): keep the selection, which may have
+    // been restored after a reload and is about to match a loaded job.
     if (!householdJobs.length) {
-      setSelectedJobId(null);
       return;
     }
     if (!householdJobs.some((item) => String(item.id) === String(selectedJobId))) {

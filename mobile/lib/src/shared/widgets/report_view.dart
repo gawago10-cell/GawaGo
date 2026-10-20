@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../../core/errors/api_error.dart';
 
 import '../../core/theme/gawago_colors.dart';
 import '../../features/reports/data/report_models.dart';
@@ -30,7 +33,9 @@ class _ReportViewState extends State<ReportView> {
   }
 
   void _reload() {
-    setState(() => _future = _load());
+    setState(() {
+      _future = _load();
+    });
   }
 
   Future<void> _pickDate({required bool isStart}) async {
@@ -50,6 +55,32 @@ class _ReportViewState extends State<ReportView> {
       }
       _future = _load();
     });
+  }
+
+  bool _exporting = false;
+
+  /// The app has no file-save or share plugin, so the backend's CSV goes to
+  /// the clipboard, ready to paste into a spreadsheet.
+  Future<void> _copyCsv() async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final csv = await widget.repository.getPlatformReportCsv(
+        start: _start == null ? null : _isoDate(_start!),
+        end: _end == null ? null : _isoDate(_end!),
+      );
+      await Clipboard.setData(ClipboardData(text: csv));
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Report copied as CSV. Paste it into a spreadsheet.'),
+        ),
+      );
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   void _clearPeriod() {
@@ -86,6 +117,15 @@ class _ReportViewState extends State<ReportView> {
                 onPickEnd: () => _pickDate(isStart: false),
                 onClear: _start == null && _end == null ? null : _clearPeriod,
               ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _exporting ? null : _copyCsv,
+                  icon: const Icon(Icons.table_view_outlined),
+                  label: Text(_exporting ? 'Preparing CSV...' : 'Copy as CSV'),
+                ),
+              ),
               const SizedBox(height: 12),
               ResponsiveMetricGrid(
                 children: report.summary.entries
@@ -120,9 +160,9 @@ class _ReportHeader extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -130,8 +170,9 @@ class _ReportHeader extends StatelessWidget {
           Text(
             report.title,
             style: const TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
               color: GawaGoColors.ink,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               fontSize: 18,
             ),
           ),
@@ -195,9 +236,9 @@ class _SummaryCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -214,9 +255,10 @@ class _SummaryCard extends StatelessWidget {
           Text(
             value,
             style: const TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
               color: GawaGoColors.ink,
               fontSize: 20,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -236,9 +278,9 @@ class _SectionCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -325,8 +367,12 @@ String _formatValue(String key, dynamic value) {
   if (lowerKey.endsWith('rate') || lowerKey.contains('percent')) {
     return '$value%';
   }
-  if (lowerKey.contains('spend') || lowerKey.contains('earnings')) {
-    return 'PHP $value';
+  // Money: agreed rates of completed jobs (GawaGo processes no payments).
+  if (lowerKey.contains('spend') ||
+      lowerKey.contains('earnings') ||
+      lowerKey.endsWith('value')) {
+    final amount = double.tryParse(value.toString());
+    return amount == null ? 'PHP $value' : 'PHP ${amount.toStringAsFixed(2)}';
   }
   return value.toString();
 }

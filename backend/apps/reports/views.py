@@ -2,6 +2,8 @@ import csv
 
 from django.http import HttpResponse
 from django.utils.dateparse import parse_date
+from rest_framework import status
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +15,26 @@ from apps.reports.services import (
     report_to_csv_rows,
     resolve_period,
 )
+
+
+def _parse_bound(raw, field):
+    """A date bound, or None when it wasn't given.
+
+    parse_date() returns None for text that isn't a date at all but *raises*
+    for a well-formed yet impossible one like 2026-02-30, which used to come
+    back as a 500 and a debug page. Both are the caller's mistake, so both get
+    the same validation error rather than one being silently replaced by the
+    default window.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        parsed = parse_date(str(raw).strip())
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        raise ValidationError({field: "Use a real date in YYYY-MM-DD form."})
+    return parsed
 
 
 class _ReportView(APIView):
@@ -31,10 +53,13 @@ class _ReportView(APIView):
         raise NotImplementedError
 
     def get(self, request):
-        period = resolve_period(
-            parse_date(request.query_params.get("start") or ""),
-            parse_date(request.query_params.get("end") or ""),
-        )
+        try:
+            period = resolve_period(
+                _parse_bound(request.query_params.get("start"), "start"),
+                _parse_bound(request.query_params.get("end"), "end"),
+            )
+        except ValidationError as invalid:
+            return Response(invalid.detail, status=status.HTTP_400_BAD_REQUEST)
         report = self.build(request, period)
 
         if request.query_params.get("export") == "csv":
@@ -52,6 +77,11 @@ class MyReportView(_ReportView):
     permission_classes = [IsAuthenticated]
 
     def build(self, request, period):
+        # Staff have no household/worker activity of their own, so this used to
+        # hand them an all-zero "worker" report. The platform report is theirs
+        # (AGENTS.md IV.B: only admins get an activity-report screen).
+        if request.user.is_staff:
+            raise PermissionDenied("Administrators should use the platform report.")
         return build_report_for_user(request.user, period)
 
 

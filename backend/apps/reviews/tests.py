@@ -126,7 +126,7 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(self.worker.profile.rating_count, 1)
         notification = Notification.objects.get(
             recipient=self.worker,
-            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+            notification_type=Notification.TYPE_REVIEW,
             title="New review received",
         )
         self.assertEqual(notification.actor, self.household)
@@ -176,6 +176,18 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(self.worker.profile.average_rating, Decimal("5.00"))
         self.assertEqual(self.worker.profile.rating_count, 1)
 
+    def test_review_without_any_rating_is_rejected(self):
+        self.client.force_authenticate(user=self.worker)
+
+        response = self.client.post(
+            reverse("review-list-create"),
+            {"target_username": self.household.username, "job_id": self.completed_job.id, "feedback": "ok"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Review.objects.exists())
+
     def test_worker_can_review_household_after_completed_job(self):
         self.client.force_authenticate(user=self.worker)
 
@@ -203,10 +215,11 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(response.data["author_name"], "j*** i*****")
         notification = Notification.objects.get(
             recipient=self.household,
-            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+            notification_type=Notification.TYPE_REVIEW,
             title="New feedback received",
         )
-        self.assertEqual(notification.actor, self.worker)
+        # The feedback is anonymous, so the notification must not name its author.
+        self.assertIsNone(notification.actor)
         self.assertEqual(notification.related_job_id, self.completed_job.id)
         self.assertEqual(notification.action_type, Notification.ACTION_REVIEW)
         self.assertEqual(notification.action_url, f"/reviews/jobs/{self.completed_job.id}")
@@ -226,11 +239,11 @@ class ReviewPermissionTests(TestCase):
         response = self.client.get(reverse("review-list-create"), {"username": self.household.username})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
-        self.assertIsNone(response.data[0]["author"])
-        self.assertEqual(response.data[0]["author_username"], "")
-        self.assertEqual(response.data[0]["author_name"], "j*** i*****")
-        self.assertEqual(response.data[0]["feedback"], "Fair household")
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertIsNone(response.data["results"][0]["author"])
+        self.assertEqual(response.data["results"][0]["author_username"], "")
+        self.assertEqual(response.data["results"][0]["author_name"], "j*** i*****")
+        self.assertEqual(response.data["results"][0]["feedback"], "Fair household")
 
     def test_public_author_filter_does_not_expose_worker_feedback(self):
         Review.objects.create(
@@ -246,7 +259,7 @@ class ReviewPermissionTests(TestCase):
         response = self.client.get(reverse("review-list-create"), {"author_username": self.worker.username})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, [])
+        self.assertEqual(response.data["results"], [])
 
     def test_worker_can_fetch_own_given_feedback_without_author_identity(self):
         Review.objects.create(
@@ -263,10 +276,10 @@ class ReviewPermissionTests(TestCase):
         response = self.client.get(reverse("review-list-create"), {"author_username": self.worker.username})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
-        self.assertIsNone(response.data[0]["author"])
-        self.assertEqual(response.data[0]["author_username"], "")
-        self.assertEqual(response.data[0]["author_name"], "j*** i*****")
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertIsNone(response.data["results"][0]["author"])
+        self.assertEqual(response.data["results"][0]["author_username"], "")
+        self.assertEqual(response.data["results"][0]["author_name"], "j*** i*****")
 
     def test_household_review_author_identity_is_still_visible(self):
         Review.objects.create(
@@ -283,8 +296,8 @@ class ReviewPermissionTests(TestCase):
         response = self.client.get(reverse("review-list-create"), {"username": self.worker.username})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data[0]["author"], self.household.id)
-        self.assertEqual(response.data[0]["author_username"], self.household.username)
+        self.assertEqual(response.data["results"][0]["author"], self.household.id)
+        self.assertEqual(response.data["results"][0]["author_username"], self.household.username)
 
     def test_household_cannot_review_same_worker_twice_for_completed_job(self):
         self.client.force_authenticate(user=self.household)
@@ -461,7 +474,7 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(Review.objects.get().rating, Decimal("3.5"))
         self.worker.profile.refresh_from_db()
         self.assertEqual(self.worker.profile.average_rating, Decimal("3.50"))
-        self.assertEqual(response.data[0]["rating"], "3.5")
+        self.assertEqual(response.data["results"][0]["rating"], "3.5")
 
     def test_default_rating_command_skips_recent_completed_jobs(self):
         self.completed_job.completed_at = timezone.now() - timezone.timedelta(hours=47)
@@ -556,3 +569,27 @@ class RatingTrendTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.worker.profile.refresh_from_db()
         self.assertEqual(self.worker.profile.rating_trend, "neutral")
+
+
+class ReputationTierTests(TestCase):
+    """AGENTS.md II.A: tiers above New need 5+ reviews."""
+
+    def _tier(self, rating, count):
+        from apps.accounts.models import UserProfile
+        from apps.reviews.services import calculate_reputation_tier
+
+        user = User.objects.create_user(username=f"tier-{rating}-{count}", password="password")
+        UserProfile.objects.create(
+            user=user, role=UserProfile.ROLE_WORKER, average_rating=Decimal(rating), rating_count=count
+        )
+        return calculate_reputation_tier(user)
+
+    def test_few_reviews_stay_new_even_at_five_stars(self):
+        self.assertEqual(self._tier("5.00", 2), "new")
+        self.assertEqual(self._tier("5.00", 4), "new")
+
+    def test_tiers_with_five_reviews(self):
+        self.assertEqual(self._tier("4.60", 5), "elite")
+        self.assertEqual(self._tier("4.10", 5), "trusted")
+        self.assertEqual(self._tier("3.60", 5), "established")
+        self.assertEqual(self._tier("3.00", 5), "new")

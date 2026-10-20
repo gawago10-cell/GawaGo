@@ -1,0 +1,11 @@
+# Only needed when DJANGO_DB_ENGINE=mysql. The default deployment is
+# PostgreSQL (see deployment.md), whose driver is in requirements.txt.
+#
+# mysqlclient compiles against MySQL's client headers, so install those first:
+#   sudo apt install -y pkg-config default-libmysqlclient-dev
+#
+# PyMySQL is a pure-Python alternative that needs no system headers; select it
+# with DJANGO_MYSQL_DRIVER=pymysql if you would rather not compile anything.
+-r requirements.txt
+mysqlclient>=2.2
+PyMySQL>=1.1

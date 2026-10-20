@@ -11,11 +11,22 @@ class Review(models.Model):
         (ROLE_WORKER, "Worker"),
     ]
 
-    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="authored_reviews")
+    # SET_NULL, not CASCADE: deleting the account that *wrote* a review must
+    # never rewrite the reputation of the person it was about. The username is
+    # snapshotted so a review whose author is gone can still be attributed.
+    # target stays CASCADE -- a review about a deleted account has no subject.
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="authored_reviews",
+        null=True,
+        blank=True,
+    )
+    author_username = models.CharField(max_length=150, blank=True, default="")
     target = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_reviews")
     author_role = models.CharField(max_length=20, choices=AUTHOR_ROLE_CHOICES)
     target_role = models.CharField(max_length=20, choices=AUTHOR_ROLE_CHOICES)
-    job = models.ForeignKey("jobs.JobPosting", on_delete=models.CASCADE, related_name="reviews", null=True, blank=True)
+    job = models.ForeignKey("jobs.JobPosting", on_delete=models.SET_NULL, related_name="reviews", null=True, blank=True)
     job_title = models.CharField(max_length=255, blank=True, default="")
     rating = models.DecimalField(max_digits=2, decimal_places=1, null=True, blank=True)
     feedback = models.TextField(blank=True, default="")
@@ -45,5 +56,17 @@ class Review(models.Model):
             )
         ]
 
+    def save(self, *args, **kwargs):
+        if self.author_id and not self.author_username:
+            self.author_username = self.author.username
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = list(update_fields) + ["author_username"]
+        super().save(*args, **kwargs)
+
+    @property
+    def author_label(self) -> str:
+        return self.author.username if self.author_id else (self.author_username or "Deleted account")
+
     def __str__(self) -> str:
-        return f"{self.author.username} -> {self.target.username}"
+        return f"{self.author_label} -> {self.target.username}"

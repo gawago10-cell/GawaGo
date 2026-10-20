@@ -1,13 +1,24 @@
+import 'dart:typed_data';
+
 import '../../../core/api/gawago_api.dart';
 import 'complaint_models.dart';
 
 class ComplaintRepository {
   const ComplaintRepository();
 
-  /// Reports the caller filed, plus reports naming them as respondent.
+  /// Reports the caller filed. Reports naming the caller are never returned.
   Future<List<ComplaintReport>> getMyComplaints() async {
     final data = await GawaGoApi.getList('/complaints/');
     return data.map((item) => ComplaintReport.fromJson(item)).toList();
+  }
+
+  /// Evidence photos sit behind a permission-checked route, so they are
+  /// fetched as bytes with the bearer token (Image.network can't send it).
+  /// [imageUrl] is the absolute `image_url` the API returns.
+  Future<Uint8List> getEvidenceBytes(String imageUrl) {
+    final apiIndex = imageUrl.indexOf('/api/');
+    final path = apiIndex == -1 ? imageUrl : imageUrl.substring(apiIndex + 4);
+    return GawaGoApi.getBytes(path);
   }
 
   /// [respondentId] is required when the caller is a household (they pick

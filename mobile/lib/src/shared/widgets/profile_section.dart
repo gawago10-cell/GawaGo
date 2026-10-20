@@ -23,31 +23,38 @@ class ProfileSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+        border: Border.all(color: GawaGoColors.border, width: 1.2),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            color: GawaGoColors.primary,
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: GawaGoColors.line)),
+            ),
             padding: const EdgeInsets.fromLTRB(18, 14, 12, 14),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
                     title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,
+                      fontFamily: GawaGoColors.fontHeading,
+                      color: GawaGoColors.ink,
                       fontSize: 17,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
                   ),
                 ),
-                ?action,
+                // Flexible so a wide action (e.g. a labelled button) shrinks
+                // instead of forcing the row past 320dp (F-07).
+                if (action != null) Flexible(child: action!),
               ],
             ),
           ),
@@ -73,16 +80,18 @@ class ProfileSectionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FilledButton(
+    return OutlinedButton(
       onPressed: onPressed,
-      style: FilledButton.styleFrom(
-        backgroundColor: Colors.white,
-        foregroundColor: GawaGoColors.primary,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.transparent,
+        foregroundColor: GawaGoColors.leafDeep,
+        side: const BorderSide(color: GawaGoColors.lineStrong, width: 1.5),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        shape: const StadiumBorder(),
         textStyle: const TextStyle(
-          fontSize: 13.5,
-          fontWeight: FontWeight.w900,
+          fontFamily: GawaGoColors.fontBody,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
           letterSpacing: 0,
         ),
       ),
@@ -119,7 +128,7 @@ class SoftGreenPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = muted ? const Color(0xFF6C7870) : GawaGoColors.primary;
+    final color = muted ? GawaGoColors.textMuted : GawaGoColors.leafDeep;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -135,6 +144,32 @@ class SoftGreenPill extends StatelessWidget {
           fontWeight: FontWeight.w800,
           letterSpacing: 0,
         ),
+      ),
+    );
+  }
+}
+
+/// The per-skill ratings a worker received on one completed job, shown on
+/// both employment-history views. Entries are skill name -> rating (1-5).
+class JobSkillRatingChips extends StatelessWidget {
+  const JobSkillRatingChips({super.key, required this.ratings});
+
+  final List<MapEntry<String, double>> ratings;
+
+  @override
+  Widget build(BuildContext context) {
+    if (ratings.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final entry in ratings)
+            SoftGreenPill(
+              label: '${entry.key} ★ ${entry.value.toStringAsFixed(1)}',
+            ),
+        ],
       ),
     );
   }
@@ -164,9 +199,9 @@ class ProfileSkillTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F5F0),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE6E0D6)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Row(
         children: [
@@ -198,7 +233,8 @@ class ProfileSkillTile extends StatelessWidget {
                   runSpacing: 6,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    SoftGreenPill(label: proficiencyLabel),
+                    if (proficiencyLabel.isNotEmpty)
+                      SoftGreenPill(label: proficiencyLabel),
                     if (averageRating != null)
                       Text(
                         '${averageRating!.toStringAsFixed(2)} from $ratingCount '

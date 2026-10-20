@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/gawago_colors.dart';
 import '../utils/display_formatters.dart';
 
 class StatusBadge extends StatelessWidget {
@@ -64,83 +65,103 @@ class StatusCard extends StatelessWidget {
     final color = statusColor(status);
     final hasTrailing = trailing != null || onTap != null;
     final actionPadding = trailing != null ? 74.0 : 34.0;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      color: emphasized ? color.withValues(alpha: 0.09) : null,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: emphasized
-              ? color.withValues(alpha: 0.55)
-              : const Color(0xFFD8D0C3),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x141F2A19),
+              blurRadius: 18,
+              offset: Offset(0, 6),
+            ),
+          ],
         ),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Stack(
-            children: [
-              Padding(
-                padding: EdgeInsets.only(
-                  right: hasTrailing ? actionPadding : 0,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: color.withValues(alpha: 0.14),
-                      foregroundColor: color,
-                      child: Icon(icon, size: 20),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Material(
+            color: GawaGoColors.surface,
+            child: InkWell(
+              onTap: onTap,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: emphasized
+                          ? GawaGoColors.primary
+                          : GawaGoColors.border,
+                      width: 4,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
+                  ),
+                ),
+                padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+                child: Stack(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(
+                        right: hasTrailing ? actionPadding : 0,
+                      ),
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            title,
-                            style: const TextStyle(
-                              color: Color(0xFF10251A),
-                              fontSize: 15,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0,
-                            ),
+                          CircleAvatar(
+                            radius: 18,
+                            backgroundColor: color.withValues(alpha: 0.14),
+                            foregroundColor: color,
+                            child: Icon(icon, size: 20),
                           ),
-                          if (status != null && status!.trim().isNotEmpty) ...[
-                            const SizedBox(height: 5),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: StatusBadge(status: status!),
-                            ),
-                          ],
-                          const SizedBox(height: 7),
-                          Text(
-                            subtitle,
-                            style: const TextStyle(
-                              color: Color(0xFF355444),
-                              fontSize: 13,
-                              height: 1.3,
-                              letterSpacing: 0,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  title,
+                                  style: const TextStyle(
+                                    fontFamily: GawaGoColors.fontHeading,
+                                    color: GawaGoColors.ink,
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0,
+                                  ),
+                                ),
+                                if (status != null &&
+                                    status!.trim().isNotEmpty) ...[
+                                  const SizedBox(height: 5),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: StatusBadge(status: status!),
+                                  ),
+                                ],
+                                const SizedBox(height: 7),
+                                Text(
+                                  subtitle,
+                                  style: const TextStyle(
+                                    color: GawaGoColors.textMuted,
+                                    fontSize: 13,
+                                    height: 1.35,
+                                    letterSpacing: 0,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
                     ),
+                    if (trailing != null)
+                      Positioned(top: 0, right: 0, child: trailing!)
+                    else if (onTap != null)
+                      const Positioned(
+                        top: 7,
+                        right: 0,
+                        child: Icon(Icons.chevron_right),
+                      ),
                   ],
                 ),
               ),
-              if (trailing != null)
-                Positioned(top: 0, right: 0, child: trailing!)
-              else if (onTap != null)
-                const Positioned(
-                  top: 7,
-                  right: 0,
-                  child: Icon(Icons.chevron_right),
-                ),
-            ],
+            ),
           ),
         ),
       ),
@@ -150,10 +171,12 @@ class StatusCard extends StatelessWidget {
 
 Color statusColor(String? status) {
   return switch (status?.trim().toLowerCase()) {
-    'verified' || 'completed' || 'hired' || 'accepted' => Colors.green,
-    'pending' || 'hire_requested' || 'completion_requested' => Colors.orange,
-    'rejected' || 'cancelled' => Colors.red,
-    'assigned' || 'open' => Colors.blue,
-    _ => Colors.blueGrey,
+    'verified' || 'completed' || 'hired' || 'accepted' => GawaGoColors.leafDeep,
+    'pending' ||
+    'hire_requested' ||
+    'completion_requested' => const Color(0xFF9A6B1C),
+    'rejected' || 'cancelled' => GawaGoColors.danger,
+    'assigned' || 'open' => GawaGoColors.leafDeep,
+    _ => GawaGoColors.textMuted,
   };
 }

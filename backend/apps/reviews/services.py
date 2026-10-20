@@ -1,8 +1,9 @@
 from decimal import Decimal
 from datetime import timedelta
 
+from django.core.cache import cache
 from django.db import IntegrityError
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
@@ -65,27 +66,34 @@ def recalculate_worker_rating(worker_user) -> None:
 
 def assign_default_worker_ratings(after_hours: int = DEFAULT_NO_FEEDBACK_AFTER_HOURS, dry_run: bool = False) -> int:
     cutoff = timezone.now() - timezone.timedelta(hours=after_hours)
-    applications = JobApplication.objects.select_related("job", "job__household", "worker").filter(
-        status=JobApplication.STATUS_COMPLETED,
-        job__status=JobPosting.STATUS_COMPLETED,
-        job__completed_at__isnull=False,
-        job__completed_at__lte=cutoff,
+    # Any household review of that worker on that job -- a real one, one
+    # scored only on the four metrics, or the 3.5 placeholder itself -- means
+    # there is nothing to assign. Excluding placeholders here used to retry
+    # (and fail) the same insert on every sweep, forever; checking in one
+    # query instead of one EXISTS per row keeps the sweep cheap as history
+    # grows.
+    household_review = Review.objects.filter(
+        job=OuterRef("job"),
+        author=OuterRef("job__household"),
+        target=OuterRef("worker"),
+        author_role=Review.ROLE_HOUSEHOLD,
+        target_role=Review.ROLE_WORKER,
+    )
+    applications = (
+        JobApplication.objects.select_related("job", "job__household", "worker")
+        .filter(
+            status=JobApplication.STATUS_COMPLETED,
+            job__status=JobPosting.STATUS_COMPLETED,
+            job__completed_at__isnull=False,
+            job__completed_at__lte=cutoff,
+        )
+        .annotate(already_rated=Exists(household_review))
+        .filter(already_rated=False)
     )
 
     created_count = 0
     for application in applications:
         job = application.job
-        already_rated = Review.objects.filter(
-            job=job,
-            author=job.household,
-            target=application.worker,
-            author_role=Review.ROLE_HOUSEHOLD,
-            target_role=Review.ROLE_WORKER,
-            rating__isnull=False,
-        ).exists()
-        if already_rated:
-            continue
-
         if dry_run:
             created_count += 1
             continue
@@ -113,38 +121,36 @@ def assign_due_default_worker_ratings() -> int:
     return assign_default_worker_ratings(after_hours=DEFAULT_NO_FEEDBACK_AFTER_HOURS)
 
 
+# Reads that self-trigger the sweep (reviews, profiles, the admin dashboard)
+# share one cooldown: cache.add() succeeds for one caller per window, so a
+# looped request drives at most one sweep per window instead of one each.
+ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS = 300
+ASSIGN_DEFAULT_RATINGS_LOCK_KEY = "reviews:assign_due_default_ratings_lock"
+
+
+def assign_due_default_worker_ratings_on_read() -> int:
+    if not cache.add(ASSIGN_DEFAULT_RATINGS_LOCK_KEY, True, ASSIGN_DEFAULT_RATINGS_COOLDOWN_SECONDS):
+        return 0
+    return assign_due_default_worker_ratings()
+
+
 def calculate_reputation_tier(user) -> str:
-    """
-    Calculate reputation tier based on:
-    - Average rating (4.5+ = Elite, 4.0+ = Trusted, 3.5+ = Established, < 3.5 = New)
-    - Number of ratings (minimum 5 ratings required for Elite/Trusted)
-    """
+    """AGENTS.md II.A: every tier above New needs 5+ reviews -- Elite 4.5+,
+    Trusted 4.0+, Established 3.5+. A couple of early 5-star reviews must not
+    outrank a worker with a long record."""
     profile = getattr(user, "profile", None)
     if not profile:
         return UserProfile.TIER_NEW
 
     rating = profile.average_rating
-    count = profile.rating_count
-
-    # Not enough ratings yet
-    if count < 2:
+    if profile.rating_count < 5 or rating is None:
         return UserProfile.TIER_NEW
-
-    if count >= 5 and rating is not None:
-        if rating >= Decimal("4.5"):
-            return UserProfile.TIER_ELITE
-        elif rating >= Decimal("4.0"):
-            return UserProfile.TIER_TRUSTED
-        elif rating >= Decimal("3.5"):
-            return UserProfile.TIER_ESTABLISHED
-
-    # With fewer ratings, use lower thresholds
-    if rating is not None:
-        if rating >= Decimal("4.5"):
-            return UserProfile.TIER_TRUSTED
-        elif rating >= Decimal("3.8"):
-            return UserProfile.TIER_ESTABLISHED
-
+    if rating >= Decimal("4.5"):
+        return UserProfile.TIER_ELITE
+    if rating >= Decimal("4.0"):
+        return UserProfile.TIER_TRUSTED
+    if rating >= Decimal("3.5"):
+        return UserProfile.TIER_ESTABLISHED
     return UserProfile.TIER_NEW
 
 
@@ -202,6 +208,10 @@ def update_worker_reputation(user) -> None:
     profile = getattr(user, "profile", None)
     if not profile:
         return
+    # The rating average is recalculated by a signal on a different User
+    # instance, so the profile cached on this one can still hold the old
+    # average; the tier must come from the stored value.
+    profile.refresh_from_db(fields=["average_rating", "rating_count"])
 
     profile.reputation_tier = calculate_reputation_tier(user)
     profile.rating_trend = calculate_rating_trend(user)

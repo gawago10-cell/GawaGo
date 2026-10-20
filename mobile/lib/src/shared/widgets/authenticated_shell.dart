@@ -2,57 +2,185 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/gawago_colors.dart';
 
-ThemeData authenticatedTheme() {
-  final colorScheme = ColorScheme.fromSeed(
-    seedColor: GawaGoColors.primary,
-    brightness: Brightness.light,
-    surface: GawaGoColors.surface,
+/// Headings use Space Grotesk; everything else inherits Plus Jakarta Sans.
+TextTheme gawagoTextTheme(TextTheme base) {
+  TextStyle? heading(TextStyle? style) =>
+      style?.copyWith(fontFamily: GawaGoColors.fontHeading);
+  return base
+      .apply(fontFamily: GawaGoColors.fontBody)
+      .copyWith(
+        displayLarge: heading(base.displayLarge),
+        displayMedium: heading(base.displayMedium),
+        displaySmall: heading(base.displaySmall),
+        headlineLarge: heading(base.headlineLarge),
+        headlineMedium: heading(base.headlineMedium),
+        headlineSmall: heading(base.headlineSmall),
+        titleLarge: heading(base.titleLarge),
+      );
+}
+
+const gawagoCardShadow = [
+  BoxShadow(color: Color(0x1A1F2A19), blurRadius: 22, offset: Offset(0, 8)),
+];
+
+/// Heading font for widgets that build their own [TextStyle].
+TextStyle gawagoHeading({
+  double? fontSize,
+  FontWeight fontWeight = FontWeight.w700,
+  Color color = GawaGoColors.ink,
+  double? height,
+}) {
+  return TextStyle(
+    fontFamily: GawaGoColors.fontHeading,
+    fontSize: fontSize,
+    fontWeight: fontWeight,
+    color: color,
+    height: height,
+    letterSpacing: -0.2,
   );
-  return ThemeData(
+}
+
+ThemeData authenticatedTheme() {
+  final colorScheme =
+      ColorScheme.fromSeed(
+        seedColor: GawaGoColors.primary,
+        brightness: Brightness.light,
+        surface: GawaGoColors.surface,
+      ).copyWith(
+        primary: GawaGoColors.leafDeep,
+        onPrimary: Colors.white,
+        primaryContainer: GawaGoColors.leafTint,
+        onPrimaryContainer: GawaGoColors.leafDeep,
+        secondaryContainer: GawaGoColors.leafTint,
+        onSecondaryContainer: GawaGoColors.leafDeep,
+        surface: GawaGoColors.surface,
+        onSurface: GawaGoColors.ink,
+        onSurfaceVariant: GawaGoColors.textMuted,
+        outline: GawaGoColors.lineStrong,
+        outlineVariant: GawaGoColors.border,
+        error: GawaGoColors.danger,
+      );
+  final buttonShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(10),
+  );
+  const buttonText = TextStyle(
+    fontFamily: GawaGoColors.fontBody,
+    fontWeight: FontWeight.w700,
+  );
+  final base = ThemeData(
     useMaterial3: true,
     colorScheme: colorScheme,
+    fontFamily: GawaGoColors.fontBody,
+  );
+  return base.copyWith(
+    textTheme: gawagoTextTheme(base.textTheme),
     scaffoldBackgroundColor: Colors.transparent,
     cardTheme: CardThemeData(
       color: GawaGoColors.surface,
+      surfaceTintColor: Colors.transparent,
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
         side: const BorderSide(color: GawaGoColors.border),
       ),
     ),
     appBarTheme: const AppBarTheme(
-      backgroundColor: Color(0xFF0F2D1F),
-      foregroundColor: Colors.white,
+      backgroundColor: GawaGoColors.sidebar,
+      foregroundColor: GawaGoColors.cream,
       elevation: 8,
-      shadowColor: Color(0x2E0F2D1F),
+      shadowColor: Color(0x2E1A2415),
       centerTitle: false,
       toolbarHeight: 56,
       titleTextStyle: TextStyle(
-        color: Colors.white,
+        fontFamily: GawaGoColors.fontHeading,
+        color: GawaGoColors.cream,
         fontSize: 18,
-        fontWeight: FontWeight.w900,
+        fontWeight: FontWeight.w700,
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: const Color(0xFFF8FCF9),
-      indicatorColor: GawaGoColors.primary.withValues(alpha: 0.18),
+      backgroundColor: GawaGoColors.surface,
+      indicatorColor: GawaGoColors.leafTint,
       elevation: 8,
       labelTextStyle: const WidgetStatePropertyAll(
         TextStyle(fontWeight: FontWeight.w700),
       ),
     ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: GawaGoColors.primary,
+        foregroundColor: GawaGoColors.onPrimary,
+        disabledBackgroundColor: GawaGoColors.primary.withValues(alpha: 0.4),
+        disabledForegroundColor: GawaGoColors.onPrimary.withValues(alpha: 0.6),
+        shape: buttonShape,
+        textStyle: buttonText,
+      ),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: GawaGoColors.primary,
+        foregroundColor: GawaGoColors.onPrimary,
+        elevation: 0,
+        shape: buttonShape,
+        textStyle: buttonText,
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: GawaGoColors.leafDeep,
+        side: const BorderSide(color: GawaGoColors.primary, width: 1.5),
+        shape: buttonShape,
+        textStyle: buttonText,
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: GawaGoColors.leafDeep,
+        textStyle: buttonText,
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: GawaGoColors.leafTint,
+      selectedColor: GawaGoColors.primary,
+      side: const BorderSide(color: GawaGoColors.leafLine),
+      labelStyle: const TextStyle(
+        color: GawaGoColors.leafDeep,
+        fontWeight: FontWeight.w700,
+      ),
+      shape: const StadiumBorder(),
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: GawaGoColors.input,
+      hintStyle: const TextStyle(color: GawaGoColors.textFaint),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: GawaGoColors.border),
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: GawaGoColors.inputBorder),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: GawaGoColors.border),
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: GawaGoColors.inputBorder),
       ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: GawaGoColors.primary, width: 1.5),
+      ),
+    ),
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
+      color: GawaGoColors.leafDeep,
+    ),
+    dialogTheme: const DialogThemeData(
+      backgroundColor: GawaGoColors.surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+    popupMenuTheme: const PopupMenuThemeData(
+      color: GawaGoColors.surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: GawaGoColors.surface,
+      surfaceTintColor: Colors.transparent,
     ),
     dividerColor: GawaGoColors.border,
   );
@@ -65,16 +193,7 @@ class AuthenticatedBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFF5F0E8), Color(0xFFFFFDF8), Color(0xFFF5F0E8)],
-        ),
-      ),
-      child: child,
-    );
+    return ColoredBox(color: GawaGoColors.workspace, child: child);
   }
 }
 
@@ -154,10 +273,10 @@ class MobileDashboardDetailTopbar extends StatelessWidget {
         height: 56,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: const BoxDecoration(
-          color: Color(0xFF0F2D1F),
+          color: GawaGoColors.sidebar,
           boxShadow: [
             BoxShadow(
-              color: Color(0x2E0F2D1F),
+              color: Color(0x2E1A2415),
               blurRadius: 18,
               offset: Offset(0, 8),
             ),
@@ -187,9 +306,10 @@ class MobileDashboardDetailTopbar extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Colors.white,
+                  fontFamily: GawaGoColors.fontHeading,
+                  color: GawaGoColors.cream,
                   fontSize: 18,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
               ),
@@ -256,7 +376,7 @@ class _AuthenticatedScaffoldState extends State<AuthenticatedScaffold> {
                 duration: const Duration(milliseconds: 220),
                 child: GestureDetector(
                   onTap: () => _setMenuOpen(false),
-                  child: Container(color: const Color(0x73103D29)),
+                  child: Container(color: const Color(0x731A2415)),
                 ),
               ),
             ),
@@ -308,10 +428,10 @@ class MobileDashboardTopbar extends StatelessWidget {
         height: 56,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: const BoxDecoration(
-          color: Color(0xFF0F2D1F),
+          color: GawaGoColors.sidebar,
           boxShadow: [
             BoxShadow(
-              color: Color(0x2E0F2D1F),
+              color: Color(0x2E1A2415),
               blurRadius: 18,
               offset: Offset(0, 8),
             ),
@@ -327,9 +447,10 @@ class MobileDashboardTopbar extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Colors.white,
+                  fontFamily: GawaGoColors.fontHeading,
+                  color: GawaGoColors.cream,
                   fontSize: 18,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
               ),
@@ -492,7 +613,7 @@ class GawaGoDashboardDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     return Drawer(
       width: 292,
-      backgroundColor: GawaGoColors.deepGreen,
+      backgroundColor: GawaGoColors.sidebar,
       child: SafeArea(
         child: Column(
           children: [
@@ -500,7 +621,7 @@ class GawaGoDashboardDrawer extends StatelessWidget {
               padding: EdgeInsets.fromLTRB(22, 22, 20, 20),
               child: _DrawerBrand(),
             ),
-            const Divider(height: 1, color: Color(0xFF1F4030)),
+            const Divider(height: 1, color: Color(0x1AF5F1E6)),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(14, 22, 14, 16),
@@ -512,10 +633,10 @@ class GawaGoDashboardDrawer extends StatelessWidget {
                     child: Text(
                       roleLabel.toUpperCase(),
                       style: const TextStyle(
-                        color: Color(0xFF789D85),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.4,
+                        color: GawaGoColors.sidebarSection,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
                       ),
                     ),
                   ),
@@ -536,14 +657,16 @@ class GawaGoDashboardDrawer extends StatelessWidget {
                     child: Text('Log Out'),
                   ),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFFF9B9B),
-                    side: const BorderSide(color: Color(0xFF6A2B2B)),
+                    foregroundColor: GawaGoColors.logout,
+                    backgroundColor: const Color(0x1AD08A76),
+                    side: BorderSide.none,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(7),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     textStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                      fontFamily: GawaGoColors.fontBody,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
@@ -572,7 +695,7 @@ class _DashboardSidebarPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: GawaGoColors.deepGreen,
+      color: GawaGoColors.sidebar,
       elevation: 18,
       shadowColor: const Color(0x47081810),
       child: SafeArea(
@@ -582,7 +705,7 @@ class _DashboardSidebarPanel extends StatelessWidget {
               padding: EdgeInsets.fromLTRB(16, 18, 16, 14),
               child: _DrawerBrand(compact: true),
             ),
-            const Divider(height: 1, color: Color(0xFF1F4030)),
+            const Divider(height: 1, color: Color(0x1AF5F1E6)),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -594,10 +717,10 @@ class _DashboardSidebarPanel extends StatelessWidget {
                     child: Text(
                       roleLabel.toUpperCase(),
                       style: const TextStyle(
-                        color: Color(0xFF789D85),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.4,
+                        color: GawaGoColors.sidebarSection,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
                       ),
                     ),
                   ),
@@ -618,14 +741,16 @@ class _DashboardSidebarPanel extends StatelessWidget {
                     child: Text('Log Out'),
                   ),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFFF9B9B),
-                    side: const BorderSide(color: Color(0xFF6A2B2B)),
+                    foregroundColor: GawaGoColors.logout,
+                    backgroundColor: const Color(0x1AD08A76),
+                    side: BorderSide.none,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(7),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     textStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                      fontFamily: GawaGoColors.fontBody,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
@@ -653,13 +778,14 @@ class _DrawerBrand extends StatelessWidget {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: GawaGoColors.primary,
-            borderRadius: BorderRadius.circular(compact ? 10 : 14),
+            borderRadius: BorderRadius.circular(11),
           ),
           child: const Text(
             'GG',
             style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
+              fontFamily: GawaGoColors.fontHeading,
+              color: GawaGoColors.onPrimary,
+              fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
           ),
@@ -669,10 +795,11 @@ class _DrawerBrand extends StatelessWidget {
           child: Text(
             'GawaGo Community\nPlatform',
             style: TextStyle(
-              color: Colors.white,
-              fontSize: compact ? 14 : 16,
-              height: 1.35,
-              fontWeight: FontWeight.w900,
+              fontFamily: GawaGoColors.fontHeading,
+              color: GawaGoColors.cream,
+              fontSize: compact ? 14.5 : 16,
+              height: 1.3,
+              fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
           ),
@@ -689,42 +816,33 @@ class _DrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final foreground = destination.selected
+        ? GawaGoColors.primary
+        : GawaGoColors.mutedText;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Material(
         color: destination.selected
-            ? const Color(0xFF1A4A2E)
+            ? const Color(0x299EBF5E)
             : Colors.transparent,
-        borderRadius: BorderRadius.circular(7),
+        borderRadius: BorderRadius.circular(10),
         child: InkWell(
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(10),
           onTap: destination.onTap,
           child: Container(
-            constraints: const BoxConstraints(minHeight: 54),
+            constraints: const BoxConstraints(minHeight: 50),
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(
-                color: destination.selected
-                    ? const Color(0xFF2D6A45)
-                    : Colors.transparent,
-              ),
-            ),
             child: Row(
               children: [
-                Icon(
-                  destination.icon,
-                  color: const Color(0xFFA5C9B0),
-                  size: 24,
-                ),
+                Icon(destination.icon, color: foreground, size: 22),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Text(
                     destination.label,
-                    style: const TextStyle(
-                      color: Color(0xFFA5C9B0),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                       letterSpacing: 0,
                     ),
                   ),

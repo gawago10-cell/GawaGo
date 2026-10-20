@@ -33,6 +33,12 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+# Locally, run background tasks in a thread so `runserver` alone works; set
+# BACKGROUND_TASK_BACKEND=django_q (and run `manage.py qcluster`) to exercise
+# the production queue.
+if not RUNNING_TESTS:
+    BACKGROUND_TASK_BACKEND = os.environ.get("BACKGROUND_TASK_BACKEND", "thread").strip().lower()
+
 USE_CONSOLE_EMAIL = os.environ.get("DJANGO_USE_CONSOLE_EMAIL", "True") == "True"
 
 if USE_CONSOLE_EMAIL or not os.environ.get("EMAIL_HOST_USER") or not os.environ.get("EMAIL_HOST_PASSWORD"):

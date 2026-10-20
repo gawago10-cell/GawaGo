@@ -1,4 +1,5 @@
 import '../../../core/api/gawago_api.dart';
+import '../../../core/config/api_config.dart';
 import 'worker_models.dart';
 
 class WorkerRepository {
@@ -16,9 +17,7 @@ class WorkerRepository {
         ? await GawaGoApi.patch('/accounts/me/', body: values)
         : await GawaGoApi.multipartPatch(
             '/accounts/me/',
-            fields: values.map(
-              (key, value) => MapEntry(key, value?.toString() ?? ''),
-            ),
+            fields: GawaGoApi.multipartFields(values),
             files: {'profile_photo': profilePhotoPath},
           );
     return WorkerProfile.fromJson(response);
@@ -40,7 +39,10 @@ class WorkerRepository {
   /// Open jobs ranked for this worker by the content-based AI recommender,
   /// each carrying the skill-vs-proximity explainability breakdown.
   Future<List<RecommendedJob>> getRecommendedJobs() async {
-    final data = await GawaGoApi.getList('/matching/recommended-jobs/');
+    final data = await GawaGoApi.getList(
+      '/matching/recommended-jobs/',
+      timeout: ApiConfig.matchingTimeout,
+    );
     return data.map((item) => RecommendedJob.fromJson(item)).toList();
   }
 
@@ -121,6 +123,14 @@ class WorkerRepository {
         'availability_windows': windows.map((item) => item.toJson()).toList(),
       },
     );
+  }
+
+  /// The unread badge number only, so polling for it doesn't download every
+  /// page of notifications.
+  Future<int> getUnreadNotificationCount() async {
+    final data = await GawaGoApi.get('/notifications/unread-count/');
+    final value = data['unread'];
+    return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
   }
 
   Future<List<WorkerNotification>> getNotifications() async {
@@ -269,12 +279,17 @@ class WorkerRepository {
   Future<void> submitVerification({
     required String primaryPath,
     required String secondaryPath,
+    required String primaryIdType,
+    String primaryIdOtherName = '',
     String notes = '',
   }) async {
     await GawaGoApi.multipartPost(
       '/common/verification-requests/',
       fields: {
-        'primary_id_name': primaryPath.split(RegExp(r'[/\\]')).last,
+        'primary_id_type': primaryIdType,
+        // The backend labels the request from the chosen type; it only reads
+        // this when the type is "other".
+        if (primaryIdType == 'other') 'primary_id_name': primaryIdOtherName,
         'secondary_doc_name': secondaryPath.split(RegExp(r'[/\\]')).last,
         'notes': notes,
       },

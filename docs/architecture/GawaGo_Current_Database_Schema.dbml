@@ -302,8 +302,6 @@ Table jobs_jobposting {
   required_skill varchar(120) [not null]
   schedule varchar(255) [not null]
   schedule_type varchar(80) [not null]
-  preferred_date date
-  preferred_time time
   description text [not null]
   location_label varchar(255) [not null]
   latitude decimal(10,7) [not null]

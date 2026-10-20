@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/errors/api_error.dart';
 import '../../core/theme/gawago_colors.dart';
 
 /// Optional 1-5 detail scores mirroring web's renderHouseholdReviewMetricInputs
@@ -78,6 +79,7 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) return;
     setState(() {
       _submitting = true;
       _error = null;
@@ -93,9 +95,13 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
+      // The backend says why a review was refused (job not completed yet,
+      // already reviewed, ...), which the user can act on.
       if (mounted) {
         setState(
-          () => _error = 'Unable to submit this rating. Please try again.',
+          () => _error = error is ApiException && error.message.isNotEmpty
+              ? error.message
+              : 'Unable to submit this rating. Please try again.',
         );
       }
     } finally {
@@ -106,7 +112,7 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: GawaGoColors.surface,
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
@@ -130,7 +136,7 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                     const Text(
                       'RATE & REVIEW',
                       style: TextStyle(
-                        color: GawaGoColors.primary,
+                        color: GawaGoColors.leafDeep,
                         fontWeight: FontWeight.w900,
                         fontSize: 12,
                         letterSpacing: 1.1,
@@ -140,9 +146,10 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                     const Text(
                       'How was your experience?',
                       style: TextStyle(
+                        fontFamily: GawaGoColors.fontHeading,
                         color: GawaGoColors.ink,
                         fontSize: 20,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -254,8 +261,8 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                           child: FilledButton(
                             onPressed: _submitting ? null : _submit,
                             style: FilledButton.styleFrom(
-                              backgroundColor: GawaGoColors.deepGreen,
-                              foregroundColor: Colors.white,
+                              backgroundColor: GawaGoColors.primary,
+                              foregroundColor: GawaGoColors.onPrimary,
                               padding: const EdgeInsets.symmetric(vertical: 13),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
@@ -328,7 +335,7 @@ class _RateReviewHeader extends StatelessWidget {
             child: Text(
               initial,
               style: const TextStyle(
-                color: Colors.white,
+                color: GawaGoColors.onPrimary,
                 fontWeight: FontWeight.w900,
                 fontSize: 16,
               ),

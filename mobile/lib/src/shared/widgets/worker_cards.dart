@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/gawago_colors.dart';
 
-const _gold = Color(0xFFE0A82E);
-const _cardBorder = Color(0xFFD8D0C3);
+const _cardBorder = GawaGoColors.border;
 
 /// Circular match meter: the share of a worker's content-based fit, drawn the
 /// same way on the AI match cards and the applicant cards so one number means
@@ -28,7 +27,7 @@ class WorkerMatchRing extends StatelessWidget {
   Widget build(BuildContext context) {
     final percent = (score.clamp(0, 1) * 100).round();
     final strong = percent >= 85;
-    final color = strong ? GawaGoColors.primary : _gold;
+    final color = strong ? GawaGoColors.primary : GawaGoColors.primaryLight;
     return SizedBox(
       width: size,
       height: size,
@@ -43,7 +42,7 @@ class WorkerMatchRing extends StatelessWidget {
               strokeWidth: 4,
               backgroundColor: onPhoto
                   ? Colors.white.withValues(alpha: 0.35)
-                  : const Color(0xFFE6E0D5),
+                  : GawaGoColors.border,
               valueColor: AlwaysStoppedAnimation(color),
             ),
           ),
@@ -100,7 +99,7 @@ class WorkerStarRow extends StatelessWidget {
           (index) => Icon(
             index < rounded ? Icons.star_rounded : Icons.star_border_rounded,
             size: starSize + 3,
-            color: _gold,
+            color: GawaGoColors.leafDeep,
           ),
         ),
         const SizedBox(width: 4),
@@ -155,7 +154,7 @@ class WorkerPhoto extends StatelessWidget {
       child: Text(
         _initials(name),
         style: TextStyle(
-          color: Colors.white,
+          color: GawaGoColors.onPrimary,
           fontSize: fontSize ?? size * 0.36,
           fontWeight: FontWeight.w900,
         ),
@@ -223,13 +222,13 @@ class _Chip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: muted ? const Color(0xFFF1EFE8) : const Color(0xFFE8F5E9),
+        color: muted ? GawaGoColors.surfaceMuted : GawaGoColors.leafTint,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,
         style: TextStyle(
-          color: muted ? GawaGoColors.textMuted : GawaGoColors.primary,
+          color: muted ? GawaGoColors.textMuted : GawaGoColors.leafDeep,
           fontSize: 11.5,
           fontWeight: FontWeight.w700,
         ),
@@ -257,6 +256,8 @@ class WorkerMatchCard extends StatelessWidget {
     required this.onViewProfile,
     required this.onSendRequest,
     this.requestSent = false,
+    this.breakdown,
+    this.showScore = true,
   });
 
   final String name;
@@ -264,6 +265,13 @@ class WorkerMatchCard extends StatelessWidget {
   final String photoUrl;
   final bool verified;
   final double matchScore;
+
+  /// The AI skill-fit-versus-proximity explanation (AGENTS.md I.C).
+  final Widget? breakdown;
+
+  /// False on Smart Matching lists: that ranking computes no AI score, so a
+  /// ring there would read as a real "0% match".
+  final bool showScore;
   final String ratingLabel;
   final int ratingCount;
   final String distanceLabel;
@@ -279,7 +287,7 @@ class WorkerMatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _cardBorder),
       ),
@@ -303,9 +311,9 @@ class WorkerMatchCard extends StatelessWidget {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Color(0x520F2D1F),
-                          Color(0x000F2D1F),
-                          Color(0xC70F2D1F),
+                          Color(0x521A2415),
+                          Color(0x001A2415),
+                          Color(0xC71A2415),
                         ],
                         stops: [0, 0.38, 1],
                       ),
@@ -317,15 +325,16 @@ class WorkerMatchCard extends StatelessWidget {
                       left: 10,
                       child: _DarkPill(label: '✓ Verified'),
                     ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: WorkerMatchRing(
-                      score: matchScore,
-                      size: 46,
-                      onPhoto: true,
+                  if (showScore)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: WorkerMatchRing(
+                        score: matchScore,
+                        size: 46,
+                        onPhoto: true,
+                      ),
                     ),
-                  ),
                   Positioned(
                     left: 12,
                     right: 12,
@@ -403,6 +412,7 @@ class WorkerMatchCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                ?breakdown,
                 if (skills.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   _SkillChips(skills: skills),
@@ -447,8 +457,8 @@ class WorkerMatchCard extends StatelessWidget {
                       child: FilledButton(
                         onPressed: requestSent ? null : onSendRequest,
                         style: FilledButton.styleFrom(
-                          backgroundColor: GawaGoColors.deepGreen,
-                          foregroundColor: Colors.white,
+                          backgroundColor: GawaGoColors.primary,
+                          foregroundColor: GawaGoColors.onPrimary,
                           padding: const EdgeInsets.symmetric(vertical: 11),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
@@ -482,14 +492,15 @@ class _PhotoBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fallback = Container(
-      color: GawaGoColors.deepGreen,
+      color: GawaGoColors.sidebar,
       alignment: Alignment.center,
       child: Text(
         _initials(name),
         style: const TextStyle(
+          fontFamily: GawaGoColors.fontHeading,
           color: Colors.white,
           fontSize: 38,
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -513,7 +524,7 @@ class _DarkPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xD90F2D1F),
+        color: const Color(0xD91A2415),
         borderRadius: BorderRadius.circular(radius),
       ),
       child: Text(
@@ -549,7 +560,7 @@ class ApplicantCard extends StatelessWidget {
     required this.statusLabel,
     required this.onDecline,
     required this.onViewProfile,
-    required this.onSendRequest,
+    required this.onAccept,
   });
 
   final String name;
@@ -571,14 +582,14 @@ class ApplicantCard extends StatelessWidget {
   final String? statusLabel;
   final VoidCallback onDecline;
   final VoidCallback onViewProfile;
-  final VoidCallback onSendRequest;
+  final VoidCallback onAccept;
 
   @override
   Widget build(BuildContext context) {
     final settled = statusLabel != null;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _cardBorder),
       ),
@@ -657,7 +668,11 @@ class ApplicantCard extends StatelessWidget {
                       const CircleAvatar(
                         radius: 9,
                         backgroundColor: GawaGoColors.primary,
-                        child: Icon(Icons.check, size: 11, color: Colors.white),
+                        child: Icon(
+                          Icons.check,
+                          size: 11,
+                          color: GawaGoColors.onPrimary,
+                        ),
                       ),
                     WorkerStarRow(
                       ratingLabel: ratingLabel,
@@ -710,7 +725,9 @@ class ApplicantCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (isTopMatch) const _SoftPill(label: 'Top match'),
+                    // The list is in Smart Matching order; this marks the
+                    // highest AI score, so it says so.
+                    if (isTopMatch) const _SoftPill(label: 'Top AI match'),
                     if (settled) ...[
                       if (isTopMatch) const SizedBox(width: 6),
                       _SoftPill(label: statusLabel!),
@@ -740,8 +757,8 @@ class ApplicantCard extends StatelessWidget {
                   const VerticalDivider(width: 1, color: _cardBorder),
                   Expanded(
                     child: _CardAction(
-                      label: 'Send a Request',
-                      onPressed: onSendRequest,
+                      label: 'Accept',
+                      onPressed: onAccept,
                       filled: true,
                     ),
                   ),
@@ -769,7 +786,7 @@ class _CardAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: filled ? GawaGoColors.deepGreen : Colors.white,
+      color: filled ? GawaGoColors.primary : GawaGoColors.surface,
       child: InkWell(
         onTap: onPressed,
         child: Padding(
@@ -780,7 +797,7 @@ class _CardAction extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: filled ? Colors.white : GawaGoColors.textMuted,
+              color: filled ? GawaGoColors.onPrimary : GawaGoColors.ink,
               fontSize: 12.5,
               fontWeight: FontWeight.w800,
             ),
@@ -801,13 +818,13 @@ class _SoftPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFE8F5E9),
+        color: GawaGoColors.leafTint,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,
         style: const TextStyle(
-          color: GawaGoColors.primary,
+          color: GawaGoColors.leafDeep,
           fontSize: 11,
           fontWeight: FontWeight.w800,
         ),

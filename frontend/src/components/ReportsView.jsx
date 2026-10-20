@@ -208,7 +208,7 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
                         {job.hiredCount}/{job.workersNeeded}
                       </td>
                       <td>
-                        <StatusPill status={job.status} tone={JOB_STATUS_TONE[job.status]} />
+                        <StatusPill status={job.statusLabel || job.status} tone={JOB_STATUS_TONE[job.status]} />
                       </td>
                     </tr>
                   ))

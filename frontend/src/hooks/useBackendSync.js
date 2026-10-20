@@ -37,6 +37,7 @@ export function useBackendSync({
   // unlike the closure) lets each refresh check the *live* identity right
   // before it commits, and skip the write if it's no longer current.
   const currentUserRef = useRef(currentUser);
+  const recommendedRequestSeqRef = useRef({});
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
@@ -285,17 +286,24 @@ export function useBackendSync({
     if (!jobId) {
       return;
     }
+    // The AI ranking takes ~10s on a job's first call, so a Smart Matching
+    // request sent later can finish first -- or the other way round. Only the
+    // newest request for a job may write its results, otherwise a late
+    // "smart" reply zeroes the AI breakdown on the AI matches screen.
+    const requestSeq = (recommendedRequestSeqRef.current[jobId] || 0) + 1;
+    recommendedRequestSeqRef.current[jobId] = requestSeq;
+    const isLatest = () => recommendedRequestSeqRef.current[jobId] === requestSeq;
     setRecommendedWorkersLoading(true);
     try {
       const results = await fetchRecommendedWorkers(jobId, rank);
-      if (results === null) return;
+      if (results === null || !isLatest()) return;
       setMatchedWorkersByJob((prev) => ({
         ...prev,
         [jobId]: results.map((result) => {
           const existingWorker = registeredWorkers.find(
             (worker) => String(worker.id) === String(result.worker_id) || worker.username === result.worker_username,
           );
-          const distanceLabel = formatDistance(result.distance_km, result.distance_label);
+          const distanceLabel = result.distance_label || formatDistance(result.distance_km);
           return {
             ...existingWorker,
             id: existingWorker?.id || result.worker_id,
@@ -318,8 +326,14 @@ export function useBackendSync({
             dailyRate: existingWorker?.dailyRate || result.worker_rate || "0.00",
             status: existingWorker?.status || "Available",
             avatar: existingWorker?.avatar || (result.worker_username || "W").slice(0, 1).toUpperCase(),
-            latitude: existingWorker?.latitude ?? result.worker_latitude ?? null,
-            longitude: existingWorker?.longitude ?? result.worker_longitude ?? null,
+            // Match candidates are never hired yet, so the API sends no exact
+            // coordinates and no route to plot -- only a rounded distance and
+            // a ~1 km grid-snapped point for the matches map.
+            latitude: null,
+            longitude: null,
+            approximateLatitude: result.worker_approximate_latitude ?? null,
+            approximateLongitude: result.worker_approximate_longitude ?? null,
+            matchesSkill: Boolean(result.matches_skill),
             distanceKm:
               result.distance_km !== null &&
               result.distance_km !== undefined &&
@@ -328,7 +342,7 @@ export function useBackendSync({
                 ? Number(result.distance_km)
                 : null,
             distanceLabel,
-            routePoints: result.route_points || result.routePoints || [],
+            routePoints: [],
             matchScore: result.match_score,
             availableAtRequestedTime: result.available_at_requested_time,
             aiScore: result.ai_score,
@@ -341,7 +355,9 @@ export function useBackendSync({
     } catch (error) {
       return;
     } finally {
-      setRecommendedWorkersLoading(false);
+      if (isLatest()) {
+        setRecommendedWorkersLoading(false);
+      }
     }
   }
   async function refreshNotificationsFromBackend() {
@@ -375,16 +391,16 @@ export function useBackendSync({
         selectedWorkerUsername: selectedWorker?.username || "",
       });
       if (currentUserRef.current?.username !== requestedUsername) return;
-      const receivedReviews = payloads[0] || [];
-      const authoredReviews = payloads[1] || [];
+      // null means that list failed to load: keep what is already shown.
+      const [receivedReviews, authoredReviews] = payloads;
       if (currentUser.role === "worker") {
         setRegisteredWorkers((prev) =>
           prev.map((worker) =>
             worker.username === currentUser.username
               ? {
                   ...worker,
-                  receivedReviews,
-                  givenFeedback: authoredReviews,
+                  ...(receivedReviews ? { receivedReviews } : {}),
+                  ...(authoredReviews ? { givenFeedback: authoredReviews } : {}),
                 }
               : worker,
           ),
@@ -396,14 +412,14 @@ export function useBackendSync({
             household.username === currentUser.username
               ? {
                   ...household,
-                  receivedFeedback: receivedReviews,
-                  givenFeedback: authoredReviews,
+                  ...(receivedReviews ? { receivedFeedback: receivedReviews } : {}),
+                  ...(authoredReviews ? { givenFeedback: authoredReviews } : {}),
                 }
               : household,
           ),
         );
-        if (selectedWorker?.username) {
-          const selectedWorkerReviews = payloads[2] || [];
+        if (selectedWorker?.username && payloads[2]) {
+          const selectedWorkerReviews = payloads[2];
           setRegisteredWorkers((prev) =>
             prev.map((worker) =>
               worker.username === selectedWorker.username

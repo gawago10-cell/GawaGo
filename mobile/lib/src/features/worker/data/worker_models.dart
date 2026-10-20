@@ -16,6 +16,7 @@ class WorkerProfile {
     required this.longitude,
     required this.profilePhotoUrl,
     required this.verificationStatus,
+    this.verificationRequestStatus = '',
     required this.displayRating,
     required this.ratingCount,
     required this.reputationTier,
@@ -41,6 +42,11 @@ class WorkerProfile {
   final double? longitude;
   final String profilePhotoUrl;
   final String verificationStatus;
+
+  /// Status of the latest submitted verification request ('' when none),
+  /// so "Under Review" means an ID was actually submitted -- new profiles
+  /// default to verification_status "pending" regardless.
+  final String verificationRequestStatus;
   final String displayRating;
 
   /// How many households have rated this worker -- the "Jobs Done" figure.
@@ -93,6 +99,9 @@ class WorkerProfile {
       longitude: _number(profile['longitude']),
       profilePhotoUrl: _text(profile['profile_photo_url']),
       verificationStatus: _text(profile['verification_status'], 'unverified'),
+      verificationRequestStatus: profile['verification_request'] is Map
+          ? _text((profile['verification_request'] as Map)['status'])
+          : '',
       displayRating: _text(profile['display_rating'], 'No ratings yet'),
       ratingCount: _integer(profile['rating_count']),
       reputationTier: _text(profile['reputation_tier'], 'new'),
@@ -142,20 +151,23 @@ class WorkerJob {
     required this.requiredSkill,
     required this.schedule,
     required this.scheduleType,
-    required this.preferredDate,
-    required this.preferredTime,
     required this.jobStartDate,
     required this.jobEndDate,
     required this.estimatedWorkingDays,
     required this.description,
     required this.locationLabel,
     required this.serviceRate,
+    this.rateTypeLabel = 'Per Day',
     required this.workerSlots,
     required this.hiredCount,
     required this.status,
+    this.statusLabel = '',
     required this.distanceKm,
+    this.distanceLabel = '',
     required this.latitude,
     required this.longitude,
+    this.approximateLatitude,
+    this.approximateLongitude,
     required this.routePoints,
     required this.images,
     required this.canApply,
@@ -163,6 +175,7 @@ class WorkerJob {
     required this.canRequestCompletion,
     required this.canReview,
     required this.application,
+    this.skillRatings = const [],
   });
 
   final int id;
@@ -176,20 +189,34 @@ class WorkerJob {
   final String requiredSkill;
   final String schedule;
   final String scheduleType;
-  final String preferredDate;
-  final String preferredTime;
   final String jobStartDate;
   final String jobEndDate;
   final int? estimatedWorkingDays;
   final String description;
   final String locationLabel;
   final double serviceRate;
+
+  /// What serviceRate is per: "Per Day", "Per Hour" or "Fixed Rate".
+  final String rateTypeLabel;
   final int workerSlots;
   final int hiredCount;
   final String status;
+
+  /// The backend's own wording for `status` (it owns status labels).
+  final String statusLabel;
   final double? distanceKm;
+
+  /// The backend's own distance wording ("Within 1 km"), so the phrasing
+  /// matches web and the other backend-driven distance text instead of each
+  /// client formatting the raw kilometres differently.
+  final String distanceLabel;
   final double? latitude;
   final double? longitude;
+
+  /// The job site snapped to a ~1 km grid: where to pin the job on the Find
+  /// Jobs map without revealing the household's address.
+  final double? approximateLatitude;
+  final double? approximateLongitude;
   final List<RoutePoint> routePoints;
   final List<JobImage> images;
   final bool canApply;
@@ -197,6 +224,7 @@ class WorkerJob {
   final bool canRequestCompletion;
   final bool canReview;
   final WorkerApplication? application;
+  final List<JobSkillRating> skillRatings;
 
   factory WorkerJob.fromJson(Map<String, dynamic> json) {
     final application = json['current_worker_application'];
@@ -210,20 +238,26 @@ class WorkerJob {
       requiredSkill: _text(json['required_skill']),
       schedule: _text(json['schedule']),
       scheduleType: _text(json['schedule_type'] ?? ''),
-      preferredDate: _text(json['preferred_date'] ?? ''),
-      preferredTime: _text(json['preferred_time'] ?? ''),
       jobStartDate: _text(json['job_start_date'] ?? ''),
       jobEndDate: _text(json['job_end_date'] ?? ''),
       estimatedWorkingDays: _optionalInteger(json['estimated_working_days']),
       description: _text(json['description']),
       locationLabel: _text(json['location_label']),
       serviceRate: _number(json['service_rate']) ?? 0,
+      rateTypeLabel: _text(
+        json['rate_type_label'] ?? json['job_rate_type_label'],
+        'Per Day',
+      ),
       workerSlots: _integer(json['workers_needed'] ?? json['worker_slots']),
       hiredCount: _integer(json['hired_count']),
       status: _text(json['status']),
+      statusLabel: _text(json['status_label'] ?? ''),
       distanceKm: _number(json['route_distance_km']),
+      distanceLabel: _text(json['distance_label'] ?? ''),
       latitude: _number(json['latitude']),
       longitude: _number(json['longitude']),
+      approximateLatitude: _number(json['approximate_latitude']),
+      approximateLongitude: _number(json['approximate_longitude']),
       routePoints: _list(
         json['route_points'],
       ).map(RoutePoint.fromJson).whereType<RoutePoint>().toList(),
@@ -237,8 +271,29 @@ class WorkerJob {
       application: application is Map<String, dynamic>
           ? WorkerApplication.fromJson(application)
           : null,
+      skillRatings: JobSkillRating.listFromJson(json['skill_ratings']),
     );
   }
+}
+
+/// One skill rating a worker received on a completed job; only sent on a
+/// worker's employment-history list (`/jobs/?worker=<id>`).
+class JobSkillRating {
+  const JobSkillRating({required this.skillName, required this.rating});
+
+  final String skillName;
+  final double rating;
+
+  static List<JobSkillRating> listFromJson(dynamic value) => _list(value)
+      .map(_map)
+      .map(
+        (item) => JobSkillRating(
+          skillName: _text(item['skill_name']),
+          rating: _number(item['rating']) ?? 0,
+        ),
+      )
+      .where((rating) => rating.skillName.isNotEmpty)
+      .toList();
 }
 
 /// One AI-ranked job from GET /matching/recommended-jobs/ -- the worker-side
@@ -356,10 +411,10 @@ class GawaGoReview {
       targetName: _text(json['target_name']),
       jobId: json['job'] == null ? null : _integer(json['job']),
       jobTitle: _text(json['job_title']),
-      // `rating` is null on a metrics-only review; `overall_rating` is the
-      // backend's own fallback average of quality/punctuality/communication/
-      // professionalism for that case (reviews/serializers.py).
-      rating: _number(json['rating']) ?? _number(json['overall_rating']),
+      // `overall_rating` is the score that counts: the average of the four
+      // metrics when they were given (AGENTS.md II.A), otherwise the star
+      // rating. `rating` alone is just the star picker's value.
+      rating: _number(json['overall_rating']) ?? _number(json['rating']),
       feedback: _text(json['feedback']),
       createdAt: _text(json['created_at']),
       qualityOfWork: _optionalInteger(json['quality_of_work']),
@@ -412,8 +467,8 @@ class WorkerApplication {
     required this.jobStatus,
     required this.jobSchedule,
     required this.jobScheduleType,
-    required this.jobPreferredDate,
-    required this.jobPreferredTime,
+    required this.jobStartDate,
+    required this.jobEndDate,
     required this.jobDescription,
     required this.householdUsername,
     required this.householdName,
@@ -421,7 +476,9 @@ class WorkerApplication {
     required this.householdEmail,
     required this.locationLabel,
     required this.serviceRate,
+    this.rateTypeLabel = 'Per Day',
     required this.distanceKm,
+    this.distanceLabel = '',
     required this.canAcceptHireRequest,
     required this.canRequestCompletion,
     required this.canReview,
@@ -439,8 +496,8 @@ class WorkerApplication {
   final String jobStatus;
   final String jobSchedule;
   final String jobScheduleType;
-  final String jobPreferredDate;
-  final String jobPreferredTime;
+  final String jobStartDate;
+  final String jobEndDate;
   final String jobDescription;
   final String householdUsername;
   final String householdName;
@@ -451,7 +508,11 @@ class WorkerApplication {
   final String householdEmail;
   final String locationLabel;
   final double serviceRate;
+
+  /// What serviceRate is per: "Per Day", "Per Hour" or "Fixed Rate".
+  final String rateTypeLabel;
   final double? distanceKm;
+  final String distanceLabel;
   final bool canAcceptHireRequest;
   final bool canRequestCompletion;
   final bool canReview;
@@ -475,8 +536,8 @@ class WorkerApplication {
       jobStatus: _text(json['job_status']),
       jobSchedule: _text(json['job_schedule']),
       jobScheduleType: _text(json['job_schedule_type']),
-      jobPreferredDate: _text(json['job_preferred_date']),
-      jobPreferredTime: _text(json['job_preferred_time']),
+      jobStartDate: _text(json['job_start_date'] ?? ''),
+      jobEndDate: _text(json['job_end_date'] ?? ''),
       jobDescription: _text(json['job_description']),
       householdUsername: _text(json['household_username']),
       householdName: _text(json['household_name']),
@@ -484,7 +545,12 @@ class WorkerApplication {
       householdEmail: _text(json['household_email']),
       locationLabel: _text(json['location_label']),
       serviceRate: _number(json['service_rate']) ?? 0,
+      rateTypeLabel: _text(
+        json['rate_type_label'] ?? json['job_rate_type_label'],
+        'Per Day',
+      ),
       distanceKm: _number(json['route_distance_km']),
+      distanceLabel: _text(json['distance_label'] ?? ''),
       canAcceptHireRequest: json['can_accept_hire_request'] == true,
       canRequestCompletion: json['can_request_completion'] == true,
       canReview: json['can_review'] == true,
@@ -679,10 +745,13 @@ class PortfolioSkill {
 
   static const proficiencyOptions = ['beginner', 'intermediate', 'expert'];
 
+  /// Empty when the worker never stated one (the entry came from their
+  /// profile skill list rather than the portfolio's Add Skill).
   String get proficiencyLabel => switch (proficiency) {
     'expert' => 'Expert',
     'intermediate' => 'Intermediate',
-    _ => 'Beginner',
+    'beginner' => 'Beginner',
+    _ => '',
   };
 
   factory PortfolioSkill.fromJson(Map<String, dynamic> json) {
@@ -710,6 +779,7 @@ class WorkerCertificate {
     required this.fileUrl,
     required this.isVerified,
     required this.verificationStatus,
+    this.fileType = '',
   });
 
   final int id;
@@ -723,6 +793,11 @@ class WorkerCertificate {
   final bool isVerified;
   final String verificationStatus;
 
+  /// "image", "pdf" or "file" (backend `certificate_file_type`). The file URL
+  /// is an authenticated API route with no extension, so the type can't be
+  /// read off the URL.
+  final String fileType;
+
   /// Server-side choices, paired with the labels the admin queue shows.
   static const typeOptions = <String, String>{
     'tesda': 'TESDA Certificate',
@@ -733,14 +808,9 @@ class WorkerCertificate {
   };
 
   /// Certificates can be PDFs, which no Image widget can render.
-  bool get isImage {
-    final lower = fileUrl.toLowerCase().split('?').first;
-    return lower.endsWith('.jpg') ||
-        lower.endsWith('.jpeg') ||
-        lower.endsWith('.png') ||
-        lower.endsWith('.webp') ||
-        lower.endsWith('.gif');
-  }
+  bool get isImage => fileType == 'image';
+
+  bool get isPdf => fileType == 'pdf';
 
   factory WorkerCertificate.fromJson(Map<String, dynamic> json) {
     return WorkerCertificate(
@@ -754,6 +824,7 @@ class WorkerCertificate {
       fileUrl: _text(json['certificate_file_url'] ?? ''),
       isVerified: json['is_verified'] == true,
       verificationStatus: _text(json['verification_status'], 'pending'),
+      fileType: _text(json['certificate_file_type'] ?? ''),
     );
   }
 }

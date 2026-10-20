@@ -284,22 +284,20 @@ This table stores multiple-ID-type identity documents (national ID, passport, dr
 | 4 | required_skill | VARCHAR(120) | 1 | NULL | 0 |
 | 5 | schedule | VARCHAR(255) | 1 | NULL | 0 |
 | 6 | schedule_type | VARCHAR(80) | 1 | '' | 0 |
-| 7 | preferred_date | DATE | 0 | NULL | 0 |
-| 8 | preferred_time | TIME | 0 | NULL | 0 |
-| 9 | description | TEXT | 1 | '' | 0 |
-| 10 | location_label | VARCHAR(255) | 1 | NULL | 0 |
-| 11 | latitude | DECIMAL(10,7) | 1 | NULL | 0 |
-| 12 | longitude | DECIMAL(10,7) | 1 | NULL | 0 |
-| 13 | service_rate | DECIMAL(10,2) | 1 | NULL | 0 |
-| 14 | worker_slots | INTEGER UNSIGNED | 1 | 1 | 0 |
-| 15 | status | VARCHAR(20) | 1 | open | 0 |
-| 16 | job_start_date | DATE | 0 | NULL | 0 |
-| 17 | job_end_date | DATE | 0 | NULL | 0 |
-| 18 | estimated_working_days | INTEGER | 0 | NULL | 0 |
-| 19 | max_distance_km | FLOAT | 1 | 1.0 | 0 |
-| 20 | geographic_boundary | VARCHAR(20) | 1 | 1km | 0 |
-| 21 | created_at | DATETIME | 1 | NULL | 0 |
-| 22 | completed_at | DATETIME | 0 | NULL | 0 |
+| 7 | description | TEXT | 1 | '' | 0 |
+| 8 | location_label | VARCHAR(255) | 1 | NULL | 0 |
+| 9 | latitude | DECIMAL(10,7) | 1 | NULL | 0 |
+| 10 | longitude | DECIMAL(10,7) | 1 | NULL | 0 |
+| 11 | service_rate | DECIMAL(10,2) | 1 | NULL | 0 |
+| 12 | worker_slots | INTEGER UNSIGNED | 1 | 1 | 0 |
+| 13 | status | VARCHAR(20) | 1 | open | 0 |
+| 14 | job_start_date | DATE | 0 | NULL | 0 |
+| 15 | job_end_date | DATE | 0 | NULL | 0 |
+| 16 | estimated_working_days | INTEGER | 0 | NULL | 0 |
+| 17 | max_distance_km | FLOAT | 1 | 1.0 | 0 |
+| 18 | geographic_boundary | VARCHAR(20) | 1 | 1km | 0 |
+| 19 | created_at | DATETIME | 1 | NULL | 0 |
+| 20 | completed_at | DATETIME | 0 | NULL | 0 |
 
 This table stores job postings created by household users, including the job schedule window (`job_start_date`/`job_end_date`/`estimated_working_days`) and the geographic search radius applied as a hard distance filter during worker matching (`max_distance_km`, with a `geographic_boundary` label of `1km`/`2km`/`5km`/`10km`/`unlimited`).
 

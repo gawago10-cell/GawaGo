@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/apiClient";
 import { readResponseData } from "../utils/apiUtils";
+import { fetchWorkerEmploymentHistory } from "../services/backendDataService";
 
 export default function WorkerPortfolioViewPublic({
   workerId,
@@ -11,9 +12,21 @@ export default function WorkerPortfolioViewPublic({
   const [loading, setLoading] = useState(true);
   const [showGallery, setShowGallery] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
+  // A household reviewing an applicant could see this worker's completed
+  // jobs only from the worker's own account (App.jsx) -- the public
+  // portfolio view hiring decisions actually happen from never loaded it.
+  const [employmentHistory, setEmploymentHistory] = useState([]);
 
   useEffect(() => {
     fetchPortfolio();
+    (async () => {
+      try {
+        const history = await fetchWorkerEmploymentHistory(workerId);
+        setEmploymentHistory(history || []);
+      } catch (error) {
+        console.error("Failed to fetch employment history:", error);
+      }
+    })();
   }, [workerId]);
 
   const fetchPortfolio = async () => {
@@ -49,7 +62,8 @@ export default function WorkerPortfolioViewPublic({
     Number(portfolio?.years_experience) > 0 ||
     skills.length > 0 ||
     certifications.length > 0 ||
-    portfolioItems.length > 0;
+    portfolioItems.length > 0 ||
+    employmentHistory.length > 0;
 
   if (!hasContent) {
     return (
@@ -96,7 +110,7 @@ export default function WorkerPortfolioViewPublic({
         }
 
         .skill-card-public {
-          background: var(--gg-bg);
+          background: var(--gg-card-muted);
           padding: 1rem;
           border-radius: 8px;
           border: 1px solid var(--gg-border);
@@ -111,7 +125,7 @@ export default function WorkerPortfolioViewPublic({
 
         .skill-level-badge {
           display: inline-block;
-          background: var(--gg-primary);
+          background: var(--gg-leaf-deep);
           color: white;
           padding: 0.25rem 0.75rem;
           border-radius: 4px;
@@ -125,12 +139,12 @@ export default function WorkerPortfolioViewPublic({
           align-items: center;
           justify-content: center;
           gap: 0.25rem;
-          color: #ffc107;
+          color: #8a5a00;
           font-size: 0.9rem;
         }
 
         .skill-rating-count {
-          color: var(--gg-dark-3);
+          color: var(--gg-ink-muted);
           font-size: 0.8rem;
           display: block;
           margin-top: 0.25rem;
@@ -166,8 +180,36 @@ export default function WorkerPortfolioViewPublic({
           object-fit: cover;
         }
 
+        /* A whole row, capped, rather than "span 2": spanning two tracks of an
+           auto-fill grid that only has room for one creates an implicit
+           column and overflows, and that depends on the container's width,
+           not the viewport's. */
+        .gallery-pair {
+          grid-column: 1 / -1;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0.5rem;
+          max-width: 420px;
+        }
+
+        .gallery-tag {
+          position: absolute;
+          left: 0.4rem;
+          bottom: 0.4rem;
+          padding: 0.1rem 0.5rem;
+          border-radius: 4px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: #fff;
+          background: rgba(0, 0, 0, 0.65);
+        }
+
+        .gallery-tag.after {
+          background: var(--gg-leaf-deep);
+        }
+
         .cert-item-public {
-          background: var(--gg-bg);
+          background: var(--gg-card-muted);
           padding: 1rem;
           border-radius: 8px;
           border-left: 4px solid var(--gg-primary);
@@ -186,20 +228,20 @@ export default function WorkerPortfolioViewPublic({
 
         .cert-issuer {
           font-size: 0.9rem;
-          color: var(--gg-dark-3);
+          color: var(--gg-ink-muted);
           margin-bottom: 0.25rem;
         }
 
         .cert-date {
           font-size: 0.85rem;
-          color: #999;
+          color: var(--gg-ink-muted);
           margin-bottom: 0.5rem;
         }
 
         .cert-badge {
           display: inline-block;
           background: var(--gg-accent-2);
-          color: var(--gg-primary-strong);
+          color: var(--gg-leaf-text);
           padding: 0.25rem 0.75rem;
           border-radius: 4px;
           font-size: 0.7rem;
@@ -281,7 +323,7 @@ export default function WorkerPortfolioViewPublic({
             {skills.map((skill) => (
               <div key={skill.id} className="skill-card-public">
                 <div className="skill-name-public">{skill.skill_name}</div>
-                <div className="skill-level-badge">{skill.proficiency}</div>
+                {skill.proficiency && <div className="skill-level-badge">{skill.proficiency}</div>}
                 {skill.average_rating ? (
                   <div className="skill-rating-display">
                     <span>★</span>
@@ -303,18 +345,33 @@ export default function WorkerPortfolioViewPublic({
         <div className="portfolio-section-public">
           <h3 className="section-title-public">Work Samples</h3>
           <div className="gallery-grid">
-            {portfolioItems.map((item) => (
-              <div
-                key={item.id}
-                className="gallery-item"
-                onClick={() => {
-                  setSelectedImage(item.image_url);
-                  setShowGallery(true);
-                }}
-              >
-                <img src={item.image_url} alt={item.title} />
-              </div>
-            ))}
+            {portfolioItems.map((item) => {
+              const openImage = (url) => {
+                setSelectedImage(url);
+                setShowGallery(true);
+              };
+              if (item.before_image_url && item.after_image_url) {
+                return (
+                  <div key={item.id} className="gallery-pair">
+                    <div className="gallery-item" onClick={() => openImage(item.before_image_url)}>
+                      <img src={item.before_image_url} alt={`${item.title || "Work sample"} (before)`} />
+                      <span className="gallery-tag">Before</span>
+                    </div>
+                    <div className="gallery-item" onClick={() => openImage(item.after_image_url)}>
+                      <img src={item.after_image_url} alt={`${item.title || "Work sample"} (after)`} />
+                      <span className="gallery-tag after">After</span>
+                    </div>
+                  </div>
+                );
+              }
+              const imageUrl = item.image_url || item.after_image_url || item.before_image_url;
+              if (!imageUrl) return null;
+              return (
+                <div key={item.id} className="gallery-item" onClick={() => openImage(imageUrl)}>
+                  <img src={imageUrl} alt={item.title} />
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -334,6 +391,40 @@ export default function WorkerPortfolioViewPublic({
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Employment History */}
+      {employmentHistory.length > 0 && (
+        <div className="portfolio-section-public">
+          <h3 className="section-title-public">Employment History</h3>
+          <div>
+            {employmentHistory.map((job) => {
+              const skillRatings = job.skill_ratings || [];
+              return (
+                <div key={job.id} className="cert-item-public">
+                  <div className="cert-name">{job.title}</div>
+                  <div className="cert-issuer">{job.household_name || "Household"}</div>
+                  <div className="cert-date">
+                    {job.location || ""}
+                    {job.completed_at ? ` • Completed ${new Date(job.completed_at).toLocaleDateString()}` : ""}
+                  </div>
+                  {skillRatings.length > 0 && (
+                    <div style={{ marginTop: "0.5rem" }}>
+                      {skillRatings.map((sr, idx) => (
+                        <div key={idx} className="d-flex justify-content-between mb-1">
+                          <small className="text-muted">{sr.skill_name || sr.skill}:</small>
+                          <small className="fw-bold">
+                            <span className="badge bg-success">{sr.rating} ★</span>
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

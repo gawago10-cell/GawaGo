@@ -1,6 +1,19 @@
 import { getApiBaseUrl } from "../api/apiClient";
 
 export const MAX_WORKER_SKILLS = 3;
+
+// Mirrors VerificationRequest.ID_TYPE_CHOICES in apps/common/models.py. The
+// backend rejects anything outside this list, so the two must stay in step.
+export const GOVERNMENT_ID_TYPES = [
+  { value: "national_id", label: "National ID (PhilSys)" },
+  { value: "passport", label: "Passport" },
+  { value: "drivers_license", label: "Driver's License" },
+  { value: "voter_id", label: "Voter ID" },
+  { value: "tin", label: "TIN ID" },
+  { value: "umid", label: "UMID" },
+  { value: "postal_id", label: "Postal ID" },
+  { value: "other", label: "Other Government ID" },
+];
 export const SKILLS = [
   "House Cleaning",
   "Laundry",
@@ -136,14 +149,14 @@ export const TAYABAS_MAP_BOUNDS = {
 export const AI_SKILL_WEIGHT = 0.7;
 
 export const ANALYTICS_CHART_COLORS = [
-  "#2a78d6", // blue
-  "#eb6834", // orange
-  "#1baf7a", // aqua
-  "#eda100", // yellow
-  "#e87ba4", // magenta
-  "#008300", // green
-  "#4a3aa7", // violet
-  "#e34948", // red
+  "#5c7a34", // leaf deep
+  "#9ebf5e", // leaf
+  "#c9a04a", // amber
+  "#b5573e", // terracotta
+  "#29341f", // moss
+  "#b9d383", // sage
+  "#8b9480", // stone
+  "#d08a76", // clay
 ];
 export const ANALYTICS_SERVICE_CATEGORIES = SKILLS.filter((skill) => skill !== "Other");
 export const SHARED_DEMO_PASSWORD = "GawaGo123";

@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { getVerificationNavLabel } from "../utils/normalizers";
 
 import { fetchMyComplaints } from "../services/backendDataService";
-import { DashboardSidebar } from "./DashboardLayout";
+import AuthImage from "./AuthImage";
+import { getUserRole, ROLES } from "../utils/roles";
+import { DashboardSidebar, MobileDashboardTopbar } from "./DashboardLayout";
 
 const STATUS_LABELS = {
   submitted: "Submitted",
@@ -110,7 +113,7 @@ function buildHouseholdNavItems({
     { id: "post-job", label: "Post a Job", onClick: openHouseholdPostJob },
     { id: "jobs", label: "My Jobs", onClick: openHouseholdMyJobs },
     { id: "flag", label: "My Reports", active: true },
-    { id: "profile", label: "My Profile", onClick: openHouseholdProfile },
+    { id: "profile", label: "My Profile", section: "Account", onClick: openHouseholdProfile },
     { id: "verified", label: verificationNavLabel, onClick: openHouseholdGetVerified },
     { id: "notifications", label: "Notifications", onClick: openHouseholdNotifications },
   ];
@@ -121,6 +124,7 @@ function buildWorkerNavItems({
   openWorkerFindJobs,
   openWorkerProfile,
   openWorkerApplications,
+  openWorkerMyJobs,
   openWorkerGetVerified,
   openWorkerNotifications,
   workerApplicationUnreadCount,
@@ -131,16 +135,17 @@ function buildWorkerNavItems({
     { id: "search", label: "Find Jobs", onClick: openWorkerFindJobs },
     { id: "profile", label: "My Profile", onClick: openWorkerProfile },
     { id: "applications", label: "My Applications", count: workerApplicationUnreadCount, onClick: openWorkerApplications },
+    { id: "jobs", label: "My Jobs", onClick: openWorkerMyJobs },
     { id: "flag", label: "My Reports", active: true },
-    { id: "verified", label: verificationNavLabel, onClick: openWorkerGetVerified },
+    { id: "verified", label: verificationNavLabel, section: "Account", onClick: openWorkerGetVerified },
     { id: "notifications", label: "Notifications", onClick: openWorkerNotifications },
   ];
 }
 
 /**
- * "My Reports" -- incidents the signed-in user filed, or was named in.
- * Distinct from the activity report: this tracks the status of a complaint,
- * not a personal summary.
+ * "My Reports" -- issues the signed-in user has filed. Reports about the
+ * user are never shown: a report stays confidential from the person it
+ * names, and the API only returns reports the caller filed.
  */
 export default function MyComplaintsView({
   currentUser,
@@ -157,6 +162,7 @@ export default function MyComplaintsView({
   openWorkerFindJobs,
   openWorkerProfile,
   openWorkerApplications,
+  openWorkerMyJobs,
   openWorkerGetVerified,
   openWorkerNotifications,
   workerApplicationUnreadCount,
@@ -182,16 +188,12 @@ export default function MyComplaintsView({
     };
   }, []);
 
-  const isHousehold = currentUser?.role === "household";
+  // Households and workers only (the App-level role guard keeps admins out);
+  // an unknown role gets no menu rather than falling back to the worker one.
+  const role = getUserRole(currentUser);
+  const isHousehold = role === ROLES.HOUSEHOLD;
   const verificationAccount = isHousehold ? currentHousehold : currentWorker;
-  const verificationNavLabel =
-    verificationAccount?.verification === "Verified"
-      ? "Verified"
-      : verificationAccount?.verification === "Under Review"
-        ? "Under Review"
-        : verificationAccount?.verification === "Rejected"
-          ? "Verify Again"
-          : "Get Verified";
+  const verificationNavLabel = getVerificationNavLabel(verificationAccount);
 
   const navItems = isHousehold
     ? buildHouseholdNavItems({
@@ -203,16 +205,19 @@ export default function MyComplaintsView({
         openHouseholdNotifications,
         verificationNavLabel,
       })
-    : buildWorkerNavItems({
-        openWorkerDashboard,
-        openWorkerFindJobs,
-        openWorkerProfile,
-        openWorkerApplications,
-        openWorkerGetVerified,
-        openWorkerNotifications,
-        workerApplicationUnreadCount,
-        verificationNavLabel,
-      });
+    : role === ROLES.WORKER
+      ? buildWorkerNavItems({
+          openWorkerDashboard,
+          openWorkerFindJobs,
+          openWorkerProfile,
+          openWorkerApplications,
+          openWorkerMyJobs,
+          openWorkerGetVerified,
+          openWorkerNotifications,
+          workerApplicationUnreadCount,
+          verificationNavLabel,
+        })
+      : [];
 
   const visibleComplaints = useMemo(() => {
     if (!complaints) return [];
@@ -221,6 +226,8 @@ export default function MyComplaintsView({
   }, [complaints, statusFilter]);
 
   return (
+    <>
+    <MobileDashboardTopbar resetKey="my-reports" />
     <section className="worker-dashboard my-reports-page">
       <div className="worker-layout">
         <DashboardSidebar
@@ -235,8 +242,8 @@ export default function MyComplaintsView({
             <div>
               <h1 className="h4 mb-1">My Reports</h1>
               <p className="text-muted small mb-0">
-                Issues you reported, and reports filed about you. Everything here is reviewed by our admin team and
-                kept confidential.
+                Issues you have reported. Our admin team reviews each one confidentially and updates its status
+                here.
               </p>
             </div>
           </div>
@@ -268,7 +275,7 @@ export default function MyComplaintsView({
 
           {status === "ready" && complaints.length === 0 && (
             <div className="profile-card p-4 mt-3 text-center text-muted">
-              You haven't filed or been named in any reports. You can report an issue from a job's detail page.
+              You haven't reported any issues. You can report an issue from a job's detail page.
             </div>
           )}
 
@@ -279,7 +286,6 @@ export default function MyComplaintsView({
           {status === "ready" && visibleComplaints.length > 0 && (
             <div className="my-reports-list">
               {visibleComplaints.map((complaint) => {
-                const isFiledByMe = complaint.complainantUsername === currentUser?.username;
                 return (
                   <article className="profile-card p-3 p-md-4" key={complaint.id}>
                     <div className="my-report-card-top">
@@ -291,9 +297,9 @@ export default function MyComplaintsView({
                           <span className="my-report-type-name">
                             {TYPE_LABELS[complaint.complaintType] || complaint.complaintType}
                           </span>
-                          <span className={`my-report-direction ${isFiledByMe ? "by-you" : "about-you"}`}>
-                            {isFiledByMe ? "Filed by you" : "Filed about you"}
-                          </span>
+                          {complaint.respondentUsername && (
+                            <span className="my-report-direction by-you">About {complaint.respondentUsername}</span>
+                          )}
                         </div>
                       </div>
                       <span className={`my-report-status ${complaint.status}`}>
@@ -306,7 +312,7 @@ export default function MyComplaintsView({
                       {complaint.jobTitle || "Job report"} &middot; {complaint.createdAt?.slice(0, 10)}
                     </p>
 
-                    {isFiledByMe && complaint.description && <p className="my-report-desc">{complaint.description}</p>}
+                    {complaint.description && <p className="my-report-desc">{complaint.description}</p>}
 
                     {complaint.evidence.length > 0 && (
                       <div className="my-report-evidence">
@@ -315,9 +321,12 @@ export default function MyComplaintsView({
                           Evidence ({complaint.evidence.length})
                         </span>
                         {complaint.evidence.map((item) => (
-                          <a key={item.id} href={item.imageUrl} target="_blank" rel="noreferrer">
-                            <img className="my-report-thumb" src={item.imageUrl} alt={`Evidence for report ${complaint.id}`} />
-                          </a>
+                          <AuthImage
+                            key={item.id}
+                            className="my-report-thumb"
+                            src={item.imageUrl}
+                            alt={`Evidence for report ${complaint.id}`}
+                          />
                         ))}
                       </div>
                     )}
@@ -339,5 +348,6 @@ export default function MyComplaintsView({
         </div>
       </div>
     </section>
+    </>
   );
 }

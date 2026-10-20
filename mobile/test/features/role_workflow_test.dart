@@ -43,6 +43,55 @@ void main() {
     expect(badges.every((badge) => (badge.label as Text).data == '1'), isTrue);
   });
 
+  testWidgets('Retry on Find Jobs actually reloads after a failed load', (
+    tester,
+  ) async {
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'worker-token', role: 'worker'),
+    );
+    // The job list fails until the "network" comes back.
+    var jobsAvailable = false;
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        final path = request.url.path;
+        final isJobList =
+            path.endsWith('/jobs/') && !path.endsWith('/applications/');
+        if (isJobList && !jobsAvailable) {
+          return http.Response('{"detail":"Server error."}', 500);
+        }
+        return _workerResponses(request);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: WorkerHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    await _openWorkerPage(tester, 'Find Jobs');
+    await tester.pumpAndSettle();
+    expect(find.text('Retry'), findsWidgets);
+
+    jobsAvailable = true;
+    await tester.tap(find.text('Retry').last);
+    await tester.pumpAndSettle();
+
+    // Retry used to only rebuild around the same failed future, so the error
+    // stayed on screen until the app was restarted.
+    expect(find.text('Retry'), findsNothing);
+    final jobsList = find
+        .ancestor(
+          of: find.widgetWithText(FilledButton, 'Filter'),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('House cleaning'),
+      320,
+      scrollable: jobsList,
+    );
+    expect(find.text('House cleaning'), findsWidgets);
+  });
+
   testWidgets('worker job filters survive bottom navigation', (tester) async {
     await SessionStorage.save(
       const AuthSession(accessToken: 'worker-token', role: 'worker'),
@@ -171,7 +220,6 @@ void main() {
 
     // Rows that only exist once the scheduling fields are read back.
     expect(find.text('FULL-TIME'), findsOneWidget);
-    expect(find.text('INCLUDED ABOVE'), findsOneWidget);
     expect(find.text('Job Period'), findsOneWidget);
     expect(
       find.text('2026-06-12 TO 2026-06-15 (3 WORKING DAYS)'),
@@ -284,17 +332,24 @@ void main() {
     // The drawer's item list grew (Reports, My Reports), so the Account
     // section can sit below the initially-built viewport/cache extent --
     // scroll the sidebar's own ListView to bring it into the element tree.
+    // The mocked profile is verified, so the item reads "Verified" like the
+    // website's menu instead of inviting the worker to verify again.
+    final drawer = find.byType(AnimatedPositioned);
     await tester.scrollUntilVisible(
-      find.text('Get Verified'),
+      find.descendant(of: drawer, matching: find.text('My Profile')),
       200,
       scrollable: find.descendant(
-        of: find.byType(AnimatedPositioned),
+        of: drawer,
         matching: find.byType(Scrollable),
       ),
     );
 
     expect(find.text('My Profile'), findsOneWidget);
-    expect(find.text('Get Verified'), findsOneWidget);
+    expect(
+      find.descendant(of: drawer, matching: find.text('Verified')),
+      findsOneWidget,
+    );
+    expect(find.text('Get Verified'), findsNothing);
     expect(find.text('Reviews & Feedback'), findsNothing);
   });
 
@@ -536,6 +591,52 @@ void main() {
       expect(find.text('Hired'), findsNothing);
     },
   );
+
+  testWidgets(
+    'worker My Jobs splits active work from finished history, matching web',
+    (tester) async {
+      // Mobile only had a read-only "My Applications" list and a "Mark Work
+      // as Done" button buried in the job detail screen. This proves the
+      // dedicated My Jobs tab (In Progress / Completed, with a real Mark
+      // job as complete action) now exists on mobile too.
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'worker-token', role: 'worker'),
+      );
+      GawaGoApi.setClient(MockClient(_myJobsResponses));
+
+      await tester.pumpWidget(
+        MaterialApp(home: WorkerHomeScreen(onLogout: () {})),
+      );
+      await tester.pumpAndSettle();
+
+      await _openWorkerPage(tester, 'My Jobs');
+      await tester.pumpAndSettle();
+
+      expect(find.text('In Progress · 1'), findsOneWidget);
+      expect(find.text('Completed · 1'), findsOneWidget);
+      expect(find.text('Active House Cleaning'), findsOneWidget);
+      expect(find.text('Mark job as complete'), findsOneWidget);
+      expect(find.text('Finished House Cleaning'), findsOneWidget);
+      expect(find.text('Rating received: 4.5 / 5'), findsOneWidget);
+
+      await tester.tap(find.text('Mark job as complete'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark as complete'), findsOneWidget);
+      expect(
+        find.text(
+          'This lets Maria Household know the job is finished, so they can review and confirm.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Confirm complete'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Marked complete. Waiting for Maria Household to confirm.'),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 Future<void> _openWorkerPage(WidgetTester tester, String label) async {
@@ -597,8 +698,6 @@ Future<http.Response> _workerResponses(http.Request request) async {
         'required_skill': 'Cleaning',
         'schedule': 'June 12, 2026 at 9:00 AM',
         'schedule_type': 'One-Time',
-        'preferred_date': '2026-06-12',
-        'preferred_time': '09:00:00',
         'job_start_date': '2026-06-12',
         'job_end_date': '2026-06-12',
         'estimated_working_days': 1,
@@ -614,6 +713,9 @@ Future<http.Response> _workerResponses(http.Request request) async {
         'can_review': false,
       },
     ]);
+  }
+  if (path.endsWith('/notifications/unread-count/')) {
+    return _json({'unread': 1});
   }
   if (path.endsWith('/notifications/')) {
     return _json([
@@ -643,8 +745,6 @@ Future<http.Response> _workerResponses(http.Request request) async {
       'required_skill': 'Cleaning',
       'schedule': 'June 12, 2026 at 9:00 AM',
       'schedule_type': 'Full-Time',
-      'preferred_date': '2026-06-12',
-      'preferred_time': '09:00:00',
       'job_start_date': '2026-06-12',
       'job_end_date': '2026-06-15',
       'estimated_working_days': 3,
@@ -852,6 +952,92 @@ Future<http.Response> _completedApplicationResponses(
         'applied_at': '2026-06-09T10:00:00+08:00',
       },
     ]);
+  }
+  if (path.endsWith('/jobs/') || path.endsWith('/notifications/')) {
+    return _json([]);
+  }
+  return _json({});
+}
+
+Future<http.Response> _myJobsResponses(http.Request request) async {
+  final path = request.url.path;
+  if (path.endsWith('/accounts/me/')) {
+    return _json({
+      'user': {
+        'username': 'juan',
+        'email': 'juan@example.com',
+        'first_name': 'Juan',
+        'last_name': 'Worker',
+      },
+      'profile': {
+        'phone': '09123456789',
+        'bio': 'Cleaner',
+        'skills': ['Cleaning'],
+        'hourly_rate': '100.00',
+        'daily_rate': '800.00',
+        'years_experience': 2,
+        'location_label': 'Tayabas City',
+        'verification_status': 'verified',
+        'display_rating': 'No ratings yet',
+      },
+    });
+  }
+  if (path.endsWith('/jobs/applications/')) {
+    return _json([
+      {
+        'id': 1,
+        'job_id': 8,
+        'job_title': 'Active House Cleaning',
+        'job_type': 'Cleaning',
+        'job_status': 'assigned',
+        'household_username': 'maria',
+        'household_name': 'Maria Household',
+        'location_label': 'Tayabas City',
+        'service_rate': '700.00',
+        'status': 'hired',
+        'status_stage': 'in_progress',
+        'status_label': 'In progress',
+        'can_request_completion': true,
+        'note': '',
+        'applied_at': '2026-06-09T10:00:00+08:00',
+      },
+      {
+        'id': 2,
+        'job_id': 9,
+        'job_title': 'Finished House Cleaning',
+        'job_type': 'Cleaning',
+        'job_status': 'completed',
+        'household_username': 'maria',
+        'household_name': 'Maria Household',
+        'location_label': 'Tayabas City',
+        'service_rate': '650.00',
+        'status': 'completed',
+        'status_stage': 'completed',
+        'status_label': 'Completed',
+        'can_request_completion': false,
+        'note': '',
+        'applied_at': '2026-05-01T10:00:00+08:00',
+      },
+    ]);
+  }
+  if (path.endsWith('/reviews/')) {
+    return _json([
+      {
+        'id': 5,
+        'author_username': 'maria',
+        'author_name': 'Maria Household',
+        'target_username': 'juan',
+        'target_name': 'Juan Worker',
+        'job': 9,
+        'job_title': 'Finished House Cleaning',
+        'rating': '4.5',
+        'feedback': 'Great work.',
+        'created_at': '2026-06-10T09:30:00+08:00',
+      },
+    ]);
+  }
+  if (path.endsWith('/jobs/8/request-completion/')) {
+    return _json({'detail': 'ok'});
   }
   if (path.endsWith('/jobs/') || path.endsWith('/notifications/')) {
     return _json([]);

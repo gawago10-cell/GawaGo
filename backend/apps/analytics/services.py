@@ -3,51 +3,23 @@ import math
 from collections import Counter
 from decimal import Decimal
 
-from django.contrib.auth.models import User
-from django.db.models import Avg, Count, F, Sum
+from django.db.models import Avg, Count, F, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
 from apps.common.models import VerificationRequest
+from apps.common.barangays import (
+    BARANGAY_CENTERS,
+    BARANGAYS,
+    barangay_from_location_label as _barangay_from_location_label,
+    normalize_barangay_name as _normalize_barangay_name,
+)
 from apps.jobs.models import JobApplication, JobPosting
 
 
-BARANGAY_CENTERS = {
-    "Alitao": {"latitude": 14.053732435726491, "longitude": 121.53367247279074},
-    "Alupay": {"latitude": 14.058062231209304, "longitude": 121.60894317598026},
-    "Anos": {"latitude": 13.99232619250926, "longitude": 121.5687256763307},
-    "Ayaas": {"latitude": 14.033228404082344, "longitude": 121.61280358513223},
-    "Baguio": {"latitude": 14.021320928095191, "longitude": 121.58003973115441},
-    "Banilad": {"latitude": 14.04366598567965, "longitude": 121.60287713844916},
-    "Calumpang": {"latitude": 13.976661577650393, "longitude": 121.55620698162966},
-    "Camaysa": {"latitude": 14.061311651286287, "longitude": 121.55211748652624},
-    "Dapdap": {"latitude": 14.059836954143305, "longitude": 121.56928155311572},
-    "Gibanga": {"latitude": 14.02426437684045, "longitude": 121.52448299373229},
-    "Ibas": {"latitude": 14.056263954528147, "longitude": 121.5858639459556},
-    "Ilasan Ilaya": {"latitude": 14.076395444822706, "longitude": 121.62660976250517},
-    "Ilasan Ibaba": {"latitude": 14.076395444822706, "longitude": 121.62660976250517},
-    "Isabang": {"latitude": 13.962274547948905, "longitude": 121.56328409695064},
-    "Ipilan": {"latitude": 14.033357570914804, "longitude": 121.56833532099283},
-    "Katigan Kanluran": {"latitude": 14.046025691828351, "longitude": 121.6202812396619},
-    "Katigan Silangan": {"latitude": 14.060227861113688, "longitude": 121.62154538337464},
-    "Lalo": {"latitude": 14.050261202405046, "longitude": 121.55717481490423},
-    "Lakawan": {"latitude": 14.009582881492914, "longitude": 121.62560074991586},
-    "Lita": {"latitude": 14.017699813459267, "longitude": 121.59813443683436},
-    "Mateuna": {"latitude": 14.023782235513432, "longitude": 121.6406},
-    "Mayowe": {"latitude": 13.97392868959356, "longitude": 121.5783335732242},
-    "Opias": {"latitude": 14.036073743242486, "longitude": 121.59254781007984},
-    "Palale Ilaya": {"latitude": 14.054262032583141, "longitude": 121.6530714222272},
-    "Palale Kanluran": {"latitude": 14.041216405063171, "longitude": 121.6540020663721},
-    "Palale Ibaba": {"latitude": 14.061429877540817, "longitude": 121.70714387691235},
-    "Palale Silangan": {"latitude": 14.089421743230861, "longitude": 121.68915654043055},
-    "Tamlong": {"latitude": 14.069116148209835, "longitude": 121.60191813524901},
-    "Talolong": {"latitude": 14.077712524215334, "longitude": 121.61401135611793},
-    "Tongko": {"latitude": 13.987459902846487, "longitude": 121.60973707319776},
-    "Wakas": {"latitude": 14.006911431929879, "longitude": 121.60872288744254},
-}
-
-BARANGAYS = list(BARANGAY_CENTERS.keys())
+# The barangay table and label parser are shared with reports and the job
+# serializer's label masking -- see apps.common.barangays.
 SERVICE_CATEGORIES = [
     "House Cleaning",
     "Cooking",
@@ -73,25 +45,6 @@ def _decimal_to_float(value):
     return value
 
 
-def _normalize_barangay_name(value):
-    normalized = str(value or "").strip()
-    if normalized.lower().startswith("barangay "):
-        normalized = normalized[9:].strip()
-    for barangay in BARANGAYS:
-        if barangay.lower() == normalized.lower():
-            return barangay
-    return normalized
-
-
-def _barangay_from_location_label(value):
-    parts = [part.strip() for part in str(value or "").split(",") if part.strip()]
-    for part in parts:
-        normalized = _normalize_barangay_name(part)
-        if normalized in BARANGAYS:
-            return normalized
-    return _normalize_barangay_name(parts[0]) if parts else ""
-
-
 def _last_six_months():
     today = timezone.localdate()
     return [
@@ -114,6 +67,57 @@ def _build_monthly_job_requests():
         }
         for year, month in _last_six_months()
     ]
+
+
+def _build_application_trend():
+    monthly_counts = {
+        (row["month"].year, row["month"].month): row["applications"]
+        for row in JobApplication.objects.annotate(month=TruncMonth("applied_at"))
+        .values("month")
+        .annotate(applications=Count("id"))
+    }
+    return [
+        {
+            "month": calendar.month_abbr[month],
+            "applications": monthly_counts.get((year, month), 0),
+        }
+        for year, month in _last_six_months()
+    ]
+
+
+def _percent(part, whole):
+    return round((part / whole) * 100, 1) if whole else 0.0
+
+
+def _build_enhanced_analytics(jobs, total_workers):
+    """Hiring performance (AGENTS.md IV.A).
+
+    These used to be computed in the web client's offline fallback only, so
+    the dashboard showed 0% whenever the API call *succeeded*. The formulas
+    deliberately match apps.reports.services so the dashboard and the
+    platform report cannot disagree on the same data.
+    """
+    applications = list(JobApplication.objects.all().values("id", "job_id", "worker_id", "status"))
+    hired = [
+        application
+        for application in applications
+        if application["status"] in (JobApplication.STATUS_HIRED, JobApplication.STATUS_COMPLETED)
+    ]
+    hires_per_worker = Counter(application["worker_id"] for application in hired)
+    job_ids = {job.id for job in jobs}
+    matched_job_ids = {
+        application["job_id"] for application in hired if application["job_id"] in job_ids
+    }
+    return {
+        "hiringSuccessRate": _percent(len(hired), len(applications)),
+        "jobMatchRate": _percent(len(matched_job_ids), len(jobs)),
+        "workerHiringStats": {
+            "hiredWorkers": len(hires_per_worker),
+            "hirePercentage": _percent(len(hires_per_worker), total_workers),
+            "repeatHires": sum(1 for count in hires_per_worker.values() if count > 1),
+        },
+        "applicationTrends": _build_application_trend(),
+    }
 
 
 def _build_service_analytics(jobs):
@@ -169,8 +173,13 @@ def _build_rating_distribution(worker_profiles):
 
 
 def _build_average_rates_by_category():
+    # A cancelled job's rate was never actually agreed to or paid, so it must
+    # not drag down what households are told to expect for a category
+    # (AGENTS.md IV.A: pricing exists "to support fair pricing"; averaging in
+    # cancelled postings misrepresents live market rates).
     rows = (
-        JobPosting.objects.values("required_skill")
+        JobPosting.objects.exclude(status=JobPosting.STATUS_CANCELLED)
+        .values("required_skill")
         .annotate(count=Count("id"), average_rate=Avg("service_rate"))
         .order_by("-count", "required_skill")
     )
@@ -191,7 +200,8 @@ def _build_pricing_trends():
             "averageRate": _decimal_to_float(row["average_rate"]) or 0,
             "postings": row["postings"],
         }
-        for row in JobPosting.objects.annotate(month=TruncMonth("created_at"))
+        for row in JobPosting.objects.exclude(status=JobPosting.STATUS_CANCELLED)
+        .annotate(month=TruncMonth("created_at"))
         .values("month")
         .annotate(average_rate=Avg("service_rate"), postings=Count("id"))
     }
@@ -205,10 +215,44 @@ def _build_pricing_trends():
     ]
 
 
+def pending_account_verifications():
+    """Household and worker accounts with an ID waiting in the review queue."""
+    return (
+        UserProfile.objects.filter(user__is_staff=False)
+        .exclude(verification_status="verified")
+        .filter(user__in=VerificationRequest.objects.filter(status=VerificationRequest.STATUS_PENDING).values("worker"))
+        .count()
+    )
+
+
+def active_application_count():
+    """Applications still awaiting a decision on a job that is still live."""
+    return (
+        JobApplication.objects.filter(status=JobApplication.STATUS_PENDING)
+        .exclude(job__status__in=[JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED])
+        .count()
+    )
+
+
+def ongoing_match_count():
+    """Jobs whose hired worker is on the job right now."""
+    return (
+        JobPosting.objects.filter(
+            status__in=[JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED],
+            applications__status=JobApplication.STATUS_HIRED,
+        )
+        .distinct()
+        .count()
+    )
+
+
 def build_dashboard_metrics():
     jobs = list(JobPosting.objects.all())
-    worker_profiles = list(UserProfile.objects.filter(role=UserProfile.ROLE_WORKER))
-    household_profiles = list(UserProfile.objects.filter(role=UserProfile.ROLE_HOUSEHOLD))
+    # Admin accounts can carry a UserProfile (role defaults to worker), so
+    # every head count here is limited to real households and workers.
+    member_profiles = UserProfile.objects.filter(user__is_staff=False)
+    worker_profiles = list(member_profiles.filter(role=UserProfile.ROLE_WORKER))
+    household_profiles = list(member_profiles.filter(role=UserProfile.ROLE_HOUSEHOLD))
 
     job_barangay_counts = Counter(_barangay_from_location_label(job.location_label) for job in jobs)
     worker_barangay_counts = Counter(_barangay_from_location_label(profile.location_label) for profile in worker_profiles)
@@ -219,7 +263,9 @@ def build_dashboard_metrics():
         if job.status == JobPosting.STATUS_COMPLETED
     )
     pending_verification_workers = set(
-        VerificationRequest.objects.filter(status=VerificationRequest.STATUS_PENDING).values_list("worker_id", flat=True)
+        VerificationRequest.objects.filter(
+            status=VerificationRequest.STATUS_PENDING, worker__is_staff=False
+        ).values_list("worker_id", flat=True)
     )
     pending_verifications_by_barangay = Counter(
         _barangay_from_location_label(profile.location_label)
@@ -236,7 +282,7 @@ def build_dashboard_metrics():
     # as one with 200 -- weighting each worker's mean by their own
     # rating_count instead recovers the true mean across every individual
     # rating (sum(rating_i * count_i) / sum(count_i) == mean of all rating_i).
-    rating_stats = UserProfile.objects.filter(
+    rating_stats = member_profiles.filter(
         role=UserProfile.ROLE_WORKER,
         rating_count__gt=0,
         average_rating__isnull=False,
@@ -255,8 +301,23 @@ def build_dashboard_metrics():
     total_workers = len(worker_profiles)
     verified_workers = sum(1 for profile in worker_profiles if profile.verification_status == "verified")
     rejected_workers = sum(1 for profile in worker_profiles if profile.verification_status == "rejected")
-    pending_verifications = VerificationRequest.objects.filter(status=VerificationRequest.STATUS_PENDING).count()
-    rejected_verifications = VerificationRequest.objects.filter(status=VerificationRequest.STATUS_REJECTED).count()
+    # "Verified users" covers households too, and is counted off the profile's
+    # own verification status -- the same basis apps.reports.services uses, so
+    # the dashboard and the platform report cannot report different totals for
+    # the same data. "Pending" means an account with an ID actually waiting in
+    # the queue: every new profile starts as "pending" before submitting
+    # anything, so the profile status alone counted every unverified account.
+    account_verification = member_profiles.aggregate(
+        verified=Count("id", filter=Q(verification_status="verified")),
+        rejected=Count("id", filter=Q(verification_status="rejected")),
+    )
+    verified_users = account_verification["verified"]
+    pending_verifications = pending_account_verifications()
+    rejected_verifications = account_verification["rejected"]
+    pending_verification_requests = VerificationRequest.objects.filter(
+        status=VerificationRequest.STATUS_PENDING, worker__is_staff=False
+    ).count()
+    total_accounts_with_profiles = len(worker_profiles) + len(household_profiles)
 
     heat_map_data = []
     for barangay, center in BARANGAY_CENTERS.items():
@@ -277,8 +338,8 @@ def build_dashboard_metrics():
         "verified_workers": verified_workers,
         "completed_jobs": JobPosting.objects.filter(status=JobPosting.STATUS_COMPLETED).count(),
         "cancelled_jobs": JobPosting.objects.filter(status=JobPosting.STATUS_CANCELLED).count(),
-        "active_applications": JobApplication.objects.filter(status=JobApplication.STATUS_PENDING).count(),
-        "total_accounts": User.objects.count(),
+        "active_applications": active_application_count(),
+        "total_accounts": total_accounts_with_profiles,
         "avg_rating": _decimal_to_float(rating_avg),
         "analytics": {
             "summary": {
@@ -287,16 +348,21 @@ def build_dashboard_metrics():
                 "households": len(household_profiles),
                 "totalJobPostings": len(jobs),
                 "activeJobs": sum(1 for job in jobs if job.status == JobPosting.STATUS_OPEN),
-                "activeApplications": JobApplication.objects.filter(status=JobApplication.STATUS_PENDING).count(),
+                "activeApplications": active_application_count(),
                 "completedServices": sum(1 for job in jobs if job.status == JobPosting.STATUS_COMPLETED),
                 "cancelledRequests": sum(1 for job in jobs if job.status == JobPosting.STATUS_CANCELLED),
-                "ongoingMatches": JobPosting.objects.filter(applications__status=JobApplication.STATUS_HIRED).distinct().count(),
-                "verifiedUsers": verified_workers,
+                "ongoingMatches": ongoing_match_count(),
+                "verifiedUsers": verified_users,
                 "verifiedWorkers": verified_workers,
                 "pendingVerifications": pending_verifications,
+                "pendingVerificationRequests": pending_verification_requests,
                 "rejectedVerifications": rejected_verifications,
                 "rejectedWorkers": rejected_workers,
-                "verifiedPercent": round((verified_workers / total_workers) * 100) if total_workers else 0,
+                "verifiedPercent": (
+                    round((verified_users / total_accounts_with_profiles) * 100)
+                    if total_accounts_with_profiles
+                    else 0
+                ),
                 "averageWorkerRating": f"{float(rating_avg):.2f}" if rating_avg is not None else "No ratings yet",
                 "ratedWorkerCount": rated_worker_count,
             },
@@ -315,5 +381,6 @@ def build_dashboard_metrics():
                 "pricingTrends": pricing_trends,
             },
             "serviceRateSummary": average_rates_by_category[:5],
+            "enhancedAnalytics": _build_enhanced_analytics(jobs, total_workers),
         },
     }

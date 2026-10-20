@@ -11,6 +11,7 @@ class HouseholdProfile {
     required this.latitude,
     required this.longitude,
     required this.verificationStatus,
+    this.verificationRequestStatus = '',
     required this.profilePhotoUrl,
   });
 
@@ -23,6 +24,11 @@ class HouseholdProfile {
   final double? latitude;
   final double? longitude;
   final String verificationStatus;
+
+  /// Status of the latest submitted verification request ('' when none),
+  /// so "Under Review" means an ID was actually submitted -- new profiles
+  /// default to verification_status "pending" regardless.
+  final String verificationRequestStatus;
   final String profilePhotoUrl;
 
   String get fullName {
@@ -43,6 +49,9 @@ class HouseholdProfile {
       latitude: _number(profile['latitude']),
       longitude: _number(profile['longitude']),
       verificationStatus: _text(profile['verification_status'], 'unverified'),
+      verificationRequestStatus: profile['verification_request'] is Map
+          ? _text((profile['verification_request'] as Map)['status'])
+          : '',
       profilePhotoUrl: _text(profile['profile_photo_url']),
     );
   }
@@ -61,9 +70,11 @@ class HouseholdJob {
     required this.latitude,
     required this.longitude,
     required this.serviceRate,
+    this.rateTypeLabel = 'Per Day',
     required this.workerSlots,
     required this.hiredCount,
     required this.status,
+    this.statusLabel = '',
     required this.canReview,
     required this.applications,
     required this.images,
@@ -84,9 +95,15 @@ class HouseholdJob {
   final double latitude;
   final double longitude;
   final double serviceRate;
+
+  /// What serviceRate is per: "Per Day", "Per Hour" or "Fixed Rate".
+  final String rateTypeLabel;
   final int workerSlots;
   final int hiredCount;
   final String status;
+
+  /// The backend's own wording for `status` (it owns status labels).
+  final String statusLabel;
   final bool canReview;
   final List<HouseholdApplication> applications;
   final List<JobImage> images;
@@ -108,9 +125,14 @@ class HouseholdJob {
       latitude: _number(json['latitude']) ?? 0,
       longitude: _number(json['longitude']) ?? 0,
       serviceRate: _number(json['service_rate']) ?? 0,
+      rateTypeLabel: _text(
+        json['rate_type_label'] ?? json['job_rate_type_label'],
+        'Per Day',
+      ),
       workerSlots: _integer(json['workers_needed'] ?? json['worker_slots']),
       hiredCount: _integer(json['hired_count']),
       status: _text(json['status']),
+      statusLabel: _text(json['status_label'] ?? ''),
       canReview: json['can_review'] == true,
       applications: _list(
         json['applications'],
@@ -140,6 +162,7 @@ class HouseholdApplication {
     required this.statusLabel,
     required this.note,
     required this.distanceKm,
+    this.distanceLabel = '',
     required this.workerLatitude,
     required this.workerLongitude,
     required this.workerVerificationStatus,
@@ -155,6 +178,7 @@ class HouseholdApplication {
     required this.workerMatchScore,
     required this.appliedAt,
     required this.routePoints,
+    this.householdCanReview = false,
   });
 
   final int id;
@@ -164,6 +188,11 @@ class HouseholdApplication {
   final String locationLabel;
   final String status;
 
+  /// Whether this household can still review this particular worker
+  /// (backend `household_can_review`). The job's canReview only says some
+  /// worker is left, which on a multi-worker job is not enough to pick one.
+  final bool householdCanReview;
+
   /// Canonical stage/label from apps/jobs/statuses.py -- see the matching
   /// fields on WorkerApplication for why this replaces mapping the raw
   /// status locally.
@@ -171,6 +200,12 @@ class HouseholdApplication {
   final String statusLabel;
   final String note;
   final double? distanceKm;
+
+  /// Server-rounded road distance, e.g. "2.3 km away".
+  final String distanceLabel;
+
+  /// Null only when the worker has not pinned a location on their profile;
+  /// the API sends it (and [routePoints]) for any applicant, hired or not.
   final double? workerLatitude;
   final double? workerLongitude;
   final String workerVerificationStatus;
@@ -184,8 +219,9 @@ class HouseholdApplication {
   final int workerRatingCount;
   final int workerCompletedJobs;
 
-  /// Smart Matching's rule-based score for this applicant; null when the
-  /// backend returned no score to rank by.
+  /// The AI content-based fit (0-1) for this applicant, the same scale as the
+  /// recommended-worker cards; null when the backend could not score them.
+  /// The list itself arrives in Smart Matching's rule order.
   final double? workerMatchScore;
   final String appliedAt;
   final List<RoutePoint> routePoints;
@@ -212,6 +248,7 @@ class HouseholdApplication {
       statusLabel: _text(json['status_label']),
       note: _text(json['note']),
       distanceKm: _number(json['route_distance_km']),
+      distanceLabel: _text(json['distance_label']),
       workerLatitude: _number(json['worker_latitude']),
       workerLongitude: _number(json['worker_longitude']),
       workerVerificationStatus: _text(json['worker_verification_status']),
@@ -231,6 +268,7 @@ class HouseholdApplication {
       routePoints: _list(
         json['route_points'],
       ).map(RoutePoint.fromJson).whereType<RoutePoint>().toList(),
+      householdCanReview: json['household_can_review'] == true,
     );
   }
 }
@@ -247,6 +285,7 @@ class WorkerJobHistoryEntry {
     required this.completedAt,
     required this.jobStartDate,
     required this.jobEndDate,
+    this.skillRatings = const [],
   });
 
   final int id;
@@ -257,6 +296,7 @@ class WorkerJobHistoryEntry {
   final String completedAt;
   final String jobStartDate;
   final String jobEndDate;
+  final List<JobSkillRating> skillRatings;
 
   /// Prefers the confirmed completion date; older records predate that field
   /// being set, so fall back to the scheduled period and then to nothing
@@ -288,6 +328,7 @@ class WorkerJobHistoryEntry {
       completedAt: _text(json['completed_at'] ?? ''),
       jobStartDate: _text(json['job_start_date'] ?? ''),
       jobEndDate: _text(json['job_end_date'] ?? ''),
+      skillRatings: JobSkillRating.listFromJson(json['skill_ratings']),
     );
   }
 }
@@ -298,20 +339,20 @@ class RecommendedWorker {
     required this.username,
     required this.name,
     required this.locationLabel,
+    required this.approximateLatitude,
+    required this.approximateLongitude,
     required this.bio,
     required this.profilePhotoUrl,
     required this.ratingCount,
     required this.completedJobs,
     required this.skills,
+    required this.matchesSkill,
     required this.verificationStatus,
     required this.distanceLabel,
     required this.distanceKm,
     required this.matchScore,
     required this.ratingLabel,
     required this.workerRate,
-    required this.workerLatitude,
-    required this.workerLongitude,
-    required this.routePoints,
     required this.aiScore,
     required this.skillContribution,
     required this.proximityContribution,
@@ -322,20 +363,25 @@ class RecommendedWorker {
   final String username;
   final String name;
   final String locationLabel;
+
+  /// The worker's home snapped to a ~1 km grid, which is all this browse
+  /// list carries: it scores every candidate in range, most of whom never
+  /// apply. Null when they have saved no location. Once a worker applies,
+  /// their application carries the exact point and the route.
+  final double? approximateLatitude;
+  final double? approximateLongitude;
   final String bio;
   final String profilePhotoUrl;
   final int ratingCount;
   final int completedJobs;
   final List<String> skills;
+  final bool matchesSkill;
   final String verificationStatus;
   final String distanceLabel;
   final double? distanceKm;
   final double matchScore;
   final String ratingLabel;
   final String workerRate;
-  final double? workerLatitude;
-  final double? workerLongitude;
-  final List<RoutePoint> routePoints;
   final double aiScore;
   final double skillContribution;
   final double proximityContribution;
@@ -357,22 +403,20 @@ class RecommendedWorker {
       username: _text(json['worker_username']),
       name: _text(json['worker_name']),
       locationLabel: _text(json['worker_location_label']),
+      approximateLatitude: _number(json['worker_approximate_latitude']),
+      approximateLongitude: _number(json['worker_approximate_longitude']),
       bio: _text(json['worker_bio']),
       profilePhotoUrl: _text(json['worker_profile_photo_url']),
       ratingCount: _integer(json['worker_rating_count']),
       completedJobs: _integer(json['worker_completed_jobs']),
       skills: _list(json['skills']).map((item) => item.toString()).toList(),
+      matchesSkill: json['matches_skill'] == true,
       verificationStatus: _text(json['verification_status']),
       distanceLabel: _text(json['distance_label']),
       distanceKm: _number(json['distance_km']),
       matchScore: _number(json['match_score']) ?? 0,
       ratingLabel: _text(json['rating_label']),
       workerRate: _text(json['worker_rate']),
-      workerLatitude: _number(json['worker_latitude']),
-      workerLongitude: _number(json['worker_longitude']),
-      routePoints: _list(
-        json['route_points'],
-      ).map(RoutePoint.fromJson).whereType<RoutePoint>().toList(),
       aiScore: _number(json['ai_score']) ?? 0,
       skillContribution: _number(json['skill_contribution']) ?? 0,
       proximityContribution: _number(json['proximity_contribution']) ?? 0,

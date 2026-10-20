@@ -1,11 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  fetchAdminCertificates,
-  fetchAdminVerificationDocuments,
-  reviewCertificate,
-  reviewVerificationDocument,
-} from "../services/backendDataService";
+import AuthImage from "./AuthImage";
+import { fetchAdminCertificates, reviewCertificate } from "../services/backendDataService";
+import { openProtectedFile } from "../utils/protectedFiles";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
@@ -45,10 +42,6 @@ function formatFullDate(value) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function isImageFile(url) {
-  return /\.(png|jpe?g|gif|webp)(\?|$)/i.test(url || "");
-}
-
 function isSameLocalDay(value, reference) {
   if (!value) return false;
   const date = new Date(value);
@@ -61,16 +54,15 @@ function isSameLocalDay(value, reference) {
 }
 
 /**
- * Admin review of worker credentials: TESDA/licence certificates (roadmap
- * item #11) and government ID documents (#12). Both backends shipped with
- * tests but no screen, so neither approval workflow was reachable until now.
+ * Admin review of worker credentials: TESDA/licence certificates. Identity
+ * documents are not reviewed here -- government IDs go through the
+ * Verification Queue, which is the flow whose approval actually marks the
+ * account verified.
  */
 export default function AdminCredentialsQueue() {
-  const [tab, setTab] = useState("certificates");
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [certificates, setCertificates] = useState([]);
-  const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingKey, setSavingKey] = useState(null);
@@ -79,19 +71,14 @@ export default function AdminCredentialsQueue() {
     setLoading(true);
     setError("");
     try {
-      const [certs, docs] = await Promise.all([
-        fetchAdminCertificates("all"),
-        fetchAdminVerificationDocuments("all"),
-      ]);
-      if (certs === null || docs === null) {
+      const certs = await fetchAdminCertificates("all");
+      if (certs === null) {
         setError("Unable to load this queue. Check that you're signed in as an admin.");
       }
       setCertificates(certs || []);
-      setDocuments(docs || []);
     } catch (loadError) {
       setError(loadError.message || "Unable to load this queue.");
       setCertificates([]);
-      setDocuments([]);
     } finally {
       setLoading(false);
     }
@@ -101,8 +88,8 @@ export default function AdminCredentialsQueue() {
     load();
   }, [load]);
 
-  // Both tabs' records are reshaped into one card view-model so the grid
-  // below doesn't need to branch on kind everywhere it reads a field.
+  // Records are reshaped into a card view-model so the grid below doesn't
+  // need to know the record's shape everywhere it reads a field.
   const certificateCards = useMemo(
     () =>
       certificates.map((record) => ({
@@ -120,49 +107,26 @@ export default function AdminCredentialsQueue() {
           ...(record.expiryDate ? [`Expires: ${formatFullDate(record.expiryDate)}`] : []),
         ],
         fileUrl: record.fileUrl,
+        fileType: record.fileType,
         status: record.verificationStatus,
         verifiedAt: record.verifiedAt,
       })),
     [certificates],
   );
 
-  const documentCards = useMemo(
-    () =>
-      documents.map((record) => ({
-        kind: "document",
-        id: record.id,
-        recordKey: `document-${record.id}`,
-        displayName: record.displayName,
-        username: record.username,
-        locationLabel: record.locationLabel,
-        memberSince: record.memberSince,
-        title: record.idTypeLabel || "Government ID",
-        typeLabel: "Government ID",
-        detailLines: [
-          `Submitted: ${formatFullDate(record.createdAt) || "—"}`,
-          ...(record.idNumber ? [`ID Number: ${record.idNumber}`] : []),
-        ],
-        fileUrl: record.fileUrl,
-        status: record.verificationStatus,
-        verifiedAt: record.verifiedAt,
-      })),
-    [documents],
-  );
-
   const stats = useMemo(() => {
     const today = new Date();
-    const combined = [...certificateCards, ...documentCards];
     return {
-      pending: combined.filter((card) => card.status === "pending").length,
-      approvedToday: combined.filter((card) => card.status === "approved" && isSameLocalDay(card.verifiedAt, today))
-        .length,
-      rejected: combined.filter((card) => card.status === "rejected").length,
-      total: combined.length,
+      pending: certificateCards.filter((card) => card.status === "pending").length,
+      approvedToday: certificateCards.filter(
+        (card) => card.status === "approved" && isSameLocalDay(card.verifiedAt, today),
+      ).length,
+      rejected: certificateCards.filter((card) => card.status === "rejected").length,
+      total: certificateCards.length,
     };
-  }, [certificateCards, documentCards]);
+  }, [certificateCards]);
 
-  const isCertificates = tab === "certificates";
-  const activeCards = isCertificates ? certificateCards : documentCards;
+  const activeCards = certificateCards;
 
   const chipCounts = useMemo(
     () => ({
@@ -192,17 +156,17 @@ export default function AdminCredentialsQueue() {
   async function applyDecision(card, decision) {
     setSavingKey(card.recordKey);
     try {
-      const notes =
-        decision === "rejected"
-          ? window.prompt("Reason for rejecting (shown to the worker, optional):", "") || ""
-          : "";
-      if (card.kind === "certificate") {
-        const updated = await reviewCertificate(card.id, { status: decision, notes });
-        setCertificates((prev) => prev.map((item) => (item.id === card.id ? updated : item)));
-      } else {
-        const updated = await reviewVerificationDocument(card.id, { status: decision, notes });
-        setDocuments((prev) => prev.map((item) => (item.id === card.id ? updated : item)));
+      let notes = "";
+      if (decision === "rejected") {
+        const answer = window.prompt("Reason for rejecting (shown to the worker, optional):", "");
+        // Cancel means "don't reject", not "reject with no reason".
+        if (answer === null) {
+          return;
+        }
+        notes = answer;
       }
+      const updated = await reviewCertificate(card.id, { status: decision, notes });
+      setCertificates((prev) => prev.map((item) => (item.id === card.id ? updated : item)));
     } catch (decisionError) {
       window.alert(decisionError.message || "Unable to save this decision.");
     } finally {
@@ -215,7 +179,7 @@ export default function AdminCredentialsQueue() {
       <div className="admin-reports-header">
         <div>
           <h2>Worker Credentials</h2>
-          <p>Review and verify certificates and government IDs submitted by workers.</p>
+          <p>Review and verify TESDA certificates, licences and other credentials submitted by workers.</p>
         </div>
       </div>
 
@@ -260,19 +224,8 @@ export default function AdminCredentialsQueue() {
 
       <div className="admin-credentials-toolbar">
         <div className="household-history-tabs mb-0">
-          <button
-            type="button"
-            className={`household-history-tab ${isCertificates ? "active" : ""}`}
-            onClick={() => setTab("certificates")}
-          >
+          <button type="button" className="household-history-tab active" aria-current="page">
             Certificates <span className="household-history-tab-count">{certificateCards.length}</span>
-          </button>
-          <button
-            type="button"
-            className={`household-history-tab ${isCertificates ? "" : "active"}`}
-            onClick={() => setTab("documents")}
-          >
-            Government IDs <span className="household-history-tab-count">{documentCards.length}</span>
           </button>
         </div>
         <input
@@ -303,13 +256,10 @@ export default function AdminCredentialsQueue() {
         <div className="admin-reports-empty">Loading…</div>
       ) : visibleCards.length === 0 ? (
         <div className="admin-reports-empty">
-          No {isCertificates ? "certificates" : "ID documents"} match this filter.
-          {!isCertificates && (
-            <p className="small text-muted mb-0 mt-2">
-              Worker identity is currently collected through the Verification Queue tab. This queue covers the
-              separate multi-ID-type submissions.
-            </p>
-          )}
+          No certificates match this filter.
+          <p className="small text-muted mb-0 mt-2">
+            Government IDs are reviewed in the Verification Queue, not here.
+          </p>
         </div>
       ) : (
         <div className="admin-credentials-grid">
@@ -348,10 +298,12 @@ function CredentialCard({ card, saving, onApprove, onReject }) {
 
       <div className="admin-credential-body">
         <div className="admin-credential-preview">
-          {card.fileUrl && isImageFile(card.fileUrl) ? (
-            <img src={card.fileUrl} alt={card.title} />
+          {card.fileUrl && card.fileType === "image" ? (
+            // The file route is permission-checked, so a plain <img> can't
+            // load it: the bytes are fetched with the admin's token.
+            <AuthImage src={card.fileUrl} alt={card.title} />
           ) : (
-            <span className="admin-credential-preview-icon">PDF</span>
+            <span className="admin-credential-preview-icon">{card.fileType === "pdf" ? "PDF" : "FILE"}</span>
           )}
         </div>
         <div className="admin-credential-details">
@@ -367,9 +319,9 @@ function CredentialCard({ card, saving, onApprove, onReject }) {
 
       <div className="admin-credential-actions">
         {card.fileUrl ? (
-          <a className="admin-credential-btn ghost" href={card.fileUrl} target="_blank" rel="noreferrer">
+          <button type="button" className="admin-credential-btn ghost" onClick={() => openProtectedFile(card.fileUrl)}>
             View Document
-          </a>
+          </button>
         ) : (
           <span className="admin-credential-btn ghost disabled">No file</span>
         )}

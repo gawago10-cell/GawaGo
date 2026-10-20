@@ -41,7 +41,7 @@ class NotificationPermissionTests(TestCase):
         response = self.client.get(reverse("notification-list"))
 
         self.assertEqual(response.status_code, 200)
-        ids = {item["id"] for item in response.json()}
+        ids = {item["id"] for item in response.json()["results"]}
         self.assertIn(self.notification.id, ids)
         self.assertNotIn(self.other_notification.id, ids)
 
@@ -158,7 +158,7 @@ class NotificationPermissionTests(TestCase):
         response = self.client.get(reverse("notification-list"))
 
         self.assertEqual(response.status_code, 200)
-        notification_payload = next(item for item in response.json() if item["id"] == self.notification.id)
+        notification_payload = next(item for item in response.json()["results"] if item["id"] == self.notification.id)
         self.assertEqual(notification_payload["related_job_id"], 11)
         self.assertEqual(notification_payload["related_application_id"], 22)
         self.assertEqual(notification_payload["action_type"], Notification.ACTION_HIRE_REQUEST)
@@ -187,3 +187,109 @@ class EmailTimeoutSettingTests(TestCase):
 
         connection = get_connection()
         self.assertEqual(connection.timeout, 10)
+
+
+class NotificationPaginationTests(TestCase):
+    """The list used to return every notification in one response, so a user
+    with a long history downloaded all of it on every poll."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="paged-user", password="password")
+        for index in range(25):
+            Notification.objects.create(
+                recipient=self.user,
+                notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+                title=f"n{index}",
+                message="m",
+            )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_the_list_is_paged_and_loses_nothing(self):
+        first = self.client.get(reverse("notification-list")).json()
+
+        self.assertEqual(first["count"], 25)
+        self.assertEqual(len(first["results"]), 20)
+        self.assertIsNotNone(first["next"])
+
+        second = self.client.get(first["next"]).json()
+        self.assertEqual(len(second["results"]), 5)
+        self.assertIsNone(second["next"])
+        ids = {n["id"] for n in first["results"]} | {n["id"] for n in second["results"]}
+        self.assertEqual(len(ids), 25)
+
+
+class AdminAlertTests(TestCase):
+    """Admin alerts (AGENTS.md III.A): admins hear about new queue items."""
+
+    def setUp(self):
+        self.superadmin = User.objects.create_user(
+            username="alert-super", email="super@example.com", password="password", is_staff=True, is_superuser=True
+        )
+        self.staff_admin = User.objects.create_user(
+            username="alert-staff", email="staff@example.com", password="password", is_staff=True
+        )
+        self.inactive_admin = User.objects.create_user(
+            username="alert-inactive", password="password", is_staff=True, is_active=False
+        )
+        self.member = User.objects.create_user(username="alert-member", password="password")
+
+    def test_notify_admins_reaches_every_active_admin_only(self):
+        from apps.notifications.services import notify_admins
+
+        with self.captureOnCommitCallbacks(execute=True):
+            sent = notify_admins(title="New verification request", message="Waiting for review.")
+
+        self.assertEqual(sent, 2)
+        recipients = set(
+            Notification.objects.filter(notification_type=Notification.TYPE_ADMIN_ALERT).values_list(
+                "recipient__username", flat=True
+            )
+        )
+        self.assertEqual(recipients, {"alert-super", "alert-staff"})
+        self.assertEqual(sorted(message.to[0] for message in mail.outbox), ["staff@example.com", "super@example.com"])
+
+    def test_superadmin_only_alerts_skip_plain_admins(self):
+        from apps.notifications.services import notify_admins
+
+        notify_admins(title="New report to review", message="Waiting.", superadmins_only=True)
+
+        self.assertEqual(
+            list(Notification.objects.values_list("recipient__username", flat=True)), ["alert-super"]
+        )
+
+    def test_filing_a_complaint_alerts_superadmins_without_naming_anyone(self):
+        from apps.accounts.models import UserProfile
+        from apps.jobs.models import JobApplication, JobPosting
+
+        household = User.objects.create_user(username="alert-household", password="password")
+        UserProfile.objects.create(user=household, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        worker = User.objects.create_user(username="alert-worker", password="password")
+        UserProfile.objects.create(user=worker, role=UserProfile.ROLE_WORKER, verification_status="verified")
+        job = JobPosting.objects.create(
+            household=household,
+            title="Cleaning",
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="2026-06-01 09:00",
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+        )
+        JobApplication.objects.create(job=job, worker=worker)
+        client = APIClient()
+        client.force_authenticate(user=household)
+
+        response = client.post(
+            reverse("complaint-create"),
+            {"job": job.id, "respondent": worker.id, "complaint_type": "no_show", "description": "Never came."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        alert = Notification.objects.get(notification_type=Notification.TYPE_ADMIN_ALERT)
+        self.assertEqual(alert.recipient, self.superadmin)
+        self.assertNotIn("alert-worker", alert.message)
+        self.assertNotIn("alert-household", alert.message)
+        self.assertFalse(Notification.objects.filter(recipient=worker).exists())

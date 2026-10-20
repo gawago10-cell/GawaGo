@@ -1,6 +1,7 @@
-import json
+﻿import json
 
 from datetime import timedelta
+from urllib import error
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -13,7 +14,12 @@ from apps.accounts.models import UserProfile, WorkerAvailability
 from apps.common.authentication import create_jwt_token
 from apps.jobs.models import JobApplication, JobPosting
 from apps.matching.models import RouteDistanceCache
-from apps.matching.services import fetch_osrm_route, normalize_skill_label, skill_matches
+from apps.matching.services import (
+    fetch_osrm_route,
+    fetch_road_route,
+    normalize_skill_label,
+    skill_matches,
+)
 from apps.notifications.models import Notification
 
 
@@ -72,6 +78,92 @@ class RoadRoutingProviderTests(TestCase):
         )
         self.assertIn("geometries=geojson", urlopen.call_args.args[0].full_url)
 
+    OSRM_RESULT = {"distance_km": 3.58, "route_points": [[13.96, 121.56], [13.98, 121.58]]}
+
+    @override_settings(OPENROUTESERVICE_API_KEY="a-configured-key")
+    def test_a_failing_openrouteservice_falls_back_to_osrm(self):
+        """A configured key that stops working -- daily quota spent, the
+        40/min rate limit tripped by a job-match pass, an expired key, an
+        outage -- used to return nothing at all, so every distance on both
+        clients read "Road distance unavailable". An unset key already
+        degraded to OSRM, so a broken one must not be worse than no key."""
+        failures = [
+            error.HTTPError("https://ors.example", 403, "Quota exceeded", {}, None),
+            error.HTTPError("https://ors.example", 401, "Invalid key", {}, None),
+            error.URLError("connection refused"),
+            TimeoutError("timed out"),
+            ValueError("not json"),
+        ]
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                with patch("apps.matching.services.request.urlopen", side_effect=failure), patch(
+                    "apps.matching.services.fetch_osrm_route", return_value=self.OSRM_RESULT
+                ) as osrm:
+                    route = fetch_road_route(13.9622745, 121.5632841, 13.9787654, 121.5812345)
+
+                self.assertEqual(route, self.OSRM_RESULT)
+                osrm.assert_called_once()
+
+    @override_settings(OPENROUTESERVICE_API_KEY="a-configured-key")
+    def test_a_200_with_no_usable_distance_falls_back_to_osrm(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps({"features": []}).encode("utf-8")
+
+        with patch("apps.matching.services.request.urlopen", return_value=FakeResponse()), patch(
+            "apps.matching.services.fetch_osrm_route", return_value=self.OSRM_RESULT
+        ) as osrm:
+            route = fetch_road_route(13.9622745, 121.5632841, 13.9787654, 121.5812345)
+
+        self.assertEqual(route, self.OSRM_RESULT)
+        osrm.assert_called_once()
+
+    @override_settings(OPENROUTESERVICE_API_KEY="a-configured-key")
+    def test_a_working_openrouteservice_is_not_sent_to_osrm(self):
+        payload = {
+            "features": [
+                {
+                    "properties": {"summary": {"distance": 4380.0}},
+                    "geometry": {"coordinates": [[121.5632841, 13.9622745], [121.5812345, 13.9787654]]},
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        with patch("apps.matching.services.request.urlopen", return_value=FakeResponse()), patch(
+            "apps.matching.services.fetch_osrm_route"
+        ) as osrm:
+            route = fetch_road_route(13.9622745, 121.5632841, 13.9787654, 121.5812345)
+
+        self.assertEqual(route["distance_km"], 4.38)
+        osrm.assert_not_called()
+
+    def test_an_unset_key_still_goes_straight_to_osrm(self):
+        with override_settings(OPENROUTESERVICE_API_KEY=""):
+            with patch(
+                "apps.matching.services.fetch_osrm_route", return_value=self.OSRM_RESULT
+            ) as osrm, patch("apps.matching.services.request.urlopen") as urlopen:
+                route = fetch_road_route(13.9622745, 121.5632841, 13.9787654, 121.5812345)
+
+        self.assertEqual(route, self.OSRM_RESULT)
+        osrm.assert_called_once()
+        urlopen.assert_not_called()
+
 
 class RecommendedWorkersAvailabilityTests(TestCase):
     def setUp(self):
@@ -102,8 +194,6 @@ class RecommendedWorkersAvailabilityTests(TestCase):
             required_skill="House Cleaning",
             schedule="One-Time on 2026-06-02 at 09:30",
             schedule_type="One-Time",
-            preferred_date="2026-06-02",
-            preferred_time="09:30",
             location_label="Isabang, Tayabas",
             latitude="13.9622745",
             longitude="121.5632841",
@@ -189,17 +279,6 @@ class RecommendedWorkersAvailabilityTests(TestCase):
             {"available-worker", "unavailable-worker"},
         )
 
-    def test_matching_keeps_legacy_jobs_without_structured_datetime_compatible(self):
-        self.job.preferred_date = None
-        self.job.preferred_time = None
-        self.job.save(update_fields=["preferred_date", "preferred_time"])
-
-        response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
-
-        self.assertEqual(response.status_code, 200)
-        usernames = {item["worker_username"] for item in response.data["results"]}
-        self.assertEqual(usernames, {"available-worker", "unavailable-worker"})
-
     def test_match_results_carry_the_profile_fields_the_cards_render(self):
         profile = self.available_worker.profile
         profile.bio = "Five years of deep cleaning."
@@ -241,10 +320,8 @@ class RecommendedWorkersAvailabilityTests(TestCase):
         self.assertEqual(result["worker_profile_photo_url"], "")
 
     def test_matching_ranks_alias_skill_matches_first(self):
-        self.job.preferred_date = None
-        self.job.preferred_time = None
         self.job.required_skill = "house cleaning"
-        self.job.save(update_fields=["preferred_date", "preferred_time", "required_skill"])
+        self.job.save(update_fields=["required_skill"])
         alias_worker = User.objects.create_user(username="alias-worker", password="password")
         UserProfile.objects.create(
             user=alias_worker,
@@ -348,8 +425,10 @@ class RecommendedWorkersRankingTests(TestCase):
         self.assertEqual(route_fetch.call_count, 1)
         cached_result = first_response.data["results"][0]
         self.assertEqual(cached_result["distance_km"], 0.1)
-        self.assertEqual(cached_result["route_points"][0], [13.9622745, 121.5632841])
-        self.assertEqual(RouteDistanceCache.objects.count(), 1)
+        # The route is cached server-side for later (post-hire) use, but a
+        # candidate's route line is never sent -- its far end is their home.
+        self.assertNotIn("route_points", cached_result)
+        self.assertEqual(RouteDistanceCache.objects.get().route_points[0], [13.9622745, 121.5632841])
 
     def test_unlimited_boundary_bypasses_max_distance_km_in_smart_matching(self):
         # A job can end up with geographic_boundary='unlimited' while
@@ -564,112 +643,308 @@ class RecommendedWorkersAiRankingTests(TestCase):
         mocked.assert_called_once()
 
 
-@override_settings(ENABLE_JOB_MATCH_NOTIFICATIONS=True, JOB_MATCH_NOTIFY_THRESHOLD=0.5)
-class JobMatchNotificationSignalTests(TestCase):
-    """notify_matching_workers (roadmap audit MEDIUM #16): an exact skill
-    match must not be silently skipped just because cosine similarity gets
-    diluted by a worker's *other* listed skills."""
+JOB_SITE = ("13.9622745", "121.5632841")
+
+
+def _route_for(distances):
+    """Fake fetch_road_route: distance keyed by the worker's latitude string;
+    an Exception value is raised instead (routing service failure)."""
+
+    def fake(lat1, lon1, lat2, lon2):
+        outcome = distances.get(str(lat2), 1.0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return {"distance_km": outcome, "route_points": []}
+
+    return fake
+
+
+@override_settings(
+    ENABLE_JOB_MATCH_NOTIFICATIONS=True, JOB_MATCH_NOTIFY_THRESHOLD=0.5, BACKGROUND_TASK_BACKEND="sync"
+)
+class JobMatchNotificationTaskTests(TestCase):
+    """The job-match pass runs after the job commits, outside the request,
+    and is safe to run more than once."""
+
+    def setUp(self):
+        self.household = User.objects.create_user(username="notify-household", password="password")
+        UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {create_jwt_token({'user_id': self.household.id})}"
+
+    def make_worker(self, username, skills=("House Cleaning",), latitude=JOB_SITE[0], longitude=JOB_SITE[1], **extra):
+        user = User.objects.create_user(username=username, password="password")
+        UserProfile.objects.create(
+            user=user, role=UserProfile.ROLE_WORKER, skills=list(skills), latitude=latitude, longitude=longitude, **extra
+        )
+        return user
+
+    def make_job(self, **extra):
+        values = dict(
+            household=self.household, title="Cleaning job", job_type="House Cleaning", required_skill="House Cleaning",
+            schedule="Flexible", location_label="Isabang, Tayabas", latitude=JOB_SITE[0], longitude=JOB_SITE[1],
+            service_rate="500.00", status=JobPosting.STATUS_OPEN, max_distance_km=10.0, geographic_boundary="10km",
+        )
+        values.update(extra)
+        return JobPosting.objects.create(**values)
+
+    def post_job(self):
+        return self.client.post(
+            reverse("job-list"),
+            {
+                "title": "Cleaning job", "job_type": "House Cleaning", "required_skill": "House Cleaning",
+                "schedule": "Saturday", "location_label": "Isabang, Tayabas", "latitude": JOB_SITE[0],
+                "longitude": JOB_SITE[1], "service_rate": "500.00", "geographic_boundary": "10km", "max_distance_km": 10,
+            },
+            content_type="application/json",
+        )
+
+    def notified(self, job=None):
+        rows = Notification.objects.filter(notification_type=Notification.TYPE_JOB_MATCH)
+        if job is not None:
+            rows = rows.filter(related_job_id=job.id)
+        return sorted(rows.values_list("recipient__username", flat=True))
+
+    def run_pass(self, job, distances=None):
+        from apps.matching.tasks import run_job_match_notifications
+
+        with patch("apps.matching.services.fetch_road_route", side_effect=_route_for(distances or {})):
+            return run_job_match_notifications(job.id)
+
+    # --- request / commit behaviour --------------------------------------
+
+    def test_post_does_no_scoring_routing_or_notifying_during_the_request(self):
+        self.make_worker("cleaner")
+        with patch("apps.matching.services.fetch_road_route") as route, patch(
+            "apps.matching.tasks.score_pair_with_distance"
+        ) as score, patch("apps.matching.tasks.create_notification") as notify, self.captureOnCommitCallbacks(
+            execute=False
+        ) as callbacks:
+            response = self.post_job()
+
+        self.assertEqual(response.status_code, 201)
+        route.assert_not_called()
+        score.assert_not_called()
+        notify.assert_not_called()
+        self.assertEqual(len(callbacks), 1, "exactly one on_commit callback is scheduled")
+        self.assertEqual(self.notified(), [])
+
+    def test_after_commit_the_pass_is_enqueued_with_the_job_id(self):
+        from apps.matching.tasks import JOB_MATCH_TASK_TIMEOUT_SECONDS, run_job_match_notifications
+
+        with patch("apps.jobs.views.enqueue") as enqueue, self.captureOnCommitCallbacks(execute=True):
+            response = self.post_job()
+
+        enqueue.assert_called_once_with(
+            run_job_match_notifications, response.data["id"], timeout=JOB_MATCH_TASK_TIMEOUT_SECONDS
+        )
+
+    def test_rolled_back_create_enqueues_nothing(self):
+        from django.db import transaction
+
+        with patch("apps.jobs.views.enqueue") as enqueue, self.captureOnCommitCallbacks(execute=True) as callbacks:
+            with self.assertRaises(RuntimeError):
+                with transaction.atomic():
+                    self.assertEqual(self.post_job().status_code, 201)
+                    raise RuntimeError("roll the job back")
+
+        enqueue.assert_not_called()
+        self.assertEqual(callbacks, [])
+        self.assertFalse(JobPosting.objects.exists())
+
+    def test_post_end_to_end_with_sync_backend_notifies_after_commit(self):
+        self.make_worker("cleaner")
+        with patch("apps.matching.services.fetch_road_route", side_effect=_route_for({})), \
+                self.captureOnCommitCallbacks(execute=True):
+            self.post_job()
+        self.assertEqual(self.notified(), ["cleaner"])
+
+    def test_disabled_setting_schedules_nothing(self):
+        with override_settings(ENABLE_JOB_MATCH_NOTIFICATIONS=False), patch("apps.jobs.views.enqueue") as enqueue, \
+                self.captureOnCommitCallbacks(execute=True):
+            self.post_job()
+        enqueue.assert_not_called()
+
+    # --- the pass itself --------------------------------------------------
+
+    def test_pass_notifies_matching_workers_only(self):
+        self.make_worker("cleaner")
+        self.make_worker("far-cleaner", latitude="14.0500000")
+        self.make_worker("plumber", skills=["Plumbing"])
+        job = self.make_job()
+
+        sent = self.run_pass(job, {"14.0500000": 25.0})
+
+        self.assertEqual(sent, 1)
+        self.assertEqual(self.notified(job), ["cleaner"])
+        note = Notification.objects.get(notification_type=Notification.TYPE_JOB_MATCH)
+        self.assertEqual(note.related_job_id, job.id)
+        self.assertEqual(note.action_type, Notification.ACTION_JOB_DETAIL)
+
+    def test_running_twice_creates_no_duplicate_notifications(self):
+        self.make_worker("cleaner")
+        self.make_worker("cleaner-2", latitude="13.9630000")
+        job = self.make_job()
+
+        self.assertEqual(self.run_pass(job), 2)
+        self.assertEqual(self.run_pass(job), 0)
+        self.assertEqual(self.notified(job), ["cleaner", "cleaner-2"])
+
+    def test_overlapping_runs_are_stopped_by_the_database_constraint(self):
+        from apps.matching import tasks
+
+        worker = self.make_worker("cleaner")
+        job = self.make_job()
+        Notification.objects.create(
+            recipient=worker, notification_type=Notification.TYPE_JOB_MATCH, title="x", message="x", related_job_id=job.id
+        )
+        profile = UserProfile.objects.get(user=worker)
+
+        self.assertFalse(tasks._notify(job, profile, {"ai_score": 0.9}))
+        self.assertEqual(self.notified(job), ["cleaner"])
+
+    def test_routing_failure_for_one_worker_does_not_stop_the_others(self):
+        self.make_worker("unroutable", latitude="13.9630000")
+        self.make_worker("routable", latitude="13.9640000")
+        job = self.make_job()
+
+        self.run_pass(job, {"13.9630000": OSError("routing service down")})
+
+        # The unroutable worker falls back to straight-line distance (~0.1 km).
+        self.assertEqual(self.notified(job), ["routable", "unroutable"])
+
+    def test_routing_returning_nothing_falls_back_to_straight_line(self):
+        from apps.matching import tasks
+
+        self.make_worker("cleaner", latitude="13.9630000")
+        job = self.make_job()
+        with patch("apps.matching.services.fetch_road_route", return_value=None), \
+                self.assertLogs("apps.matching.tasks", level="INFO") as logs:
+            sent = tasks.run_job_match_notifications(job.id)
+
+        self.assertEqual(sent, 1)
+        self.assertTrue(any("routing_fallbacks=1" in line for line in logs.output), logs.output)
+        self.assertTrue(any("job-match: start" in line for line in logs.output))
+
+    def test_one_workers_scoring_error_does_not_stop_the_others(self):
+        from apps.matching import tasks
+
+        self.make_worker("cleaner")
+        self.make_worker("broken", latitude="13.9630000")
+        job = self.make_job()
+        real_score = tasks.score_pair_with_distance
+
+        def flaky(job_, profile, distance_km):
+            if profile.user.username == "broken":
+                raise ValueError("bad worker data")
+            return real_score(job_, profile, distance_km)
+
+        with patch("apps.matching.tasks.score_pair_with_distance", side_effect=flaky):
+            self.run_pass(job)
+        self.assertEqual(self.notified(job), ["cleaner"])
+
+    def test_deleted_or_closed_job_exits_quietly(self):
+        from apps.matching.tasks import run_job_match_notifications
+
+        self.make_worker("cleaner")
+        closed = self.make_job(status=JobPosting.STATUS_CANCELLED)
+        deleted = self.make_job()
+        deleted_id = deleted.id
+        deleted.delete()
+
+        with patch("apps.matching.services.fetch_road_route") as route:
+            self.assertEqual(run_job_match_notifications(closed.id), 0)
+            self.assertEqual(run_job_match_notifications(deleted_id), 0)
+        route.assert_not_called()
+        self.assertEqual(self.notified(), [])
 
     def test_exact_skill_match_is_notified_despite_score_dilution_from_other_skills(self):
-        household = User.objects.create_user(username="notify-household", password="password")
-        UserProfile.objects.create(user=household, role=UserProfile.ROLE_HOUSEHOLD)
-
-        # 4 skills, only one of which the job needs. Cosine similarity over a
-        # 4-term worker document against a 1-term job document dilutes to
-        # roughly 1/sqrt(4) = 0.5, so skill_contribution alone (0.5 * 0.7 =
-        # 0.35) plus a modest proximity_contribution at 5km (~0.05) lands the
-        # combined ai_score around 0.40 -- below the 0.5 notify threshold --
-        # even though this worker is an exact, in-radius match.
-        worker = User.objects.create_user(username="notify-worker", password="password")
-        UserProfile.objects.create(
-            user=worker,
-            role=UserProfile.ROLE_WORKER,
-            skills=["House Cleaning", "Cooking", "Laundry", "Gardening"],
-            latitude="13.9622745",
-            longitude="121.5632841",
-        )
-
-        with patch(
-            "apps.matching.services.fetch_road_route",
-            return_value={"distance_km": 5.0, "route_points": []},
-        ):
-            JobPosting.objects.create(
-                household=household,
-                title="Cleaning job",
-                job_type="House Cleaning",
-                required_skill="House Cleaning",
-                schedule="Flexible",
-                location_label="Isabang, Tayabas",
-                latitude="13.9622745",
-                longitude="121.5632841",
-                service_rate="500.00",
-                status=JobPosting.STATUS_OPEN,
-                max_distance_km=10.0,
-            )
-
-        self.assertTrue(
-            Notification.objects.filter(
-                recipient=worker, notification_type=Notification.TYPE_JOB_MATCH
-            ).exists()
-        )
+        self.make_worker("multi-skill", skills=["House Cleaning", "Cooking", "Laundry", "Gardening"])
+        job = self.make_job()
+        self.run_pass(job, {JOB_SITE[0]: 5.0})
+        self.assertEqual(self.notified(job), ["multi-skill"])
 
     def test_suspended_or_inactive_workers_are_never_notified(self):
-        """roadmap audit LOW #30: a candidate excluded from every other
-        worker-facing list (blocked, or logged out entirely) shouldn't be
-        singled out for a proactive match notification either. A worker
-        whose timed suspension already lifted should still be notified."""
-        household = User.objects.create_user(username="notify-household-2", password="password")
-        UserProfile.objects.create(user=household, role=UserProfile.ROLE_HOUSEHOLD)
-
-        def make_worker(username, **profile_kwargs):
-            user = User.objects.create_user(username=username, password="password")
-            UserProfile.objects.create(
-                user=user,
-                role=UserProfile.ROLE_WORKER,
-                skills=["House Cleaning"],
-                latitude="13.9622745",
-                longitude="121.5632841",
-                **profile_kwargs,
-            )
-            return user
-
-        permanently_blocked = make_worker("blocked-permanent", is_blocked=True)
-        timed_blocked = make_worker(
-            "blocked-timed", is_blocked=True, blocked_until=timezone.now() + timedelta(days=1)
-        )
-        expired_block = make_worker(
-            "blocked-expired", is_blocked=True, blocked_until=timezone.now() - timedelta(days=1)
-        )
-        eligible = make_worker("eligible-worker")
-        inactive = make_worker("inactive-worker")
+        self.make_worker("blocked-permanent", is_blocked=True)
+        self.make_worker("blocked-timed", is_blocked=True, blocked_until=timezone.now() + timedelta(days=1))
+        self.make_worker("blocked-expired", is_blocked=True, blocked_until=timezone.now() - timedelta(days=1))
+        self.make_worker("eligible-worker")
+        inactive = self.make_worker("inactive-worker")
         inactive.is_active = False
         inactive.save(update_fields=["is_active"])
+        job = self.make_job()
 
-        with patch(
-            "apps.matching.services.fetch_road_route",
-            return_value={"distance_km": 1.0, "route_points": []},
-        ):
-            JobPosting.objects.create(
-                household=household,
-                title="Cleaning job",
-                job_type="House Cleaning",
-                required_skill="House Cleaning",
-                schedule="Flexible",
-                location_label="Isabang, Tayabas",
-                latitude="13.9622745",
-                longitude="121.5632841",
-                service_rate="500.00",
-                status=JobPosting.STATUS_OPEN,
-                max_distance_km=10.0,
-            )
+        self.run_pass(job)
+        self.assertEqual(self.notified(job), ["blocked-expired", "eligible-worker"])
 
-        notified_usernames = set(
-            Notification.objects.filter(notification_type=Notification.TYPE_JOB_MATCH).values_list(
-                "recipient__username", flat=True
-            )
+
+class BackgroundDispatchTests(TestCase):
+    def test_sync_backend_runs_inline(self):
+        from apps.common.background import enqueue
+
+        calls = []
+        with override_settings(BACKGROUND_TASK_BACKEND="sync"):
+            enqueue(calls.append, 7)
+        self.assertEqual(calls, [7])
+
+    def test_thread_backend_runs_in_a_daemon_thread(self):
+        import threading
+
+        from apps.common.background import enqueue
+
+        seen = []
+        with override_settings(BACKGROUND_TASK_BACKEND="thread"):
+            thread = enqueue(lambda value: seen.append((value, threading.current_thread().name)), 3)
+        thread.join(timeout=5)
+        self.assertTrue(thread.daemon)
+        self.assertEqual(seen[0][0], 3)
+        self.assertNotEqual(seen[0][1], threading.current_thread().name)
+
+    def test_django_q_backend_queues_by_dotted_path(self):
+        from apps.common.background import enqueue
+        from apps.matching.tasks import run_job_match_notifications
+
+        with override_settings(BACKGROUND_TASK_BACKEND="django_q"), patch("django_q.tasks.async_task") as async_task:
+            enqueue(run_job_match_notifications, 42, timeout=600)
+        args, kwargs = async_task.call_args
+        self.assertEqual(args, ("apps.matching.tasks.run_job_match_notifications", 42))
+        self.assertEqual(kwargs["timeout"], 600)
+
+    def test_unknown_backend_is_rejected(self):
+        from apps.common.background import enqueue
+
+        with override_settings(BACKGROUND_TASK_BACKEND="celery"), self.assertRaises(ValueError):
+            enqueue(print, 1)
+
+
+class RadiusWithoutRoutingTests(TestCase):
+    """When the routing service is down the radius must still hold (AGENTS.md
+    I.B): straight-line distance stands in for the missing road distance."""
+
+    def setUp(self):
+        RecommendedWorkersRankingTests.setUp(self)
+        self.near = RecommendedWorkersRankingTests.create_worker_profile(
+            self, "near-worker", ["House Cleaning"], verification_status="verified"
         )
-        self.assertNotIn(permanently_blocked.username, notified_usernames)
-        self.assertNotIn(timed_blocked.username, notified_usernames)
-        self.assertNotIn(inactive.username, notified_usernames)
-        self.assertIn(eligible.username, notified_usernames)
-        self.assertIn(expired_block.username, notified_usernames)
+        self.far = RecommendedWorkersRankingTests.create_worker_profile(
+            self, "far-worker", ["House Cleaning"], verification_status="verified",
+            latitude="14.3000000", longitude="121.9000000",
+        )
+        self.no_route = {"distance_km": None, "route_points": []}
+
+    def test_smart_matching_excludes_workers_beyond_radius_without_routing(self):
+        with patch("apps.matching.services.get_road_route_for_match", return_value=self.no_route):
+            response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id})
+
+        usernames = [row["worker_username"] for row in response.json()["results"]]
+        self.assertIn("near-worker", usernames)
+        self.assertNotIn("far-worker", usernames)
+
+    def test_ai_recommendation_keeps_nearby_job_without_routing(self):
+        from apps.matching.recommendations import get_recommended_jobs
+
+        with patch("apps.matching.recommendations.get_road_route_for_match", return_value=self.no_route):
+            near_jobs = [row["job"].id for row in get_recommended_jobs(self.near.user)]
+            far_jobs = [row["job"].id for row in get_recommended_jobs(self.far.user)]
+
+        self.assertIn(self.job.id, near_jobs)
+        self.assertNotIn(self.job.id, far_jobs)

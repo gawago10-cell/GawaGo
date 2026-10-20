@@ -1,37 +1,68 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Material+Symbols+Outlined:FILL@0..1&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Material+Symbols+Outlined:FILL@0..1&display=swap");
 
 :root {
+  /* Fonts and workspace colours follow gawago_color_practice.html. */
+  --gg-font-body: "Plus Jakarta Sans", Arial, Helvetica, sans-serif;
+  --gg-font-heading: "Space Grotesk", "Plus Jakarta Sans", Arial, sans-serif;
+  --gg-workspace: #e4d8b8;
+  --gg-card: #fbf7eb;
+  --gg-card-muted: #f1e7cc;
+  --gg-ink: #1f2a19;
+  /* Darkened from #6b7460: that read at 3.45:1 on the tan workspace, below
+     the 4.5:1 needed for body text. #565e4e is the lightest of the same
+     hue that passes on every surface it sits on. */
+  --gg-ink-muted: #565e4e;
+  /* Leaf green for *text*. --gg-leaf-deep stays as-is for fills and icons;
+     as text on tan it was only 3.45:1. */
+  --gg-leaf-text: #4a632a;
+  --gg-ink-faint: #8b9480;
+  --gg-leaf: #9ebf5e;
+  --gg-leaf-deep: #5c7a34;
+  --gg-leaf-tint: rgba(158, 191, 94, 0.14);
+  --gg-leaf-line: rgba(158, 191, 94, 0.45);
+  --gg-on-leaf: #1b2412;
+  --gg-line: rgba(31, 42, 25, 0.08);
+  --gg-line-strong: rgba(31, 42, 25, 0.16);
+  /* Several components use --gg-border; without a definition their
+     borders were dropped. */
+  --gg-border: var(--gg-line-strong);
+  --gg-field-bg: #f0e7cc;
+  --gg-field-line: #ded7c4;
+  --gg-danger-ink: #b5573e;
+  --gg-card-shadow: 0 10px 26px rgba(31, 42, 25, 0.12);
+  --gg-card-shadow-soft: 0 8px 20px rgba(31, 42, 25, 0.08);
+
   --gg-primary: #9ebf5e;
   --gg-primary-strong: #8aaf4c;
   --gg-bg: #1f2a19;
   --gg-soft: #ffffff;
-  --gg-dark: #1a2a1e;
-  --gg-dark-2: #4a5e4f;
-  --gg-dark-3: #8a9e8f;
+  --gg-dark: #1f2a19;
+  --gg-dark-2: #565e4e; /* was #6b7460; same text-contrast fix as --gg-ink-muted */
+  --gg-dark-3: #8b9480;
   --gg-accent: #9ebf5e;
-  --gg-accent-2: #edf0e2;
-  --gg-text: #1a2a1e;
+  --gg-accent-2: rgba(158, 191, 94, 0.14);
+  --gg-text: #1f2a19;
   --gg-brand-start: #1f2a19;
   --gg-brand-end: #29341f;
   --gg-tayabas-navy: var(--gg-text);
   --gg-tayabas-blue: #29341f;
-  --gg-tayabas-red: #ff8a80;
-  --gg-tayabas-gold: #f0c040;
+  --gg-tayabas-red: #d08a76;
+  --gg-tayabas-gold: #9ebf5e;
   --gg-tayabas-green: #9ebf5e;
   --gg-tayabas-green-strong: #8aaf4c;
-  --gg-tayabas-bg: #1f2a19;
-  --gg-tayabas-surface: #ffffff;
-  --gg-tayabas-header: #edf0e2;
-  --gg-tayabas-border: #e0d8cc;
-  --gg-tayabas-input: #f5f0e8;
-  --gg-sidebar-bg: #29341f;
-  --gg-sidebar-active: rgba(158, 191, 94, 0.18);
-  --gg-sidebar-border: rgba(245, 241, 230, 0.12);
+  --gg-tayabas-bg: #e4d8b8;
+  --gg-tayabas-surface: #fbf7eb;
+  --gg-tayabas-header: #f1e7cc;
+  --gg-tayabas-border: rgba(31, 42, 25, 0.08);
+  --gg-tayabas-input: #f0e7cc;
+  --gg-sidebar-bg: #1a2415;
+  --gg-sidebar-active: rgba(158, 191, 94, 0.16);
+  --gg-sidebar-border: rgba(245, 241, 230, 0.08);
   --gg-sidebar-text: #c2cbaf;
   --gg-gold-bg: #fff8e1;
   --gg-gold-text: #7a5200;
-  --gg-logout-bg: #1f0a0a;
-  --gg-logout-border: #4a1515;
+  --gg-logout-bg: rgba(208, 138, 118, 0.1);
+  --gg-logout-border: transparent;
 
   /* --- GawaGo moss palette (gawago-color-palette.md) ---------------------
      One green family, no other hue. Drives the landing page today and the
@@ -958,10 +989,6 @@ body {
 }
 
 .home-login-form-head {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 14px;
-  align-items: start;
   margin-bottom: 20px;
 }
 
@@ -975,13 +1002,41 @@ body {
   backdrop-filter: blur(8px);
 }
 
-.home-login-form-head button {
-  border: 1px solid rgba(158, 191, 94, 0.35);
+.home-login-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border: 1px solid rgba(196, 71, 71, 0.5);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: rgba(196, 71, 71, 0.14);
+  color: #f0b5ab;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.home-login-error::before {
+  content: "!";
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
   border-radius: 999px;
-  background: rgba(158, 191, 94, 0.12);
-  color: var(--gg-moss-accent);
+  background: #c44747;
+  color: #fff;
+  font-size: 12px;
   font-weight: 800;
-  padding: 6px 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.home-login-card .form-control.is-invalid,
+.admin-portal-card .form-control.is-invalid {
+  border-color: #c44747;
+  box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22);
+  background-image: none;
 }
 
 .home-login-form-head h2 {
@@ -3884,6 +3939,20 @@ body {
   font-weight: 600;
 }
 
+.worker-location-private {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border-radius: 10px;
+  background: #f5f0e8;
+  color: #4a5e4f;
+}
+
+.worker-location-private strong {
+  color: #10251a;
+  font-size: 1.1rem;
+}
+
 .location-distance-pin {
   background: transparent;
   border: 0;
@@ -6245,7 +6314,7 @@ body {
     linear-gradient(135deg, rgba(242, 182, 50, 0.12), transparent 34%),
     var(--gg-tayabas-bg) !important;
   color: var(--gg-text);
-  font-family: "DM Sans", Arial, Helvetica, sans-serif;
+  font-family: var(--gg-font-body);
 }
 
 .worker-dashboard .worker-content,
@@ -6944,7 +7013,7 @@ body {
 body {
   background: var(--gg-tayabas-bg) !important;
   color: var(--gg-text) !important;
-  font-family: "DM Sans", Arial, Helvetica, sans-serif !important;
+  font-family: var(--gg-font-body) !important;
 }
 
 .worker-dashboard,
@@ -7858,7 +7927,7 @@ a,
   border-radius: 10px !important;
   color: #ffffff !important;
   font-size: 14px !important;
-  font-family: "DM Sans", sans-serif !important;
+  font-family: var(--gg-font-body) !important;
   outline: none !important;
   box-shadow: none !important;
 }
@@ -7911,73 +7980,69 @@ a,
   width: 100%;
 }
 
-.password-reset-card {
-  max-width: 540px;
-  border: 1px solid rgba(76, 175, 116, 0.18) !important;
-  border-radius: 20px !important;
-  background: rgba(15, 45, 31, 0.75) !important;
-  box-shadow: none !important;
-}
-
-.password-reset-card .login-card-head {
-  background: rgba(26, 74, 46, 0.4) !important;
-  border-bottom: 1px solid rgba(76, 175, 116, 0.18) !important;
-  color: #ffffff !important;
-}
-
-.password-reset-card .login-avatar {
-  background: #4caf74 !important;
-  color: #ffffff !important;
-}
-
-.password-reset-card .p-3.p-md-4 {
-  background: rgba(11, 36, 24, 0.35);
-}
-
-.password-reset-card .form-label {
-  color: rgba(255, 255, 255, 0.75) !important;
-}
-
-.password-reset-card .form-control {
-  background: rgba(11, 36, 24, 0.6) !important;
-  border: 1px solid rgba(76, 175, 116, 0.2) !important;
-  border-radius: 10px !important;
-  color: #ffffff !important;
-}
-
-.password-reset-card .form-control::placeholder {
-  color: rgba(255, 255, 255, 0.35) !important;
-  opacity: 1;
-}
-
-.password-reset-card .form-control:focus {
-  border-color: #4caf74 !important;
-  box-shadow: 0 0 0 3px rgba(76, 175, 116, 0.15) !important;
-}
-
-.password-reset-card .btn-primary,
-.password-reset-card .btn-success {
-  min-height: 46px;
-  border: 0 !important;
-  border-radius: 12px !important;
-  background: #4caf74 !important;
-  color: #ffffff !important;
-  font-weight: 800;
-}
-
-.password-reset-card .btn-primary:hover,
-.password-reset-card .btn-success:hover {
-  background: #3d9e63 !important;
-}
-
-.password-reset-card .btn-link {
-  color: #4caf74 !important;
-}
-
-.password-reset-card .alert-info {
-  border-color: rgba(76, 175, 116, 0.25);
-  background: rgba(76, 175, 116, 0.12);
+/* ForgotPasswordView now reuses HomeView's .home-login-card shell directly
+   (same hero, same form chrome) instead of a separately-styled card, so
+   password reset looks like a continuation of login rather than a
+   different page. This is its one addition: a success/info banner to match
+   .home-login-error's error banner. */
+.home-login-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border: 1px solid rgba(158, 191, 94, 0.4);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: rgba(158, 191, 94, 0.14);
   color: #dff3e5;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Segmented one-box-per-digit code input (OtpCodeInput), used on both the
+   password-reset and (if ever wired up) signup-verification screens. */
+.otp-code-input {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.otp-code-box {
+  width: 44px;
+  height: 52px;
+  min-width: 0;
+  flex: 0 1 44px;
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 800;
+  background: rgba(245, 241, 230, 0.08);
+  border: 1px solid rgba(158, 191, 94, 0.25);
+  border-radius: 8px;
+  color: var(--gg-moss-text);
+  padding: 0;
+}
+
+.otp-code-box:focus {
+  outline: none;
+  border-color: var(--gg-moss-accent);
+  box-shadow: 0 0 0 3px rgba(158, 191, 94, 0.22);
+}
+
+.otp-code-box:disabled {
+  opacity: 0.6;
+}
+
+@media (max-width: 420px) {
+  .otp-code-box {
+    width: 38px;
+    height: 46px;
+    font-size: 1.2rem;
+  }
+  .otp-code-input {
+    gap: 6px;
+  }
 }
 
 /* Worker dashboard market cards: match sample card colors only. */
@@ -9721,6 +9786,87 @@ a,
   padding: 0 16px 14px;
 }
 
+.gawago-chat-composer-row.gawago-chat-composer-row-text {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.gawago-chat-send-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.gawago-chat-empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 40px 24px;
+  text-align: center;
+  color: #4a5e4f;
+  background: #ffffff;
+}
+
+.gawago-chat-empty .material-symbols-outlined {
+  font-size: 2.2rem;
+  color: #1a4a2e;
+}
+
+.gawago-chat-empty p,
+.gawago-chat-thread-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #4a5e4f;
+}
+
+.gawago-chat-thread-note {
+  justify-self: center;
+  text-align: center;
+}
+
+.gawago-chat-unread-dot {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #1a4a2e;
+  color: #ffffff;
+  font-size: 0.7rem;
+  line-height: 18px;
+  text-align: center;
+}
+
+.gawago-chat-bubble.sending {
+  opacity: 0.7;
+}
+
+.gawago-chat-bubble.failed {
+  background: #7a1f1a;
+}
+
+.gawago-chat-failed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 0.78rem;
+}
+
+.gawago-chat-failed button {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  background: transparent;
+  color: #ffffff;
+  padding: 2px 10px;
+  font-weight: 600;
+}
+
+.gawago-chat-load-error {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: #9a3412;
+}
+
 .gawago-chat-dock-collapsed {
   width: auto;
 }
@@ -9966,11 +10112,11 @@ a,
 }
 
 .register-page .worker-location-picker-head span {
-  color: var(--gg-moss-accent-strong) !important;
+  color: var(--gg-leaf-text) !important;
 }
 
 .register-page .worker-location-picker-note {
-  color: #77736d !important;
+  color: var(--gg-ink-muted) !important;
 }
 
 .register-page .worker-location-picker-warning {
@@ -10248,6 +10394,13 @@ a,
 .household-process-cancel-link:hover,
 .household-process-cancel-link:focus-visible {
   text-decoration: underline;
+}
+
+.household-process-report-link {
+  align-self: center;
+  /* A 0.8rem link with no padding was a hard target to hit on a phone. */
+  min-height: 44px;
+  padding: 0 0.75rem;
 }
 
 .household-process-section-label-spaced {
@@ -11721,9 +11874,13 @@ a,
   color: var(--gg-primary-strong);
 }
 
-.my-report-direction.about-you {
-  background: var(--gg-gold-bg);
-  color: var(--gg-gold-text);
+.auth-image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gg-accent-2);
+  color: var(--gg-primary-strong);
+  font-weight: 700;
 }
 
 .my-report-status {
@@ -11883,6 +12040,16 @@ a,
   margin: 0;
   font-size: 0.85rem;
   color: var(--gg-dark-2);
+}
+
+/* These page headers sit directly on the superadmin panel's dark ground.
+   !important because `.superadmin-dashboard h2` forces the dark text color. */
+.superadmin-dashboard .admin-reports-header h2 {
+  color: var(--gg-accent-2) !important;
+}
+
+.superadmin-dashboard .admin-reports-header p {
+  color: var(--gg-sidebar-text);
 }
 
 .admin-reports-header-actions {
@@ -13285,4 +13452,2014 @@ a,
   color: var(--gg-moss-text-muted) !important;
 }
 
+
+
+/* Only the current page may look selected. Several rules above style
+   :hover/:focus-visible identically to .active, so the item under the cursor
+   read as a second active page. Keep hover/focus as a lighter hint. */
+.worker-sidebar .worker-nav .worker-nav-item:not(.active):hover,
+.worker-sidebar .worker-nav .worker-nav-item:not(.active):focus-visible {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: transparent !important;
+  border-left-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* ===========================================================================
+   GawaGo workspace theme (gawago_color_practice.html).
+   Last in the file on purpose: the layers above fight each other with
+   !important, so this block matches or beats their specificity and wins on
+   source order. Colours come from the --gg-* tokens at the top of the file.
+   =========================================================================== */
+
+/* The content area used to sit on a dark canvas, so many labels read
+   --gg-moss-text (cream). Re-pointing those tokens here turns every such
+   label dark without touching the sidebar or the landing page. */
+.worker-dashboard .worker-content,
+.worker-dashboard .household-dashboard-main {
+  --gg-moss-text: var(--gg-ink);
+  --gg-moss-text-muted: var(--gg-ink-muted);
+  --gg-moss-text-muted-card: var(--gg-ink-muted);
+  --gg-moss-border: var(--gg-line);
+  --gg-moss-border-strong: var(--gg-line-strong);
+  --gg-moss-divider: var(--gg-line);
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard :is(h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6, .card-title, .job-title, .page-title, .notif-title, .metric-value),
+.gg-modal-panel :is(h1, h2, h3, h4, h5, h6),
+.worker-sidebar :is(.worker-brand, .worker-logo) {
+  font-family: var(--gg-font-heading) !important;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Sidebar ------------------------------------------------------------ */
+.worker-dashboard .worker-sidebar {
+  background: var(--gg-sidebar-bg) !important;
+  border-right: 1px solid rgba(245, 241, 230, 0.08) !important;
+}
+
+.worker-sidebar .worker-sidebar-head {
+  border-bottom: 1px solid rgba(245, 241, 230, 0.1) !important;
+}
+
+.worker-sidebar .worker-sidebar-head .worker-brand {
+  color: #f5f1e6 !important;
+  font-weight: 700 !important;
+}
+
+.worker-sidebar .worker-sidebar-head .worker-logo {
+  border-radius: 11px !important;
+  background: var(--gg-leaf) !important;
+  color: var(--gg-on-leaf) !important;
+  font-weight: 800 !important;
+}
+
+.worker-sidebar .worker-nav .worker-nav-item {
+  padding: 11px 14px !important;
+  border: 0 !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  color: #c2cbaf !important;
+  font-weight: 600 !important;
+}
+
+.worker-sidebar .worker-nav .worker-nav-item.active {
+  background: rgba(158, 191, 94, 0.16) !important;
+  color: var(--gg-leaf) !important;
+  box-shadow: none !important;
+}
+
+.worker-sidebar .worker-nav .worker-nav-item:not(.active):hover,
+.worker-sidebar .worker-nav .worker-nav-item:not(.active):focus-visible {
+  background: rgba(245, 241, 230, 0.06) !important;
+  color: #f5f1e6 !important;
+}
+
+.worker-sidebar .worker-nav .worker-nav-section {
+  color: #8b9680 !important; /* was #7c8870: 4.29:1 on the sidebar */
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+}
+
+.worker-sidebar .worker-nav .nav-count-badge {
+  background: var(--gg-leaf) !important;
+  color: var(--gg-on-leaf) !important;
+  font-weight: 800 !important;
+}
+
+.worker-sidebar .worker-sidebar-footer .worker-sidebar-logout {
+  justify-content: flex-start !important;
+  gap: 12px;
+  padding: 11px 14px !important;
+  border: 0 !important;
+  border-radius: 10px !important;
+  background: rgba(208, 138, 118, 0.1) !important;
+  color: #d08a76 !important;
+  font-weight: 600 !important;
+}
+
+.worker-sidebar .worker-sidebar-footer .worker-sidebar-logout:hover,
+.worker-sidebar .worker-sidebar-footer .worker-sidebar-logout:focus-visible {
+  background: rgba(208, 138, 118, 0.2) !important;
+  color: #e3a08c !important;
+}
+
+/* ---- Page headers sit straight on the workspace, like the mockup -------- */
+.worker-dashboard .worker-content > .worker-topbar,
+.worker-dashboard .worker-content > .profile-card:first-child:has(> h1):not(:has(input, select, textarea, table)),
+.worker-dashboard .worker-content > .my-reports-header,
+.worker-dashboard .worker-content .worker-notifications-header,
+.worker-dashboard .worker-dashboard-welcome-strip,
+.worker-dashboard .household-dashboard-welcome {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* The closed off-canvas sidebar's shadow used to vanish into the dark canvas;
+   on the light workspace it shows as a dark strip, so only cast it when open. */
+@media (max-width: 767px) {
+  body:not(.gawago-mobile-menu-open) .worker-dashboard .worker-sidebar {
+    box-shadow: none !important;
+  }
+}
+
+.worker-dashboard .worker-content > .worker-topbar {
+  text-align: left !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+.worker-dashboard .worker-content h1,
+.worker-dashboard .worker-content .household-notifications-title,
+.worker-dashboard .worker-content .household-profile-page-title {
+  color: var(--gg-ink) !important;
+  font-weight: 700 !important;
+  text-transform: none !important;
+}
+
+.worker-dashboard .worker-content > .worker-topbar h1,
+.worker-dashboard .worker-content > .profile-card:first-child > h1,
+.worker-dashboard .worker-content > .my-reports-header h1,
+.worker-dashboard .worker-content .worker-notifications-header h1,
+.worker-dashboard .worker-dashboard-welcome-strip h1,
+.worker-dashboard .household-process-topline h1,
+.worker-dashboard .household-history-topline h1,
+.worker-dashboard .worker-content .household-notifications-title,
+.worker-dashboard .worker-content .household-profile-page-title {
+  font-size: clamp(1.55rem, 2.3vw, 2rem) !important;
+}
+
+.worker-dashboard .worker-content .household-profile-feedback-title {
+  color: var(--gg-ink) !important;
+}
+
+/* ---- Cards ---------------------------------------------------------------- */
+.worker-dashboard :is(.metric-card, .household-dashboard-stat, .worker-market-panel, .job-card, .profile-card, .profile-edit-card, .profile-feedback-card, .feedback-card, .household-notifications-panel, .verification-card, .verification-document-card, .my-jobs-card, .job-summary-card, .household-dashboard-table-wrap, .household-dashboard-worker-panel, .household-dashboard-completion-box, .household-dashboard-job-summary, .household-detail-info-card, .household-applicant-card, .worker-job-map-card, .worker-job-photos-card, .card, .feedback-section, .household-feedback-list-panel, .household-feedback-item, .review-item, .household-process-card, .household-history-card, .household-history-stat, .worker-jobcard, .jobs-filter-panel, .applications-filter, .filter-bar, .household-review-history-filters, .household-feedback-filter, .my-report-card) {
+  background-color: var(--gg-card) !important;
+  background-image: none !important;
+  border: 1px solid var(--gg-line) !important;
+  border-radius: 18px !important;
+  box-shadow: var(--gg-card-shadow-soft) !important;
+  color: var(--gg-ink);
+}
+
+.worker-dashboard :is(.household-process-card, .household-history-card, .worker-jobcard, .household-applicant-card) {
+  box-shadow: var(--gg-card-shadow) !important;
+}
+
+/* A card inside a card reads as a flat panel, not a second floating layer. */
+.worker-dashboard :is(.profile-card, .profile-edit-card, .verification-card, .household-notifications-panel, .worker-market-panel, .card) :is(.profile-card, .verification-document-card, .card, .feedback-card, .review-item, .household-feedback-item) {
+  box-shadow: none !important;
+}
+
+.worker-dashboard .worker-dashboard-stats .metric-card:first-child,
+.worker-dashboard .household-dashboard-stats .household-dashboard-stat:first-child {
+  background-color: var(--gg-leaf) !important;
+  border-color: var(--gg-leaf) !important;
+}
+
+.worker-dashboard .metric-value {
+  color: var(--gg-ink) !important;
+  font-weight: 800 !important;
+}
+
+/* Older rules paint any :first-child metric card green with white text; the
+   admin stat cards each sit alone in a column, so all four matched. */
+.worker-dashboard .metric-card:first-child .metric-label {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard .metric-card:first-child .metric-value {
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard .worker-dashboard-stats .metric-card:first-child :is(.metric-label, .metric-value) {
+  color: var(--gg-on-leaf) !important;
+}
+
+/* ---- Card headers: cream with a hairline, not a green bar -------------- */
+.worker-dashboard :is(.profile-card-head, .profile-card-header, .feedback-header, .verification-card-head, .my-jobs-card-head, .card-header) {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--gg-line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard :is(.profile-card-head, .profile-card-header, .feedback-header, .verification-card-head, .my-jobs-card-head, .card-header) * {
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard :is(.profile-card-head, .profile-card-header, .feedback-header, .verification-card-head, .my-jobs-card-head, .card-header) :is(h1, h2, h3, h4, h5, h6, strong, .h5, .h6) {
+  font-family: var(--gg-font-heading) !important;
+  font-weight: 700 !important;
+}
+
+.worker-dashboard :is(.profile-card-head, .profile-card-header, .feedback-header, .verification-card-head, .my-jobs-card-head, .card-header) .btn {
+  padding: 6px 16px !important;
+  border: 1.5px solid var(--gg-line-strong) !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--gg-leaf-deep) !important;
+  font-size: 0.8rem !important;
+  font-weight: 700 !important;
+}
+
+.worker-dashboard :is(.profile-card-head, .profile-card-header, .feedback-header, .verification-card-head, .my-jobs-card-head, .card-header) .btn:hover {
+  background: var(--gg-leaf-tint) !important;
+  border-color: var(--gg-leaf-line) !important;
+}
+
+.worker-dashboard .worker-market-panel .worker-market-head {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--gg-line) !important;
+  border-radius: 0 !important;
+}
+
+.worker-dashboard .worker-market-panel .worker-market-head h2 {
+  color: var(--gg-ink) !important;
+}
+
+/* ---- Tables ------------------------------------------------------------- */
+.worker-dashboard .table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--gg-ink);
+  --bs-table-hover-bg: var(--gg-leaf-tint);
+  background: transparent !important;
+}
+
+.worker-dashboard .table thead {
+  background: var(--gg-card-muted) !important;
+}
+
+.worker-dashboard .table thead th {
+  color: var(--gg-ink-muted) !important;
+  border-right: 0 !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.worker-dashboard .table td {
+  border-color: var(--gg-line) !important;
+}
+
+/* ---- Buttons ------------------------------------------------------------ */
+.worker-dashboard :is(.btn-primary, .btn-success),
+.gg-modal-panel :is(.btn-primary, .btn-success) {
+  border: 1px solid var(--gg-leaf) !important;
+  border-radius: 10px !important;
+  background: var(--gg-leaf) !important;
+  color: var(--gg-on-leaf) !important;
+  font-weight: 700 !important;
+  box-shadow: none !important;
+}
+
+.worker-dashboard :is(.btn-primary, .btn-success):is(:hover, :focus-visible),
+.gg-modal-panel :is(.btn-primary, .btn-success):is(:hover, :focus-visible) {
+  border-color: var(--gg-primary-strong) !important;
+  background: var(--gg-primary-strong) !important;
+}
+
+.worker-dashboard :is(.btn-outline-primary, .btn-outline-success),
+.gg-modal-panel :is(.btn-outline-primary, .btn-outline-success) {
+  border: 1.5px solid var(--gg-leaf) !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  color: var(--gg-leaf-deep) !important;
+  font-weight: 700 !important;
+}
+
+.worker-dashboard :is(.btn-outline-secondary, .btn-light),
+.gg-modal-panel :is(.btn-outline-secondary, .btn-light) {
+  border: 1.5px solid var(--gg-line-strong) !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  color: var(--gg-ink) !important;
+  font-weight: 700 !important;
+}
+
+.worker-dashboard :is(.btn-outline-primary, .btn-outline-success, .btn-outline-secondary, .btn-light):is(:hover, :focus-visible),
+.gg-modal-panel :is(.btn-outline-primary, .btn-outline-success, .btn-outline-secondary, .btn-light):is(:hover, :focus-visible) {
+  border-color: var(--gg-leaf) !important;
+  background: var(--gg-leaf-tint) !important;
+  color: var(--gg-leaf-deep) !important;
+}
+
+.worker-dashboard .btn-outline-danger,
+.gg-modal-panel .btn-outline-danger {
+  border: 1.5px solid rgba(181, 87, 62, 0.4) !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  color: var(--gg-danger-ink) !important;
+  font-weight: 700 !important;
+}
+
+.worker-dashboard .btn-outline-danger:is(:hover, :focus-visible),
+.gg-modal-panel .btn-outline-danger:is(:hover, :focus-visible) {
+  background: rgba(181, 87, 62, 0.08) !important;
+}
+
+.worker-dashboard .btn-link,
+.worker-dashboard .worker-content a:not(.btn) {
+  color: var(--gg-leaf-deep) !important;
+  font-weight: 700;
+}
+
+/* ---- Badges and pills --------------------------------------------------- */
+.worker-dashboard .badge,
+.worker-dashboard .skill-tag,
+.worker-dashboard .distance-pill {
+  border: 1.5px solid var(--gg-leaf-line) !important;
+  border-radius: 999px !important;
+  background: rgba(158, 191, 94, 0.12) !important;
+  color: var(--gg-leaf-deep) !important;
+  font-weight: 700 !important;
+}
+
+.worker-dashboard .badge:is(.text-bg-secondary, .text-bg-light, .bg-secondary, .bg-light) {
+  border-color: var(--gg-line-strong) !important;
+  background: rgba(31, 42, 25, 0.08) !important;
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard .badge:is(.text-bg-warning, .bg-warning) {
+  border-color: rgba(196, 146, 52, 0.45) !important;
+  background: rgba(214, 170, 72, 0.16) !important;
+  color: #7a5412 !important;
+}
+
+.worker-dashboard .badge:is(.text-bg-danger, .bg-danger) {
+  border-color: rgba(181, 87, 62, 0.4) !important;
+  background: rgba(181, 87, 62, 0.1) !important;
+  color: var(--gg-danger-ink) !important;
+}
+
+/* ---- Forms -------------------------------------------------------------- */
+.worker-dashboard :is(.form-control, .form-select, .input-group-text),
+.gg-modal-panel :is(.form-control, .form-select) {
+  border: 1.5px solid var(--gg-field-line) !important;
+  border-radius: 10px !important;
+  background-color: var(--gg-field-bg) !important;
+  color: var(--gg-ink) !important;
+  box-shadow: none !important;
+}
+
+.worker-dashboard :is(.form-control, .form-select)::placeholder,
+.gg-modal-panel :is(.form-control, .form-select)::placeholder {
+  color: var(--gg-ink-faint) !important;
+}
+
+.worker-dashboard :is(.form-control, .form-select):focus,
+.gg-modal-panel :is(.form-control, .form-select):focus {
+  border-color: var(--gg-leaf) !important;
+  box-shadow: 0 0 0 0.2rem rgba(158, 191, 94, 0.25) !important;
+}
+
+.worker-dashboard .form-control::file-selector-button {
+  border-color: var(--gg-field-line);
+  background: var(--gg-card);
+  color: var(--gg-ink);
+}
+
+.worker-dashboard .worker-content .form-label {
+  color: var(--gg-ink) !important;
+  font-family: var(--gg-font-heading);
+  font-weight: 700 !important;
+}
+
+.worker-dashboard .worker-content .household-notifications-filter .form-label {
+  border: 1.5px solid var(--gg-leaf-line) !important;
+  border-radius: 11px !important;
+  background: var(--gg-leaf-tint) !important;
+  color: var(--gg-leaf-deep) !important;
+  font-family: var(--gg-font-body);
+}
+
+.worker-dashboard .form-check-input:checked {
+  border-color: var(--gg-leaf);
+  background-color: var(--gg-leaf);
+}
+
+/* ---- Household dashboard: jobs in process ------------------------------- */
+.worker-dashboard .household-process-section-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--gg-leaf-deep) !important;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+}
+
+.worker-dashboard :is(.household-process-grid, .profile-card) + .household-process-section-label {
+  margin-top: 2rem;
+}
+
+.worker-dashboard .household-process-section-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(31, 42, 25, 0.12);
+}
+
+.worker-dashboard .household-process-topline p {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard .household-process-post-btn {
+  border-radius: 10px !important;
+}
+
+.worker-dashboard .household-process-action-banner {
+  border-color: var(--gg-leaf-line);
+  background: var(--gg-leaf-tint);
+  color: #4e5a3e;
+}
+
+.worker-dashboard .household-process-action-banner svg {
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-card.needs-action {
+  border-color: var(--gg-leaf) !important;
+  box-shadow: 0 0 0 1px var(--gg-leaf), var(--gg-card-shadow) !important;
+}
+
+.worker-dashboard .household-process-card-top-text h3 {
+  font-family: var(--gg-font-heading);
+  font-weight: 700;
+}
+
+.worker-dashboard .household-process-card-top-text span,
+.worker-dashboard .household-process-meta {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .household-process-status-icon:is(.open, .applicants) {
+  background: rgba(158, 191, 94, 0.18);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-status-icon.assigned {
+  background: rgba(158, 191, 94, 0.28);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-status-icon.review {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .household-process-status-line:is(.open, .applicants, .review) i {
+  background: var(--gg-leaf);
+}
+
+.worker-dashboard .household-process-status-line.assigned i {
+  background: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-worker-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--gg-line);
+  border-bottom: 1px solid var(--gg-line);
+}
+
+.worker-dashboard .household-process-worker-row.empty .household-process-mini-avatar {
+  border: 1.5px dashed #b6bfa6;
+  background: transparent;
+  color: var(--gg-ink-faint);
+}
+
+.worker-dashboard .household-process-worker-row.empty span {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .household-process-note {
+  background: var(--gg-leaf-tint);
+  color: #4e5a3e;
+}
+
+.worker-dashboard .household-process-outline-cta {
+  border: 1.5px solid var(--gg-leaf);
+  background: transparent;
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-outline-cta:is(:hover, :focus-visible) {
+  background: var(--gg-leaf-tint);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-cancel-link {
+  color: var(--gg-danger-ink);
+  font-weight: 700;
+}
+
+.worker-dashboard .household-process-rate-btn {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .household-process-rate-btn svg {
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .household-process-report-btn {
+  border-color: rgba(181, 87, 62, 0.25);
+  background: rgba(181, 87, 62, 0.08);
+  color: var(--gg-danger-ink);
+}
+
+.worker-dashboard .household-process-report-btn:is(:hover, :focus-visible) {
+  background: rgba(181, 87, 62, 0.14);
+  color: #9a4631;
+}
+
+/* ---- Household My Jobs: finished history -------------------------------- */
+.worker-dashboard .household-history-topline p {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard .household-history-stat strong {
+  font-family: var(--gg-font-heading);
+  font-weight: 800;
+}
+
+.worker-dashboard .household-history-stat.completed .household-history-stat-icon {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .household-history-stat.spent .household-history-stat-icon {
+  background: var(--gg-leaf-deep);
+  color: #f5f1e6;
+}
+
+.worker-dashboard .household-history-stat.rating .household-history-stat-icon {
+  background: rgba(158, 191, 94, 0.3);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-history-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--gg-line);
+  border-radius: 14px;
+  background: var(--gg-card);
+}
+
+.worker-dashboard .household-history-tab {
+  border-color: transparent;
+  border-radius: 11px;
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .household-history-tab.active {
+  border-color: var(--gg-ink);
+  background: var(--gg-ink);
+  color: #f5f1e6;
+}
+
+.worker-dashboard .household-history-tab-count {
+  background: rgba(31, 42, 25, 0.08);
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .household-history-tab.active .household-history-tab-count {
+  background: rgba(245, 241, 230, 0.2);
+  color: #f5f1e6;
+}
+
+.worker-dashboard .household-history-card::before {
+  background: var(--gg-leaf);
+}
+
+.worker-dashboard .household-history-card.cancelled {
+  background-color: var(--gg-card-muted) !important;
+}
+
+.worker-dashboard .household-history-card.cancelled::before {
+  background: #b6aa8f;
+}
+
+/* ---- Worker dashboard ---------------------------------------------------- */
+.worker-dashboard .worker-dashboard-welcome-strip {
+  padding-bottom: 8px !important;
+}
+
+.worker-dashboard .worker-market-card {
+  border: 1px solid var(--gg-line) !important;
+  border-radius: 14px !important;
+  background: var(--gg-card-muted) !important;
+}
+
+.worker-dashboard .worker-market-card.worker-market-card-match {
+  border-color: var(--gg-leaf-line) !important;
+  background: rgba(158, 191, 94, 0.14) !important;
+}
+
+.worker-dashboard .worker-market-card :is(h3, strong) {
+  font-family: var(--gg-font-heading);
+}
+
+/* ---- Worker Find Jobs ---------------------------------------------------- */
+.worker-dashboard .worker-ai-hero {
+  background: linear-gradient(135deg, #1a2415 0%, #29341f 100%);
+}
+
+.worker-dashboard .worker-ai-hero .worker-ai-hero-title,
+.worker-dashboard .worker-ai-hero .worker-ai-hero-stat-num {
+  color: #f5f1e6 !important;
+  font-family: var(--gg-font-heading) !important;
+}
+
+.worker-dashboard .worker-ai-hero :is(.worker-ai-hero-eyebrow, .worker-ai-hero-stat-label) {
+  color: var(--gg-leaf);
+}
+
+.worker-dashboard .worker-ai-hero :is(.worker-ai-hero-desc, .worker-ai-manual-link, .worker-ai-scan-status) {
+  color: #c2cbaf;
+}
+
+.worker-dashboard .worker-ai-find-btn {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .worker-jobcard-head {
+  background: var(--gg-sidebar-bg);
+}
+
+.worker-dashboard .worker-jobcard-verified {
+  color: var(--gg-leaf);
+}
+
+.worker-dashboard .worker-jobcard-pill.is-match {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .worker-jobcard-pill.is-other {
+  border-color: rgba(245, 241, 230, 0.35);
+  color: #c2cbaf;
+}
+
+.worker-dashboard .worker-jobcard-monogram {
+  color: #f5f1e6;
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard .worker-jobcard-household {
+  color: #c2cbaf;
+}
+
+.worker-dashboard .worker-jobcard-title {
+  color: var(--gg-ink);
+  font-weight: 700;
+}
+
+.worker-dashboard .worker-jobcard-rate strong,
+.worker-dashboard .worker-jobcard-distance {
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .worker-jobcard-rate span,
+.worker-dashboard .worker-jobcard-location {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .worker-jobcard-when {
+  color: var(--gg-ink);
+}
+
+.worker-dashboard .worker-jobcard-period {
+  color: var(--gg-ink-faint);
+}
+
+.worker-dashboard .worker-jobcard-chip {
+  border-color: var(--gg-line-strong);
+  background: transparent;
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .worker-jobcard-chip.is-match {
+  border-color: var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.12);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .worker-jobcard-btn.is-ghost {
+  border: 1.5px solid var(--gg-line-strong);
+  background: transparent;
+  color: var(--gg-ink);
+}
+
+.worker-dashboard .worker-jobcard-btn.is-primary {
+  border-color: var(--gg-leaf);
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+/* ---- Notifications ------------------------------------------------------- */
+.worker-dashboard :is(.household-notification-item, .notification-card) {
+  border: 0 !important;
+  border-left: 4px solid var(--gg-leaf) !important;
+  border-radius: 0 14px 14px 0 !important;
+  background: var(--gg-card) !important;
+  box-shadow: var(--gg-card-shadow-soft) !important;
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard :is(.household-notification-item, .notification-card) :is(strong, h3, h4, h5, .notif-title) {
+  color: var(--gg-ink) !important;
+  font-family: var(--gg-font-heading);
+  font-weight: 700;
+}
+
+.worker-dashboard :is(.household-notification-item, .notification-card) :is(p, .small, .notif-body) {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard :is(.household-notification-item, .notification-card) :is(.notif-time, time, small) {
+  color: var(--gg-ink-faint) !important;
+}
+
+.worker-dashboard .household-notifications-panel .household-notifications-filter {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.worker-dashboard .household-notifications-panel .household-notifications-read-button,
+.worker-dashboard .worker-notifications-page .worker-mark-read-button {
+  border: 1.5px solid var(--gg-line-strong) !important;
+  border-radius: 11px !important;
+  background: transparent !important;
+  color: var(--gg-ink) !important;
+}
+
+/* ---- My Reports ---------------------------------------------------------- */
+.worker-dashboard .my-reports-header-icon {
+  background: rgba(158, 191, 94, 0.18);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .my-reports-filter {
+  border: 1.5px solid var(--gg-line-strong);
+  background: transparent;
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .my-reports-filter:is(.active, :hover) {
+  border-color: var(--gg-ink);
+  background: var(--gg-ink);
+  color: #f5f1e6;
+}
+
+/* ---- Leftovers from the old blue theme ------------------------------------ */
+.worker-dashboard :is(.small, .card, .table) {
+  color: var(--gg-ink);
+}
+
+.worker-dashboard .form-text,
+.worker-dashboard .worker-content .worker-skill-hint {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard .card-header.bg-success {
+  background: transparent !important;
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard .verification-card {
+  color: var(--gg-ink);
+}
+
+.worker-dashboard :is(.verification-approved-banner, .verification-approved-box, .verification-note, .verification-document-card, .matched-worker-item, .household-profile-preview) {
+  border: 1px solid var(--gg-line) !important;
+  border-radius: 14px !important;
+  background: rgba(241, 231, 204, 0.5) !important;
+  color: var(--gg-ink) !important;
+  box-shadow: none !important;
+}
+
+.worker-dashboard :is(.verification-approved-label, .verification-approved-banner h2) {
+  color: var(--gg-ink);
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard :is(.verification-approved-banner p, .verification-approved-value) {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .verification-file-button {
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .verification-file-button:not(.disabled):hover {
+  color: var(--gg-ink);
+}
+
+.worker-dashboard .verification-pending-banner {
+  border-color: rgba(196, 146, 52, 0.45) !important;
+  background: rgba(214, 170, 72, 0.12) !important;
+}
+
+.worker-dashboard :is(.verification-document-preview, .household-job-map-frame, .worker-location-picker-map) {
+  border: 1px solid var(--gg-line);
+  background: var(--gg-field-bg);
+}
+
+.location-distance-map-canvas {
+  border-color: var(--gg-line);
+  background: var(--gg-field-bg);
+}
+
+.location-distance-summary {
+  border-color: var(--gg-line);
+  background: rgba(241, 231, 204, 0.5);
+}
+
+.location-distance-summary span {
+  color: var(--gg-leaf-deep);
+}
+
+.location-distance-summary small {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .job-image-upload {
+  border: 1px solid var(--gg-line);
+  background: rgba(241, 231, 204, 0.5);
+}
+
+.worker-dashboard .job-image-dropzone {
+  border: 2px dashed var(--gg-leaf-line);
+  background: var(--gg-card);
+}
+
+.worker-dashboard .job-image-dropzone.has-items {
+  border-color: var(--gg-leaf);
+  box-shadow: 0 8px 20px rgba(92, 122, 52, 0.12);
+}
+
+.worker-dashboard .job-image-preview-card {
+  background: var(--gg-card);
+}
+
+.worker-dashboard .worker-job-card-details dt {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .worker-job-card-details dd {
+  color: var(--gg-ink);
+}
+
+.worker-dashboard :is(.worker-job-distance-badge, .worker-job-image-count) {
+  border: 1.5px solid var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.12);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .worker-location-picker-head span {
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .household-process-worker-row.empty .household-process-mini-avatar,
+.worker-dashboard .worker-jobcard-period {
+  color: var(--gg-ink-muted);
+}
+
+/* ---- AI matched workers + applicants modal ------------------------------- */
+.gg-matches-topbar {
+  background: transparent;
+  border-bottom: 0;
+}
+
+.gg-matches-heading h1 {
+  font-family: var(--gg-font-heading);
+}
+
+.gg-matches-eyebrow {
+  color: var(--gg-leaf-deep);
+}
+
+.gg-matches-live {
+  border: 1.5px solid var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.12);
+  color: var(--gg-leaf-deep);
+}
+
+.gg-matches-chip {
+  border: 1.5px solid var(--gg-line-strong);
+  background: transparent;
+  color: var(--gg-ink-muted);
+}
+
+.gg-matches-chip.active {
+  border-color: var(--gg-ink);
+  background: var(--gg-ink);
+  color: #f5f1e6;
+}
+
+.gg-match-card {
+  border-color: var(--gg-line);
+  border-radius: 18px;
+  background: var(--gg-card);
+  box-shadow: var(--gg-card-shadow);
+}
+
+.gg-match-photo {
+  background: var(--gg-sidebar-bg);
+}
+
+.gg-match-photo-ident h3 {
+  font-family: var(--gg-font-heading);
+}
+
+:is(.gg-match-skills, .gg-applicant-tags) span {
+  border: 1.5px solid var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.12);
+  color: var(--gg-leaf-deep);
+}
+
+:is(.gg-match-skills, .gg-applicant-tags) span.muted {
+  border-color: var(--gg-line-strong);
+  background: rgba(31, 42, 25, 0.06);
+  color: var(--gg-ink-muted);
+}
+
+.gg-match-profile {
+  border: 1.5px solid var(--gg-line-strong);
+  background: transparent;
+  color: var(--gg-ink);
+}
+
+.gg-match-hire,
+.gg-applicant-hire {
+  border-color: var(--gg-leaf);
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.gg-match-ring-label {
+  color: var(--gg-leaf-deep);
+}
+
+.gg-applicant-strip {
+  background: var(--gg-card-muted);
+}
+
+.gg-applicant-card {
+  border-color: var(--gg-line);
+  background: var(--gg-card);
+}
+
+.gg-applicant-portfolio,
+.gg-applicant-decline {
+  background: var(--gg-card);
+}
+
+.gg-applicant-top {
+  background: rgba(158, 191, 94, 0.14);
+  color: var(--gg-leaf-deep);
+}
+
+/* ---- Shared modals ------------------------------------------------------- */
+.gg-modal-panel {
+  background: var(--gg-card) !important;
+  color: var(--gg-ink);
+}
+
+/* ---- Floating chat button ------------------------------------------------ */
+.gawago-chat-fab {
+  background: var(--gg-sidebar-bg);
+  color: var(--gg-leaf);
+  box-shadow: 0 14px 30px rgba(31, 42, 25, 0.32);
+}
+
+/* ---- Admin panels (staff + super admin) ---------------------------------- */
+.worker-dashboard .admin-reports-header h2 {
+  color: var(--gg-ink) !important;
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard .admin-reports-header p {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard :is(.admin-reports-filter, .admin-reports-table-card, .admin-credentials-stat, .admin-credential-card, .admin-users-stat, .admin-report-info-card, .admin-report-account-card, .admin-report-stat-card, .analytics-overview-head, .analytics-overview-panel, .analytics-section-head, .analytics-subcard, .analytics-heatmap-legend, .analytics-heatmap-rank, .verification-detail-panel) {
+  background: var(--gg-card) !important;
+  border-color: var(--gg-line) !important;
+  color: var(--gg-ink);
+}
+
+.worker-dashboard :is(.admin-reports-table-card, .admin-credentials-stat, .admin-credential-card, .admin-users-stat, .admin-report-stat-card, .analytics-overview-head, .analytics-overview-panel, .analytics-section-head) {
+  border-radius: 18px;
+  box-shadow: var(--gg-card-shadow-soft);
+}
+
+.worker-dashboard :is(.admin-credentials-search, .admin-reports-search) {
+  border: 1.5px solid var(--gg-field-line);
+  background: var(--gg-field-bg);
+  color: var(--gg-ink);
+}
+
+.worker-dashboard :is(.admin-credentials-search, .admin-reports-search):focus {
+  border-color: var(--gg-leaf);
+  box-shadow: 0 0 0 0.2rem rgba(158, 191, 94, 0.25);
+}
+
+/* Stat tiles: cream card, coloured top rule, ink or accent value. */
+.worker-dashboard :is(.admin-credentials-stat, .admin-users-stat) strong {
+  color: var(--gg-ink);
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard .admin-credentials-stat.pending {
+  border-top-color: #c9a04a !important;
+}
+
+.worker-dashboard .admin-credentials-stat.pending strong {
+  color: #9a6b1c;
+}
+
+.worker-dashboard :is(.admin-credentials-stat.approved, .admin-users-stat.green, .admin-users-stat.mint) {
+  border-top-color: var(--gg-leaf) !important;
+}
+
+.worker-dashboard :is(.admin-credentials-stat.approved, .admin-users-stat.green, .admin-users-stat.mint) strong {
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard :is(.admin-credentials-stat.rejected, .admin-users-stat.red) {
+  border-top-color: var(--gg-danger-ink) !important;
+}
+
+.worker-dashboard :is(.admin-credentials-stat.rejected, .admin-users-stat.red) strong {
+  color: var(--gg-danger-ink);
+}
+
+.worker-dashboard :is(.admin-credentials-stat.total, .admin-users-stat.blue) {
+  border-top-color: var(--gg-ink) !important;
+}
+
+/* Filter chips and tabs. */
+.worker-dashboard .admin-credentials-chip {
+  border: 1.5px solid var(--gg-line-strong);
+  background: transparent;
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .admin-credentials-chip span {
+  background: rgba(31, 42, 25, 0.08);
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .admin-credentials-chip.active {
+  border-color: var(--gg-ink);
+  background: var(--gg-ink);
+  color: #f5f1e6;
+}
+
+.worker-dashboard .admin-credentials-chip.active span {
+  background: rgba(245, 241, 230, 0.2);
+  color: #f5f1e6;
+}
+
+.worker-dashboard .admin-reports-tabs {
+  border: 1px solid var(--gg-line);
+  background: var(--gg-card);
+}
+
+.worker-dashboard .admin-reports-tab.active {
+  background: var(--gg-ink);
+  color: #f5f1e6;
+}
+
+.worker-dashboard .admin-reports-count-badge {
+  border: 1.5px solid var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.12);
+  color: var(--gg-leaf-deep);
+}
+
+/* Tables: same tan header row as the household/worker tables. */
+.worker-dashboard .admin-reports-table thead tr {
+  background: var(--gg-card-muted);
+}
+
+.worker-dashboard .admin-reports-table th {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .admin-reports-table td {
+  border-top-color: var(--gg-line);
+}
+
+.worker-dashboard .admin-reports-table tbody tr:hover {
+  background: var(--gg-leaf-tint);
+}
+
+/* Leaf text on cream needs the deep shade to stay readable. */
+.worker-dashboard :is(.admin-reports-id, .admin-reports-updated strong, .admin-report-info-kicker, .admin-report-account-cta, .analytics-overview-head span, .analytics-overview-metric.tone-neutral strong, .analytics-heatmap-rank strong) {
+  color: var(--gg-leaf-deep) !important;
+}
+
+.worker-dashboard :is(.admin-report-party-avatar, .admin-credential-avatar, .admin-credential-type-badge) {
+  background: rgba(158, 191, 94, 0.18);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard :is(.admin-user-status-badge.active, .admin-credential-status-badge.approved) {
+  border: 1.5px solid var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.12);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard :is(.admin-user-status-badge.pending, .admin-credential-status-badge.pending) {
+  background: rgba(214, 170, 72, 0.16);
+  color: #7a5412;
+}
+
+.worker-dashboard :is(.admin-user-status-badge.suspended, .admin-credential-status-badge.rejected) {
+  background: rgba(181, 87, 62, 0.1);
+  color: var(--gg-danger-ink);
+}
+
+/* Report status: submitted amber, under review light leaf, resolved solid
+   leaf, closed neutral -- four states stay distinct inside one palette. */
+.worker-dashboard .admin-report-status-pill.submitted,
+.worker-dashboard .admin-report-status-btn.active.submitted {
+  border-color: #c9a04a;
+  background: rgba(214, 170, 72, 0.16);
+  color: #7a5412;
+}
+
+.worker-dashboard .admin-report-status-pill.review,
+.worker-dashboard .admin-report-status-btn.active.review {
+  border-color: var(--gg-leaf);
+  background: rgba(158, 191, 94, 0.16);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .admin-report-status-pill.resolved,
+.worker-dashboard .admin-report-status-btn.active.resolved {
+  border-color: var(--gg-leaf);
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .admin-report-status-pill.closed,
+.worker-dashboard .admin-report-status-btn.active.closed {
+  border-color: var(--gg-line-strong);
+  background: rgba(31, 42, 25, 0.08);
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .admin-report-stat-dot.submitted {
+  background: #c9a04a;
+}
+
+.worker-dashboard .admin-report-stat-dot.review {
+  background: var(--gg-leaf);
+}
+
+.worker-dashboard .admin-report-stat-dot.resolved {
+  background: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .admin-report-status-btn {
+  border-color: var(--gg-line-strong);
+  background: transparent;
+}
+
+.worker-dashboard .admin-report-account-card.reporter .admin-report-account-head {
+  background: rgba(158, 191, 94, 0.16);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-dashboard .admin-report-account-card.reported .admin-report-account-head {
+  background: rgba(214, 170, 72, 0.16);
+  color: #7a5412;
+}
+
+.worker-dashboard .admin-report-resolve-btn,
+.worker-dashboard .admin-credential-btn.approve {
+  border-color: var(--gg-leaf);
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-dashboard .admin-credential-btn {
+  border-color: var(--gg-line-strong);
+  background: transparent;
+}
+
+.worker-dashboard .admin-credential-btn.reject {
+  border-color: rgba(181, 87, 62, 0.35);
+  background: rgba(181, 87, 62, 0.08);
+  color: var(--gg-danger-ink);
+}
+
+/* Super admin dashboard + analytics. */
+.worker-dashboard .analytics-overview-head h2,
+.worker-dashboard .analytics-overview-panel-head h3 {
+  color: var(--gg-ink);
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard :is(.analytics-overview-head p, .analytics-overview-panel-head p, .analytics-overview-metric span, .analytics-heatmap-legend span) {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .analytics-overview-metric {
+  border-color: var(--gg-line);
+  background: rgba(241, 231, 204, 0.5);
+}
+
+.worker-dashboard .analytics-overview-metric strong {
+  color: var(--gg-ink);
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard .analytics-overview-metric.tone-warning {
+  border-color: rgba(196, 146, 52, 0.4);
+  background: rgba(214, 170, 72, 0.12);
+}
+
+.worker-dashboard .analytics-overview-metric.tone-warning strong {
+  color: #7a5412;
+}
+
+.worker-dashboard .analytics-overview-metric.tone-danger {
+  border-color: rgba(181, 87, 62, 0.3);
+  background: rgba(181, 87, 62, 0.07);
+}
+
+.worker-dashboard .analytics-overview-metric.tone-danger strong {
+  color: var(--gg-danger-ink);
+}
+
+.worker-dashboard .superadmin-analytics .analytics-card {
+  border-color: var(--gg-line) !important;
+  background: var(--gg-card) !important;
+  box-shadow: var(--gg-card-shadow-soft) !important;
+}
+
+.worker-dashboard .superadmin-analytics .analytics-card > .profile-card-head,
+.worker-dashboard .superadmin-analytics .analytics-subcard > .profile-card-head,
+.worker-dashboard .superadmin-analytics .analytics-pricing-card > .profile-card-head {
+  background: transparent !important;
+  color: var(--gg-ink) !important;
+  font-family: var(--gg-font-heading);
+}
+
+.worker-dashboard .superadmin-analytics .analytics-card > .profile-card-head::before,
+.worker-dashboard .superadmin-analytics .analytics-subcard > .profile-card-head::before,
+.worker-dashboard .superadmin-analytics .analytics-pricing-card > .profile-card-head::before {
+  background: var(--gg-leaf);
+}
+
+.worker-dashboard .analytics-meter span {
+  background: linear-gradient(90deg, var(--gg-leaf) 0%, var(--gg-primary-strong) 100%);
+}
+
+.worker-dashboard .analytics-meter.availability span {
+  background: linear-gradient(90deg, var(--gg-primary-strong) 0%, var(--gg-leaf-deep) 100%);
+}
+
+.worker-dashboard .analytics-meter {
+  background: var(--gg-card-muted);
+}
+
+.worker-dashboard .admin-report-stat-note {
+  color: var(--gg-ink-muted);
+}
+
+.worker-dashboard .admin-reports-status-select {
+  border: 1.5px solid var(--gg-field-line);
+  background-color: var(--gg-field-bg);
+  color: var(--gg-ink);
+}
+
+.admin-report-modal-head .admin-user-status-badge.active {
+  border-color: rgba(158, 191, 94, 0.45);
+  background: rgba(158, 191, 94, 0.16);
+  color: var(--gg-leaf);
+}
+
+.gg-modal-panel .btn-outline-warning {
+  border: 1.5px solid rgba(196, 146, 52, 0.55) !important;
+  background: transparent !important;
+  color: #7a5412 !important;
+  font-weight: 700;
+}
+
+.gg-modal-panel .btn-outline-warning:is(:hover, :focus-visible) {
+  background: rgba(214, 170, 72, 0.14) !important;
+}
+
+.gg-modal-panel .admin-report-account-stars {
+  color: var(--gg-leaf-deep);
+}
+
+.gg-modal-panel .admin-report-account-facts span {
+  color: var(--gg-ink-muted);
+}
+
+/* ---- Worker Find Jobs: List / Map view ----------------------------------- */
+.worker-find-jobs-viewbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.worker-find-jobs-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--gg-line);
+  border-radius: 12px;
+  background: var(--gg-card);
+  box-shadow: var(--gg-card-shadow-soft);
+}
+
+.worker-find-jobs-toggle button {
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--gg-ink-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.worker-find-jobs-toggle button.active {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-jobs-map-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--gg-line);
+  border-radius: 20px;
+  background: var(--gg-field-bg);
+  box-shadow: var(--gg-card-shadow);
+}
+
+.worker-jobs-map-canvas {
+  height: min(68vh, 620px);
+  min-height: 420px;
+}
+
+.worker-jobs-map-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--gg-ink-muted);
+  text-align: center;
+}
+
+.worker-jobs-map-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 500;
+  display: flex;
+  gap: 6px;
+}
+
+.worker-jobs-map-control {
+  padding: 8px 14px;
+  border: 1px solid var(--gg-line-strong);
+  border-radius: 999px;
+  background: var(--gg-card);
+  color: var(--gg-ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+  box-shadow: var(--gg-card-shadow-soft);
+}
+
+.worker-jobs-map-control:disabled {
+  opacity: 0.6;
+}
+
+.worker-jobs-map-pin-wrap {
+  background: transparent;
+  border: 0;
+}
+
+.worker-jobs-map-pin {
+  width: 40px;
+  height: 40px;
+  margin: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2.5px solid var(--gg-card);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 8px 18px rgba(31, 42, 25, 0.3);
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.worker-jobs-map-pin span {
+  transform: rotate(45deg);
+  font-family: var(--gg-font-heading);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.worker-jobs-map-pin.is-match {
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+}
+
+.worker-jobs-map-pin.is-other {
+  background: #c9c0a0;
+  color: #4d4735;
+}
+
+.worker-jobs-map-pin:hover {
+  filter: brightness(1.06);
+}
+
+.worker-jobs-map-pin.is-selected {
+  transform: rotate(-45deg) scale(1.15);
+  border-color: var(--gg-ink);
+}
+
+.worker-jobs-map-you {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 24px;
+  border: 2px solid var(--gg-card);
+  border-radius: 999px;
+  background: var(--gg-sidebar-bg);
+  color: #f5f1e6;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 6px 14px rgba(31, 42, 25, 0.3);
+}
+
+.worker-jobs-map-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 600;
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100% - 72px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--gg-card);
+  box-shadow: 0 20px 44px rgba(31, 42, 25, 0.32);
+}
+
+.worker-jobs-map-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--gg-sidebar-bg);
+  color: #f5f1e6;
+  font-family: var(--gg-font-heading);
+  font-weight: 700;
+}
+
+.worker-jobs-map-panel-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(245, 241, 230, 0.12);
+  color: #f5f1e6;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.worker-jobs-map-panel-list {
+  overflow-y: auto;
+}
+
+.worker-jobs-map-job {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--gg-line);
+}
+
+.worker-jobs-map-job:first-child {
+  border-top: 0;
+}
+
+.worker-jobs-map-job-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.worker-jobs-map-avatar {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--gg-leaf);
+  color: var(--gg-on-leaf);
+  font-family: var(--gg-font-heading);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.worker-jobs-map-job-ident {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.worker-jobs-map-job-ident strong {
+  overflow: hidden;
+  color: var(--gg-ink);
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worker-jobs-map-job-ident span {
+  color: var(--gg-ink-muted);
+  font-size: 0.75rem;
+}
+
+.worker-jobs-map-tag {
+  flex: none;
+  padding: 3px 9px;
+  border: 1.5px solid var(--gg-line-strong);
+  border-radius: 999px;
+  color: var(--gg-ink-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.worker-jobs-map-tag.is-match {
+  border-color: var(--gg-leaf-line);
+  background: rgba(158, 191, 94, 0.14);
+  color: var(--gg-leaf-deep);
+}
+
+.worker-jobs-map-job-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.worker-jobs-map-job-title-row h3 {
+  margin: 0;
+  color: var(--gg-ink);
+  font-family: var(--gg-font-heading);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.worker-jobs-map-job-title-row p {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.worker-jobs-map-job-title-row strong {
+  color: var(--gg-leaf-deep);
+  font-family: var(--gg-font-heading);
+}
+
+.worker-jobs-map-job-title-row span {
+  color: var(--gg-ink-muted);
+  font-size: 0.8rem;
+}
+
+.worker-jobs-map-job-meta {
+  margin: 0;
+  color: var(--gg-ink-muted);
+  font-size: 0.8rem;
+}
+
+.worker-jobs-map-job-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.worker-jobs-map-job-actions .worker-jobcard-btn {
+  padding: 0.55rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.worker-jobs-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 12px;
+  color: var(--gg-ink-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.worker-jobs-map-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.worker-jobs-map-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.worker-jobs-map-dot.is-match {
+  background: var(--gg-leaf);
+}
+
+.worker-jobs-map-dot.is-other {
+  background: #c9c0a0;
+}
+
+.worker-jobs-map-dot.is-you {
+  background: var(--gg-sidebar-bg);
+}
+
+.worker-jobs-map-legend .worker-jobs-map-note {
+  flex-basis: 100%;
+  font-weight: 500;
+}
+
+@media (max-width: 767px) {
+  .worker-jobs-map-canvas {
+    height: 60vh;
+    min-height: 360px;
+  }
+
+  .worker-jobs-map-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: 55%;
+  }
+}
+
+
+/* Registration forms: per-field validation (red box, asterisk, message). Kept
+   at the end of the file with the full selector chain because the register
+   card is restyled in several earlier layers. */
+.register-page .register-card .required-mark {
+  color: #c44747;
+  font-weight: 800;
+  margin-left: 2px;
+}
+
+.register-page .register-card .form-control.is-invalid,
+.register-page .register-card .form-select.is-invalid,
+.login-section .register-card .form-control.is-invalid,
+.login-section .register-card .form-select.is-invalid {
+  border-color: #c44747;
+  background-image: none;
+  box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22);
+}
+
+.register-page .register-card .input-group:has(.form-control.is-invalid) .input-group-text {
+  border-color: #c44747;
+}
+
+.register-page .register-card .invalid-feedback {
+  margin-top: 6px;
+  color: #b3372f;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+
+/* ==========================================================================
+   UI audit fixes (2026-10-11). Kept together at the end of the file so they
+   win over the earlier theme layers without touching them.
+   ========================================================================== */
+
+/* Register forms on phones: the grid collapses to one column, but the
+   half-width fields still spanned 3 columns. That created implicit columns,
+   and the full-width rows (`1 / -1` = explicit tracks only) were squeezed
+   into the first one -- half width on the worker form, 28px short on the
+   household form. */
+@media (max-width: 767px) {
+  .login-section .register-card form > .row > * {
+    grid-column: 1 / -1 !important;
+  }
+}
+
+/* Chat launcher: on phones the dock stretches edge to edge so the open panel
+   can, which left the collapsed button at the bottom-left over page content.
+   Keep it bottom-right like desktop, and leave room under the content so the
+   last controls can scroll clear of it. */
+@media (max-width: 767px) {
+  .gawago-chat-dock.gawago-chat-dock-collapsed {
+    left: auto;
+  }
+}
+
+.worker-dashboard .worker-content {
+  padding-bottom: 6.5rem !important;
+}
+
+/* Controls inside a locked (disabled) form looked fully enabled. */
+.worker-dashboard fieldset:disabled .btn {
+  opacity: 0.5 !important;
+  cursor: not-allowed;
+}
+
+/* "Filter Date" is a label, but was styled as a button-like pill. */
+.worker-dashboard .household-feedback-filter .form-label {
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-width: 0 !important;
+  color: var(--gg-ink-muted) !important;
+  font-weight: 700;
+  text-align: left;
+}
+
+/* Text contrast: each of these sat below 4.5:1. */
+.household-feedback-eyebrow,
+.worker-dashboard .household-process-section-label,
+.worker-dashboard .badge.worker-skill-neutral,
+.worker-location-picker-head span,
+.register-page .register-section-label,
+.register-page .register-card .input-group-text,
+.register-page .login-card-foot .btn-link {
+  color: var(--gg-leaf-text) !important;
+}
+
+.register-page .register-section-label span,
+.register-page .register-card .form-text,
+.register-page .register-form-intro p,
+.worker-location-picker-note,
+:is(.profile-page, .household-profile-page) .text-muted {
+  color: var(--gg-ink-muted) !important;
+}
+
+.register-page .register-card .required-mark {
+  color: #b3372f;
+}
+
+
+/* Off-theme colours: the household Feedback / Reviews pages still carried an
+   older blue palette. */
+.worker-dashboard :is(.household-feedback-hero, .household-feedback-list-panel) {
+  background: var(--gg-card) !important;
+  border-color: var(--gg-line-strong) !important;
+  box-shadow: 0 12px 28px rgba(31, 42, 25, 0.07) !important;
+}
+
+.worker-dashboard .household-feedback-hero h1 {
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard .household-feedback-hero p {
+  color: var(--gg-ink-muted) !important;
+}
+
+.worker-dashboard .household-feedback-empty {
+  background: var(--gg-card) !important;
+  border-color: var(--gg-field-line) !important;
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard .household-feedback-empty h2 {
+  color: var(--gg-ink) !important;
+}
+
+/* Bootstrap's own green and yellow, which the theme never re-coloured. */
+.worker-dashboard .badge.text-bg-primary {
+  background: var(--gg-leaf-tint) !important;
+  color: var(--gg-leaf-text) !important;
+  border: 1px solid var(--gg-leaf-line) !important;
+}
+
+.worker-dashboard .alert-warning {
+  background: var(--gg-gold-bg) !important;
+  border-color: rgba(122, 82, 0, 0.22) !important;
+  color: var(--gg-gold-text) !important;
+}
+
+/* Second pass, after the session-restore fix made more content visible. */
+.worker-dashboard :is(
+  .badge.worker-skill-match,
+  .worker-jobcard-chip.is-match,
+  .badge.bg-success,
+  .verification-file-button.disabled,
+  .household-history-pill.completed,
+  .household-history-check,
+  span.verified,
+  .household-feedback-more summary
+) {
+  color: var(--gg-leaf-text) !important;
+}
+
+.worker-dashboard :is(.badge.text-bg-primary, .badge.text-bg-success, .badge.bg-success) {
+  background: var(--gg-leaf-tint) !important;
+  color: var(--gg-leaf-text) !important;
+  border: 1px solid var(--gg-leaf-line) !important;
+}
+
+.worker-dashboard .household-feedback-more summary {
+  border-color: var(--gg-leaf-line) !important;
+}
+
+.worker-dashboard .household-feedback-avatar {
+  background: var(--gg-leaf-tint) !important;
+  color: var(--gg-leaf-text) !important;
+}
+
+.worker-dashboard .household-feedback-copy,
+.worker-dashboard .household-feedback-item p {
+  color: var(--gg-ink) !important;
+}
+
+.worker-dashboard :is(.household-process-cancel-link, .household-process-report-btn) {
+  color: #a54f39 !important; /* was #b5573e: 4.03-4.46:1 */
+}
+
+.worker-dashboard .household-history-pill.cancelled {
+  color: #6a6a62 !important;
+}
+
+.worker-dashboard .household-history-x {
+  color: #888275 !important; /* icon glyph: needs 3:1 */
+}
+
+/* Same as the Feedback page: a label, not a button-like pill. Needs the page
+   class to outrank .household-notifications-page ... .form-label above. */
+.worker-dashboard.household-notifications-page .household-notifications-filter .form-label {
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-width: 0 !important;
+  color: var(--gg-ink-muted) !important;
+  font-weight: 700;
+}
+
+/* Worker certificate tiles: saved files load through AuthImage. */
+.gg-cert-thumb {
+  display: block;
+  overflow: hidden;
+  background: var(--gg-card-muted);
+}
+
+.gg-cert-thumb a {
+  display: block;
+  height: 100%;
+}
+
+.gg-cert-thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gg-cert-thumb-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gg-line-strong);
+  color: var(--gg-ink);
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 0 0 2.5rem;
+}
+
+.gg-cert-thumb-file:disabled {
+  color: var(--gg-ink-muted);
+}
+
+.gg-cert-status {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--gg-leaf-deep);
+}
+
+.gg-cert-status.pending {
+  background: #7a5200;
+}
+
+.gg-cert-status.rejected {
+  background: #9b3d27;
+}
+
+/* Admin platform activity report (AGENTS.md IV.B). */
+.admin-platform-report {
+  margin-bottom: 2rem;
+}
+
+.admin-platform-report .admin-reports-filter input {
+  border: none;
+  background: none;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--gg-text);
+}
+
+.admin-platform-report-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.admin-platform-report-section-head {
+  padding: 1rem 1rem 0.5rem;
+}
+
+.admin-platform-report-section-head h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  color: var(--gg-ink);
+}
+
+.admin-platform-report-section-head p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--gg-ink-muted);
+}
+
+.admin-platform-report .admin-reports-table-card {
+  margin-bottom: 1rem;
+}
+
+/* Per-skill rating step after a household review. */
+.gg-skill-rating-panel {
+  width: min(600px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  border-radius: 12px;
+}
+
+.gg-skill-rating-panel .skill-rating-form {
+  max-width: none !important;
+  background: var(--gg-card) !important;
+}
+
+@media (max-width: 480px) {
+  .gg-skill-rating-panel .skill-rating-form {
+    padding: 1.25rem !important;
+  }
+}
 

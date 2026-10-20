@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/gawago_colors.dart';
+
 class FormSection extends StatelessWidget {
   const FormSection({
     super.key,
@@ -21,7 +23,7 @@ class FormSection extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Color(0xFFD8D0C3)),
+        side: const BorderSide(color: GawaGoColors.border),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -33,8 +35,8 @@ class FormSection extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 15,
-                  backgroundColor: const Color(0xFFE7F5E9),
-                  foregroundColor: const Color(0xFF197A35),
+                  backgroundColor: GawaGoColors.leafTint,
+                  foregroundColor: GawaGoColors.leafDeep,
                   child: Text(
                     '$number',
                     style: const TextStyle(fontWeight: FontWeight.bold),
@@ -49,7 +51,7 @@ class FormSection extends StatelessWidget {
                         title,
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: const Color(0xFF10251A),
+                              color: GawaGoColors.ink,
                               fontWeight: FontWeight.w900,
                               letterSpacing: 0,
                             ),
@@ -58,10 +60,7 @@ class FormSection extends StatelessWidget {
                         Text(
                           subtitle!,
                           style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: const Color(0xFF355444),
-                                height: 1.35,
-                              ),
+                              ?.copyWith(color: GawaGoColors.ink, height: 1.35),
                         ),
                     ],
                   ),

@@ -5,9 +5,9 @@ import '../../features/complaints/data/complaint_models.dart';
 import '../../features/complaints/data/complaint_repository.dart';
 import 'async_state.dart';
 
-/// "My Reports" -- incidents the signed-in user filed, or was named in.
-/// Distinct from the activity report: this tracks case status, not a
-/// personal summary.
+/// "My Reports" -- issues the signed-in user has filed. Reports about the
+/// user are never shown: a report stays confidential from the person it
+/// names, and the API only returns reports the caller filed.
 class MyComplaintsView extends StatefulWidget {
   const MyComplaintsView({
     super.key,
@@ -27,7 +27,9 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
       .getMyComplaints();
 
   void _reload() {
-    setState(() => _future = widget.repository.getMyComplaints());
+    setState(() {
+      _future = widget.repository.getMyComplaints();
+    });
   }
 
   @override
@@ -46,12 +48,9 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
             children: [
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: GawaGoColors.surface,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: const Color(0xFFD8D0C3),
-                    width: 1.2,
-                  ),
+                  border: Border.all(color: GawaGoColors.border, width: 1.2),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Column(
@@ -62,14 +61,15 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
                       child: Text(
                         'My Reports',
                         style: TextStyle(
+                          fontFamily: GawaGoColors.fontHeading,
                           color: GawaGoColors.ink,
                           fontSize: 22,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w700,
                           letterSpacing: 0,
                         ),
                       ),
                     ),
-                    const Divider(height: 1, color: Color(0xFFE6E0D6)),
+                    const Divider(height: 1, color: GawaGoColors.border),
                     const AppEmptyState(
                       icon: Icons.flag_outlined,
                       title: 'No reports yet',
@@ -87,10 +87,8 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
             itemCount: complaints.length,
             separatorBuilder: (context, index) => const SizedBox(height: 12),
-            itemBuilder: (context, index) => _ComplaintCard(
-              complaint: complaints[index],
-              currentUsername: widget.currentUsername,
-            ),
+            itemBuilder: (context, index) =>
+                _ComplaintCard(complaint: complaints[index]),
           ),
         );
       },
@@ -99,24 +97,19 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
 }
 
 class _ComplaintCard extends StatelessWidget {
-  const _ComplaintCard({
-    required this.complaint,
-    required this.currentUsername,
-  });
+  const _ComplaintCard({required this.complaint});
 
   final ComplaintReport complaint;
-  final String? currentUsername;
 
   @override
   Widget build(BuildContext context) {
-    final isFiledByMe = complaint.complainantUsername == currentUsername;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -137,13 +130,14 @@ class _ComplaintCard extends StatelessWidget {
                         fontSize: 14,
                       ),
                     ),
-                    Text(
-                      isFiledByMe ? 'Filed by you' : 'Filed about you',
-                      style: const TextStyle(
-                        color: GawaGoColors.textMuted,
-                        fontSize: 11,
+                    if (complaint.respondentUsername.isNotEmpty)
+                      Text(
+                        'About ${complaint.respondentUsername}',
+                        style: const TextStyle(
+                          color: GawaGoColors.textMuted,
+                          fontSize: 11,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -156,7 +150,7 @@ class _ComplaintCard extends StatelessWidget {
             '· ${complaint.createdAt.length >= 10 ? complaint.createdAt.substring(0, 10) : complaint.createdAt}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
           ),
-          if (isFiledByMe) ...[
+          if (complaint.description.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               complaint.description,
@@ -168,7 +162,7 @@ class _ComplaintCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
+                color: GawaGoColors.leafTint,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
@@ -189,7 +183,7 @@ class _StatusBadge extends StatelessWidget {
   final String status;
 
   Color get _color => switch (status) {
-    'resolved' => const Color(0xFF2D7A4F),
+    'resolved' => GawaGoColors.leafDeep,
     'under_review' => const Color(0xFF1F6FB2),
     'closed' => Colors.grey,
     _ => const Color(0xFFB8860B),

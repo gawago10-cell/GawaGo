@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getAuthToken } from "../api/apiClient";
 import { fetchDashboardMetrics } from "../services/backendDataService";
 import { getWorkersNeeded } from "../utils/jobUtils";
@@ -12,19 +12,23 @@ import {
 } from "../utils/analyticsUtils";
 import { SKILLS } from "../constants/appConstants";
 
-// Enhanced Analytics Helper Functions
+// Offline fallback only: the same formulas as apps.analytics.services, so a
+// failed request doesn't show the admin different numbers for the same data.
+const HIRED_STATUSES = ["Hired", "Completed"];
+const LIVE_ASSIGNED_JOB_STATUSES = ["Already found a worker", "Waiting for Household Confirmation"];
+const FINISHED_JOB_STATUSES = ["Completed", "Cancelled"];
+const DASHBOARD_REFRESH_MS = 30000;
+
 function calculateHiringSuccessRate(postedJobs) {
   let totalApplications = 0;
   let hiredCount = 0;
   postedJobs.forEach((job) => {
     (job.applications || []).forEach((app) => {
-      if (!["Pending"].includes(app.status)) {
-        totalApplications++;
-        if (app.status === "Hired") hiredCount++;
-      }
+      totalApplications++;
+      if (HIRED_STATUSES.includes(app.status)) hiredCount++;
     });
   });
-  return totalApplications > 0 ? Math.round((hiredCount / totalApplications) * 100) : 0;
+  return totalApplications > 0 ? Math.round((hiredCount / totalApplications) * 1000) / 10 : 0;
 }
 
 function calculateApplicationsByDate(postedJobs) {
@@ -58,7 +62,7 @@ function calculateWorkerHiringStats(postedJobs, registeredWorkers) {
   const workerHireMap = {};
   postedJobs.forEach((job) => {
     (job.applications || []).forEach((app) => {
-      if (app.status === "Hired") {
+      if (HIRED_STATUSES.includes(app.status)) {
         const workerId = app.workerId || app.worker_id;
         workerHireMap[workerId] = (workerHireMap[workerId] || 0) + 1;
       }
@@ -76,11 +80,11 @@ function calculateWorkerHiringStats(postedJobs, registeredWorkers) {
 function calculateJobMatchRate(postedJobs) {
   let jobsWithHires = 0;
   postedJobs.forEach((job) => {
-    if ((job.applications || []).some((app) => app.status === "Hired")) {
+    if ((job.applications || []).some((app) => HIRED_STATUSES.includes(app.status))) {
       jobsWithHires++;
     }
   });
-  return postedJobs.length ? Math.round((jobsWithHires / postedJobs.length) * 100) : 0;
+  return postedJobs.length ? Math.round((jobsWithHires / postedJobs.length) * 1000) / 10 : 0;
 }
 
 function buildDefaultAnalytics() {
@@ -124,6 +128,9 @@ function buildDefaultAnalytics() {
 
 function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorkers, verificationRequests = [] }) {
   const verifiedWorkers = registeredWorkers.filter((worker) => worker.verification === "Verified").length;
+  const verifiedUsers =
+    verifiedWorkers + registeredHouseholds.filter((household) => household.verification === "Verified").length;
+  const totalUsers = registeredWorkers.length + registeredHouseholds.length;
   const workerRatingValues = registeredWorkers.map(getWorkerRatingValue).filter((rating) => rating != null);
   const averageWorkerRating = workerRatingValues.length
     ? (workerRatingValues.reduce((sum, rating) => sum + rating, 0) / workerRatingValues.length).toFixed(2)
@@ -143,7 +150,7 @@ function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorke
     .sort((a, b) => b.count - a.count);
   const pricingTrends = buildMonthlyJobRequests(postedJobs).map((item) => {
     const monthJobs = postedJobs.filter((job) => {
-      const date = new Date(job?.createdAt || job?.created_at || job?.preferredDate || Date.now());
+      const date = new Date(job?.createdAt || job?.created_at || job?.jobStartDate || Date.now());
       return !Number.isNaN(date.getTime()) && date.toLocaleString("en-US", { month: "short" }) === item.month;
     });
     const averageRate = monthJobs.length
@@ -161,30 +168,30 @@ function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorke
 
   return {
     summary: {
-      totalUsers: registeredWorkers.length + registeredHouseholds.length,
+      totalUsers,
       totalWorkers: registeredWorkers.length,
       households: registeredHouseholds.length,
       totalJobPostings: postedJobs.length,
       activeJobs: postedJobs.filter((job) => job.status === "Open").length,
-      activeApplications: postedJobs.reduce(
-        (sum, job) =>
-          sum +
-          (job.applications || []).filter(
-            (application) => !["Rejected", "Completed", "Cancelled"].includes(application.status),
-          ).length,
-        0,
-      ),
+      activeApplications: postedJobs
+        .filter((job) => !FINISHED_JOB_STATUSES.includes(job.status))
+        .reduce(
+          (sum, job) => sum + (job.applications || []).filter((application) => application.status === "Pending").length,
+          0,
+        ),
       completedServices: postedJobs.filter((job) => job.status === "Completed").length,
       cancelledRequests: postedJobs.filter((job) => job.status === "Cancelled").length,
-      ongoingMatches: postedJobs.filter((job) =>
-        (job.applications || []).some((application) => application.status === "Hired"),
+      ongoingMatches: postedJobs.filter(
+        (job) =>
+          LIVE_ASSIGNED_JOB_STATUSES.includes(job.status) &&
+          (job.applications || []).some((application) => application.status === "Hired"),
       ).length,
-      verifiedUsers: verifiedWorkers,
+      verifiedUsers,
       verifiedWorkers,
       pendingVerifications: verificationRequests.filter((request) => request.status === "Pending").length,
       rejectedVerifications: verificationRequests.filter((request) => request.status === "Rejected").length,
       rejectedWorkers: registeredWorkers.filter((worker) => worker.verification === "Rejected").length,
-      verifiedPercent: registeredWorkers.length ? Math.round((verifiedWorkers / registeredWorkers.length) * 100) : 0,
+      verifiedPercent: totalUsers ? Math.round((verifiedUsers / totalUsers) * 100) : 0,
       averageWorkerRating,
       ratedWorkerCount: workerRatingValues.length,
     },
@@ -213,6 +220,21 @@ function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorke
   };
 }
 
+function buildLocalMetrics({ postedJobs, registeredHouseholds, registeredWorkers, verificationRequests }) {
+  const openJobSlots = postedJobs
+    .filter((job) => job.status === "Open")
+    .reduce((total, job) => total + getWorkersNeeded(job), 0);
+  const analytics = buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorkers, verificationRequests });
+  return {
+    openJobs: openJobSlots,
+    verifiedWorkers: registeredWorkers.filter((worker) => worker.verification === "Verified").length,
+    completedJobs: postedJobs.filter((job) => job.status === "Completed").length,
+    totalAccounts: registeredWorkers.length + registeredHouseholds.length,
+    avgRating: analytics.summary.averageWorkerRating,
+    analytics,
+  };
+}
+
 export function useDashboardMetrics({ currentUser, postedJobs, registeredHouseholds, registeredWorkers, verificationRequests }) {
   const [dashboardMetrics, setDashboardMetrics] = useState({
     openJobs: 0,
@@ -222,39 +244,34 @@ export function useDashboardMetrics({ currentUser, postedJobs, registeredHouseho
     avgRating: null,
     analytics: buildDefaultAnalytics(),
   });
+  const isPlatformAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
+  const localInputsRef = useRef({ postedJobs, registeredHouseholds, registeredWorkers, verificationRequests });
+  localInputsRef.current = { postedJobs, registeredHouseholds, registeredWorkers, verificationRequests };
+  // The background poll hands back new arrays every few seconds even when
+  // nothing changed; keying the fetch on what actually changed stops the
+  // dashboard from re-requesting the whole analytics payload on every poll.
+  const dataSignature = useMemo(
+    () =>
+      [
+        postedJobs
+          .map((job) => `${job.id}:${job.status}:${(job.applications || []).map((app) => app.status).join(",")}`)
+          .join("|"),
+        verificationRequests.map((request) => `${request.id}:${request.status}`).join("|"),
+        registeredWorkers.length,
+        registeredHouseholds.length,
+      ].join("#"),
+    [postedJobs, verificationRequests, registeredWorkers.length, registeredHouseholds.length],
+  );
 
   useEffect(() => {
     let cancelled = false;
-
-    function buildLocalMetrics() {
-      const openJobSlots = postedJobs
-        .filter((job) => job.status === "Open")
-        .reduce((total, job) => total + getWorkersNeeded(job), 0);
-
-      return {
-        openJobs: openJobSlots,
-        verifiedWorkers: registeredWorkers.filter((worker) => worker.verification === "Verified").length,
-        completedJobs: postedJobs.filter((job) => job.status === "Completed").length,
-        totalAccounts: registeredWorkers.length + registeredHouseholds.length,
-        avgRating: buildLocalAnalytics({
-          postedJobs,
-          registeredHouseholds,
-          registeredWorkers,
-          verificationRequests,
-        }).summary.averageWorkerRating,
-        analytics: buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorkers, verificationRequests }),
-      };
+    const useBackend = isPlatformAdmin && Boolean(getAuthToken());
+    if (!useBackend) {
+      setDashboardMetrics(buildLocalMetrics(localInputsRef.current));
+      return undefined;
     }
 
     async function loadDashboardMetrics() {
-      const authToken = getAuthToken();
-      const isPlatformAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
-      if (!isPlatformAdmin || !authToken) {
-        if (!cancelled) {
-          setDashboardMetrics(buildLocalMetrics());
-        }
-        return;
-      }
       try {
         const data = await fetchDashboardMetrics();
         if (!cancelled) {
@@ -269,16 +286,19 @@ export function useDashboardMetrics({ currentUser, postedJobs, registeredHouseho
         }
       } catch (error) {
         if (!cancelled) {
-          setDashboardMetrics(buildLocalMetrics());
+          setDashboardMetrics(buildLocalMetrics(localInputsRef.current));
         }
       }
     }
 
     loadDashboardMetrics();
+    // Changes made elsewhere (another admin, a household) still show up.
+    const timer = window.setInterval(loadDashboardMetrics, DASHBOARD_REFRESH_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, [currentUser?.role, postedJobs, registeredHouseholds, registeredWorkers, verificationRequests]);
+  }, [isPlatformAdmin, dataSignature]);
 
   return dashboardMetrics;
 }

@@ -16,6 +16,7 @@ export function useBackendPolling({
   setBackendNotifications,
   setCurrentUser,
   view,
+  householdMatchRank = "ai",
 }) {
   useEffect(() => {
     if (!currentUser?.username) {
@@ -35,9 +36,11 @@ export function useBackendPolling({
     // job detail view), the default must stay "smart" -- AGENTS.md I.B/I.C
     // documents that Smart Matching's priority order is not to be silently
     // replaced by AI ranking.
-    const rank = view === "household-job-matches" ? "ai" : undefined;
+    // On that screen the household can also switch to Smart Matching's
+    // rule order; the default (undefined) is the backend's "smart".
+    const rank = view === "household-job-matches" && householdMatchRank !== "smart" ? "ai" : undefined;
     refreshRecommendedWorkers(selectedJob.id, rank);
-  }, [currentUser?.role, selectedJob?.id, registeredWorkers.length, view]);
+  }, [currentUser?.role, selectedJob?.id, registeredWorkers.length, view, householdMatchRank]);
 
   useEffect(() => {
     if (currentUser?.role !== "worker" || !currentWorkerVerificationLabel) {

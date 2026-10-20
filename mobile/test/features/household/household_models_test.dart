@@ -86,19 +86,14 @@ void main() {
       'match_score': 94.5,
       'rating_label': '4.8',
       'worker_rate': '500.00',
-      'worker_latitude': 14.01,
-      'worker_longitude': 121.58,
-      'route_points': [
-        [14.01, 121.58],
-        [14.0253, 121.5929],
-      ],
     });
 
+    // Candidates carry distance only -- the API never sends a
+    // not-yet-hired worker's coordinates or route.
     expect(worker.verificationStatus, 'verified');
     expect(worker.matchScore, 94.5);
-    expect(worker.workerLatitude, 14.01);
-    expect(worker.workerLongitude, 121.58);
-    expect(worker.routePoints.length, 2);
+    expect(worker.distanceKm, 2.1);
+    expect(worker.distanceLabel, '2.1 km away');
   });
 
   test('applicant cards carry the ranking facts the list sorts on', () {
@@ -199,5 +194,25 @@ void main() {
       'title': 'Grocery Errand Run',
     });
     expect(undated.periodLabel, '');
+  });
+
+  test('employment history entries carry the skill ratings received', () {
+    final entry = WorkerJobHistoryEntry.fromJson({
+      'id': 3,
+      'title': 'Laundry',
+      'skill_ratings': [
+        {'skill_name': 'Laundry', 'rating': 4.5},
+        {'skill_name': '', 'rating': 3},
+      ],
+    });
+    final unrated = WorkerJobHistoryEntry.fromJson({
+      'id': 4,
+      'title': 'Cooking',
+    });
+
+    expect(entry.skillRatings, hasLength(1));
+    expect(entry.skillRatings.single.skillName, 'Laundry');
+    expect(entry.skillRatings.single.rating, 4.5);
+    expect(unrated.skillRatings, isEmpty);
   });
 }

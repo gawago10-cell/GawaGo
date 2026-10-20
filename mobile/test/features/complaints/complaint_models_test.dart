@@ -92,4 +92,27 @@ void main() {
       expect(complaint.respondentDetail, isNull);
     },
   );
+
+  test('admin job label prefers the full job name and location', () {
+    final adminView = ComplaintReport.fromJson({
+      'id': 13,
+      'complaint_type': 'no_show',
+      'description': 'Never arrived.',
+      'job_title': 'Deep Cleaning at Isabang',
+      'job_name': 'Deep Cleaning',
+      'job_barangay': 'Purok 2, Isabang, Tayabas City',
+    });
+    final filerView = ComplaintReport.fromJson({
+      'id': 14,
+      'complaint_type': 'no_show',
+      'description': 'Never arrived.',
+      'job_title': 'Deep Cleaning at Isabang',
+    });
+
+    expect(
+      adminView.adminJobLabel,
+      'Deep Cleaning · Purok 2, Isabang, Tayabas City',
+    );
+    expect(filerView.adminJobLabel, 'Deep Cleaning at Isabang');
+  });
 }

@@ -11,7 +11,13 @@ import {
   getDisplayName,
   getHouseholdPhoto,
 } from "../utils/formatters";
-import { getApplicationStatusLabel, getHiringProgressLabel, getJobStatusBadgeClass } from "../utils/jobUtils";
+import { getVerificationNavLabel } from "../utils/normalizers";
+import {
+  getApplicationStatusLabel,
+  getHiringProgressLabel,
+  getJobStatusBadgeClass,
+  getJobStatusText,
+} from "../utils/jobUtils";
 
 export default function WorkerJobDetailView({
   currentWorker,
@@ -25,6 +31,8 @@ export default function WorkerJobDetailView({
   openWorkerDashboard,
   openWorkerFindJobs,
   openWorkerGetVerified,
+  openWorkerMyJobs,
+  openMyComplaints,
   openWorkerNotifications,
   openWorkerProfile,
   workerApplicationUnreadCount,
@@ -47,19 +55,19 @@ export default function WorkerJobDetailView({
   const jobDistanceKm = job?.routeDistanceKm ?? null;
   const [routeDistanceKm, setRouteDistanceKm] = useState(null);
   const [completionNote, setCompletionNote] = useState("I have completed the service today.");
-  const distanceLabel = formatDistance(routeDistanceKm ?? jobDistanceKm);
+  // Prefer the backend's own wording, but only while showing the job's own
+  // distance -- once a fresher live route comes back (routeDistanceKm),
+  // format that value instead rather than showing a label computed from a
+  // now-stale number.
+  const distanceLabel =
+    routeDistanceKm === null && job?.distanceLabel
+      ? job.distanceLabel
+      : formatDistance(routeDistanceKm ?? jobDistanceKm);
   const currentWorkerApplicationStatus = job?.applicationStatus || currentWorkerApplication?.status || "";
   const currentWorkerApplicationId = job?.applicationId || currentWorkerApplication?.id || null;
   const hasRejectedHireRequest = currentWorkerApplicationStatus === "Rejected";
   const isAssignedWorker = ["Hired", "Completed"].includes(currentWorkerApplicationStatus);
-  const verificationNavLabel =
-    currentWorker?.verification === "Verified"
-      ? "Verified"
-      : currentWorker?.verification === "Under Review"
-        ? "Under Review"
-        : currentWorker?.verification === "Rejected"
-          ? "Verify Again"
-          : "Get Verified";
+  const verificationNavLabel = getVerificationNavLabel(currentWorker);
   const isCompletionRequested = job?.status === "Waiting for Household Confirmation";
   const isCompletedJob = job?.status === "Completed";
   const canApply = Boolean(job?.canApply);
@@ -75,23 +83,15 @@ export default function WorkerJobDetailView({
     return () => document.body.classList.remove("gawago-mobile-menu-open");
   }, [mobileMenuOpen]);
   useEffect(() => {
-    const handleMobileSidebarClick = (event) => {
-      const sidebarHead = event.target.closest(".worker-sidebar-head");
-      const sidebarAction = event.target.closest(".worker-nav-item, .worker-sidebar-logout");
-      if (!window.matchMedia("(max-width: 767px)").matches) {
-        return;
-      }
-      if (sidebarHead) {
-        sidebarHead.closest(".worker-sidebar")?.classList.toggle("mobile-menu-open");
-        return;
-      }
-      if (sidebarAction) {
-        sidebarAction.closest(".worker-sidebar")?.classList.remove("mobile-menu-open");
+    if (!mobileMenuOpen) return undefined;
+    const closeOnNavigate = (event) => {
+      if (event.target.closest(".worker-nav-item, .worker-sidebar-logout")) {
+        setMobileMenuOpen(false);
       }
     };
-    document.addEventListener("click", handleMobileSidebarClick);
-    return () => document.removeEventListener("click", handleMobileSidebarClick);
-  }, []);
+    document.addEventListener("click", closeOnNavigate);
+    return () => document.removeEventListener("click", closeOnNavigate);
+  }, [mobileMenuOpen]);
   return (
     <div className="app-shell">
       <div className="mobile-sidebar-overlay" onClick={() => setMobileMenuOpen(false)} />
@@ -135,6 +135,16 @@ export default function WorkerJobDetailView({
                   label: "My Applications",
                   count: workerApplicationUnreadCount,
                   onClick: openWorkerApplications,
+                },
+                {
+                  id: "jobs",
+                  label: "My Jobs",
+                  onClick: openWorkerMyJobs,
+                },
+                {
+                  id: "flag",
+                  label: "My Reports",
+                  onClick: openMyComplaints,
                 },
                 {
                   id: "verified",
@@ -197,7 +207,7 @@ export default function WorkerJobDetailView({
                     <div className="profile-card worker-job-info-card">
                       <div className="profile-card-head d-flex justify-content-between align-items-center gap-3">
                         <span>{job.jobTitle || job.serviceType}</span>
-                        <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{job.status || "Open"}</span>
+                        <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{getJobStatusText(job)}</span>
                       </div>
                       <div className="worker-job-info-body">
                         <dl className="worker-job-detail-list">
@@ -208,18 +218,6 @@ export default function WorkerJobDetailView({
                           <div>
                             <dt>Schedule</dt>
                             <dd>{job.scheduleType || "Not set"}</dd>
-                          </div>
-                          <div>
-                            <dt>Date</dt>
-                            <dd>
-                              {job.preferredDate
-                                ? formatDateTime(job.preferredDate, job.preferredTime)
-                                : "Not set"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Time</dt>
-                            <dd>{job.preferredTime ? "Included above" : "Not set"}</dd>
                           </div>
                           {(job.jobStartDate || job.jobEndDate) && (
                             <div>

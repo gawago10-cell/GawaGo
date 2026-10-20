@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/gawago_colors.dart';
 import '../../features/worker/data/worker_models.dart';
 import 'async_state.dart';
 import 'status_card.dart';
@@ -149,7 +150,7 @@ class _Summary extends StatelessWidget {
     return Card(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Color(0xFFD8D0C3)),
+        side: const BorderSide(color: GawaGoColors.border),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -227,7 +228,7 @@ class _Section extends StatelessWidget {
         Text(
           title,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: const Color(0xFF10251A),
+            color: GawaGoColors.ink,
             fontWeight: FontWeight.w900,
             letterSpacing: 0,
           ),

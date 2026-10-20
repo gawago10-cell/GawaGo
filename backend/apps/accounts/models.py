@@ -3,11 +3,43 @@ from django.db import models
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password, check_password
 import secrets
+import uuid
 from datetime import timedelta
+from pathlib import Path
+
+from apps.complaints.storage import PrivateMediaStorage
 
 
 def profile_photo_path(instance, filename):
-    return f"profiles/{instance.user_id}/{filename}"
+    # Random name: the original filename (often the person's own name, e.g.
+    # Juan_Dela_Cruz_selfie.png) must not persist in a public /media/ URL.
+    return f"profiles/{instance.user_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
+
+
+# The model that used this is gone (verification now runs through
+# common.VerificationRequest), but migration 0016 still imports it by path,
+# so removing it would break `migrate` on a fresh database.
+def id_document_path(instance, filename):
+    return f"verification_documents/{instance.user_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
+
+
+def currently_suspended_q(prefix=""):
+    """Matches accounts suspended *right now*, optionally across a relation
+    (e.g. currently_suspended_q("household__profile__")).
+
+    A plain is_blocked=True test would also catch an account whose timed
+    suspension already ran out but hasn't been lazily cleared by
+    refresh_block_status() yet.
+    """
+    return models.Q(**{f"{prefix}is_blocked": True}) & (
+        models.Q(**{f"{prefix}blocked_until__isnull": True})
+        | models.Q(**{f"{prefix}blocked_until__gt": timezone.now()})
+    )
+
+
+class UserProfileQuerySet(models.QuerySet):
+    def not_suspended(self):
+        return self.exclude(currently_suspended_q())
 
 
 class UserProfile(models.Model):
@@ -28,6 +60,8 @@ class UserProfile(models.Model):
         (TIER_TRUSTED, "Trusted"),
         (TIER_ELITE, "Elite"),
     ]
+
+    objects = UserProfileQuerySet.as_manager()
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_WORKER)
@@ -64,9 +98,8 @@ class UserProfile(models.Model):
     # every previously issued JWT -- which carries an iat claim -- can be
     # rejected at once, without needing a per-token revocation entry for each.
     credentials_updated_at = models.DateTimeField(null=True, blank=True)
-    # Admin suspension. Deliberately NOT User.is_active: LoginView reactivates
-    # any inactive account that supplies the right password (kept for legacy
-    # accounts), which would silently undo every block.
+    # Admin suspension. Separate from User.is_active because a block carries a
+    # reason and an optional end date that the user is shown at login.
     is_blocked = models.BooleanField(default=False)
     blocked_at = models.DateTimeField(null=True, blank=True)
     blocked_reason = models.TextField(blank=True, default="")
@@ -90,6 +123,18 @@ class UserProfile(models.Model):
             self.blocked_reason = ""
             self.blocked_until = None
             self.save(update_fields=["is_blocked", "blocked_at", "blocked_reason", "blocked_until"])
+            # The suspension notice promised the account would be restored on
+            # a date, and nothing said when it had been. Imported here because
+            # notifications import accounts.
+            from apps.notifications.services import create_notification
+            from apps.notifications.models import Notification
+
+            create_notification(
+                recipient=self.user,
+                notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+                title="Account restored",
+                message="Your suspension has ended. You can sign in and use GawaGo again.",
+            )
             return False
         return True
 
@@ -174,58 +219,35 @@ class SignupVerificationRequest(models.Model):
     expires_at = models.DateTimeField()
     verified_at = models.DateTimeField(null=True, blank=True)
 
+    @property
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
 
-class VerificationDocument(models.Model):
-    ID_TYPE_NATIONAL = "national_id"
-    ID_TYPE_PASSPORT = "passport"
-    ID_TYPE_DRIVERS = "drivers_license"
-    ID_TYPE_VOTER = "voter_id"
-    ID_TYPE_TIN = "tin"
-    ID_TYPE_UMID = "umid"
-    ID_TYPE_POSTAL = "postal_id"
-    ID_TYPE_OTHER = "other"
+    @classmethod
+    def create_request(cls, user: User, token: str, ttl_minutes: int = 10) -> "SignupVerificationRequest":
+        return cls.objects.create(
+            user=user,
+            email=user.email,
+            token_hash=make_password(token),
+            expires_at=timezone.now() + timedelta(minutes=ttl_minutes),
+        )
 
-    ID_TYPE_CHOICES = [
-        (ID_TYPE_NATIONAL, "National ID (UMID/GSIS/SSS)"),
-        (ID_TYPE_PASSPORT, "Passport"),
-        (ID_TYPE_DRIVERS, "Driver's License"),
-        (ID_TYPE_VOTER, "Voter ID"),
-        (ID_TYPE_TIN, "TIN ID"),
-        (ID_TYPE_UMID, "UMID"),
-        (ID_TYPE_POSTAL, "Postal ID"),
-        (ID_TYPE_OTHER, "Other Government ID"),
-    ]
-
-    STATUS_PENDING = "pending"
-    STATUS_APPROVED = "approved"
-    STATUS_REJECTED = "rejected"
-    STATUS_CHOICES = [
-        (STATUS_PENDING, "Pending Review"),
-        (STATUS_APPROVED, "Approved"),
-        (STATUS_REJECTED, "Rejected"),
-    ]
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="verification_documents")
-    id_type = models.CharField(max_length=50, choices=ID_TYPE_CHOICES, default=ID_TYPE_NATIONAL)
-    id_number = models.CharField(max_length=255, blank=True, default="")
-    document_file = models.FileField(upload_to="verification_documents/%Y/%m/%d/")
-    is_primary = models.BooleanField(default=True)
-    verification_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
-    verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="verified_documents")
-    verification_notes = models.TextField(blank=True, default="")
-    verified_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def __str__(self) -> str:
-        return f"{self.user.username} - {self.get_id_type_display()}"
+    def verify_token(self, token: str) -> bool:
+        if self.is_expired or self.verified_at is not None:
+            return False
+        return check_password(token, self.token_hash)
 
 
 def portfolio_item_path(instance, filename):
-    return f"portfolios/{instance.worker_id}/{filename}"
+    return f"portfolios/{instance.worker_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
+
+
+def certificate_file_path(instance, filename):
+    # Credential files (TESDA certs, licenses) often carry the worker's full
+    # legal name and ID numbers, so unlike a work-sample photo these live in
+    # PRIVATE_MEDIA_ROOT and are only ever returned by a permission-checked
+    # view (WorkerCertificationFileView), never a public /media/ URL.
+    return f"certifications/{instance.worker_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
 
 
 class WorkerPortfolio(models.Model):
@@ -248,7 +270,9 @@ class WorkerSkill(models.Model):
 
     worker = models.ForeignKey(User, on_delete=models.CASCADE, related_name="portfolio_skills")
     skill_name = models.CharField(max_length=120)
-    proficiency = models.CharField(max_length=20, choices=PROFICIENCY_CHOICES, default="beginner")
+    # Blank when the entry was created from the profile's skill list rather
+    # than by the worker on their portfolio: no proficiency was ever claimed.
+    proficiency = models.CharField(max_length=20, choices=PROFICIENCY_CHOICES, default="beginner", blank=True)
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, null=True, blank=True)
     rating_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -291,7 +315,9 @@ class WorkerCertification(models.Model):
     issuer = models.CharField(max_length=255, blank=True, default="")
     issue_date = models.DateField(null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
-    certificate_file = models.FileField(upload_to=portfolio_item_path, blank=True, null=True)
+    certificate_file = models.FileField(
+        upload_to=certificate_file_path, storage=PrivateMediaStorage(), blank=True, null=True
+    )
     is_verified = models.BooleanField(default=False)
     verification_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="verified_certifications")
@@ -338,21 +364,3 @@ class SkillRating(models.Model):
 
     def __str__(self) -> str:
         return f"{self.household.username} rated {self.worker.username} - {self.skill.skill_name}: {self.rating}"
-
-    @property
-    def is_expired(self) -> bool:
-        return timezone.now() >= self.expires_at
-
-    @classmethod
-    def create_request(cls, user: User, token: str, ttl_minutes: int = 10) -> "SignupVerificationRequest":
-        return cls.objects.create(
-            user=user,
-            email=user.email,
-            token_hash=make_password(token),
-            expires_at=timezone.now() + timedelta(minutes=ttl_minutes),
-        )
-
-    def verify_token(self, token: str) -> bool:
-        if self.is_expired or self.verified_at is not None:
-            return False
-        return check_password(token, self.token_hash)

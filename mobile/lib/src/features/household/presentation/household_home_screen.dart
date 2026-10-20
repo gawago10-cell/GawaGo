@@ -8,6 +8,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../core/api/gawago_api.dart';
 import '../../../core/errors/api_error.dart';
 import '../../../core/storage/session_storage.dart';
 import '../../../core/theme/gawago_colors.dart';
@@ -16,24 +17,31 @@ import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
+import '../../../shared/widgets/list_map_view_toggle.dart';
 import '../../../shared/widgets/location_route_map.dart';
 import '../../../shared/widgets/notification_badge.dart';
 import '../../../shared/widgets/my_complaints_view.dart';
 import '../../../shared/widgets/persistent_action_bar.dart';
+import '../../../shared/widgets/ai_match_breakdown.dart';
+import '../../../shared/widgets/authenticated_image.dart';
 import '../../../shared/widgets/profile_section.dart';
 import '../../../shared/widgets/rate_review_dialog.dart';
+import '../../../shared/widgets/rate_skills_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
 import '../../../shared/widgets/status_card.dart';
 import '../../../shared/widgets/worker_cards.dart';
+import '../../chat/presentation/conversations_view.dart';
 import '../../worker/data/worker_models.dart';
 import '../data/household_models.dart';
 import '../data/household_repository.dart';
+import 'household_workers_map.dart';
 
 enum _Page {
   dashboard,
   postJob,
   jobs,
+  messages,
   myReports,
   profile,
   reviews,
@@ -55,11 +63,22 @@ class HouseholdHomeScreen extends StatefulWidget {
   State<HouseholdHomeScreen> createState() => _HouseholdHomeScreenState();
 }
 
-class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
+class _HouseholdHomeScreenState extends State<HouseholdHomeScreen>
+    with WidgetsBindingObserver {
+  // Read-only pages that are safe to rebuild when something new arrives;
+  // forms (Post a Job, Profile, Verification) are never reset under the user.
+  static const _livePages = {
+    _Page.dashboard,
+    _Page.jobs,
+    _Page.myReports,
+    _Page.notifications,
+  };
+  static const _pollInterval = Duration(seconds: 20);
   static const _primaryPages = [
     _Page.dashboard,
     _Page.postJob,
     _Page.jobs,
+    _Page.messages,
     _Page.myReports,
     _Page.notifications,
   ];
@@ -71,18 +90,83 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
   _Page _page = _Page.dashboard;
   final Set<_Page> _visitedPages = {_Page.dashboard};
   late Future<int> _unreadCount;
-  int _refresh = 0;
+  String? _verificationStatus;
+  String? _verificationRequestStatus;
+  Timer? _pollTimer;
+  int? _lastUnread;
+  final Map<_Page, int> _pageRefresh = {};
 
   @override
   void initState() {
     super.initState();
     _unreadCount = _loadUnreadCount();
+    _unreadCount.then((count) => _lastUnread = count, onError: (_) => null);
+    _loadVerificationStatus();
+    WidgetsBinding.instance.addObserver(this);
+    _startPolling();
   }
 
-  Future<int> _loadUnreadCount() async {
-    final notifications = await _repository.getNotifications();
-    return notifications.where((item) => !item.isRead).length;
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    super.dispose();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _poll();
+      _startPolling();
+    } else if (state == AppLifecycleState.paused) {
+      _pollTimer?.cancel();
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_pollInterval, (_) => _poll());
+  }
+
+  /// Keeps the app current with changes made elsewhere (e.g. on the website):
+  /// the badge always updates, and the page on screen reloads when a new
+  /// notification signals that its data changed.
+  Future<void> _poll() async {
+    final int count;
+    try {
+      count = await _loadUnreadCount();
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final changed = _lastUnread != null && count > _lastUnread!;
+    _lastUnread = count;
+    setState(() {
+      _unreadCount = Future.value(count);
+      if (changed && _livePages.contains(_page)) {
+        _pageRefresh[_page] = (_pageRefresh[_page] ?? 0) + 1;
+      }
+    });
+  }
+
+  Future<void> _loadVerificationStatus() async {
+    try {
+      final profile = await _repository.getProfile();
+      if (!mounted) return;
+      setState(() {
+        _verificationStatus = profile.verificationStatus;
+        _verificationRequestStatus = profile.verificationRequestStatus;
+      });
+    } catch (_) {
+      // Keep the generic "Get Verified" label; the page itself shows status.
+    }
+  }
+
+  String _navLabel(_Page page) => page == _Page.verification
+      ? verificationNavLabel(_verificationStatus, _verificationRequestStatus)
+      : _title(page);
+
+  Future<int> _loadUnreadCount() => _repository.getUnreadNotificationCount();
 
   void _refreshUnreadCount() {
     setState(() {
@@ -91,6 +175,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
   }
 
   Future<void> _logout() async {
+    await GawaGoApi.logout();
     await SessionStorage.clear();
     widget.onLogout();
   }
@@ -102,11 +187,21 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
     });
   }
 
-  void _changed() {
+  // Bumps only the affected page's own key instead of a global counter that
+  // used to rekey every visited page in the IndexedStack -- including ones
+  // with their own unsaved local state (a Post Job draft, Find Jobs
+  // filters), wiping them on any unrelated action anywhere in the app
+  // (F-11). Defaults to whichever page is on screen, since _changed is
+  // always called as a direct result of something the user just did there;
+  // callers acting from outside the IndexedStack (a pushed detail route)
+  // pass the page that actually needs to refresh.
+  void _changed({_Page? page}) {
+    final target = page ?? _page;
     setState(() {
-      _refresh++;
+      _pageRefresh[target] = (_pageRefresh[target] ?? 0) + 1;
       _unreadCount = _loadUnreadCount();
     });
+    _loadVerificationStatus();
   }
 
   @override
@@ -130,7 +225,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
             .map(
               (page) => GawaGoDrawerDestination(
                 icon: _icon(page),
-                label: _title(page),
+                label: _navLabel(page),
                 selected: page == _page,
                 onTap: () => _select(page),
               ),
@@ -193,7 +288,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
             for (final page in _Page.values)
               _visitedPages.contains(page)
                   ? KeyedSubtree(
-                      key: ValueKey('${page.name}-$_refresh'),
+                      key: ValueKey('${page.name}-${_pageRefresh[page] ?? 0}'),
                       child: _buildPage(page),
                     )
                   : const SizedBox.shrink(),
@@ -213,12 +308,14 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
         repository: _repository,
         onCancel: () => _select(_Page.dashboard),
         onCreated: _openJobMatches,
+        onNetworkUncertainty: () => _select(_Page.jobs),
       ),
       _Page.jobs => _MyJobs(
         repository: _repository,
         onChanged: _changed,
         onPostNew: () => _select(_Page.postJob),
       ),
+      _Page.messages => const ConversationsView(role: 'household'),
       _Page.myReports => _HouseholdMyReports(repository: _repository),
       _Page.profile => _Profile(repository: _repository, onSaved: _changed),
       _Page.reviews => ReviewHistory(
@@ -244,8 +341,11 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
   Future<void> _openJob(int id) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            _JobDetail(repository: _repository, jobId: id, onChanged: _changed),
+        builder: (_) => _JobDetail(
+          repository: _repository,
+          jobId: id,
+          onChanged: () => _changed(page: _Page.jobs),
+        ),
       ),
     );
   }
@@ -254,7 +354,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen> {
   /// on My Jobs first buried the recommendations three taps deep, which is
   /// exactly when they are most useful.
   Future<void> _openJobMatches(HouseholdJob job) async {
-    _changed();
+    _changed(page: _Page.jobs);
     setState(() {
       _page = _Page.jobs;
       _visitedPages.add(_Page.jobs);
@@ -337,39 +437,55 @@ class _DashboardState extends State<_Dashboard> {
     _reload();
   }
 
+  final Set<int> _jobsInFlight = {};
+
   Future<void> _confirmCompletion(HouseholdJob job) async {
-    final confirmed = await _confirmDialog(
-      context,
-      title: 'Confirm this job as completed?',
-      message: "This can't be undone.",
-    );
-    if (!confirmed) return;
+    // Claimed before the dialog: a second tap lands before the first
+    // dialog covers the button and would open (and send) a second one.
+    if (!_jobsInFlight.add(job.id)) return;
     try {
-      await widget.repository.updateJobStatus(job.id, 'completed');
-      _reload();
-    } catch (error) {
-      _showError(error);
+      final confirmed = await _confirmDialog(
+        context,
+        title: 'Confirm this job as completed?',
+        message: "This can't be undone.",
+      );
+      if (!confirmed) return;
+      try {
+        await widget.repository.updateJobStatus(job.id, 'completed');
+        _reload();
+      } catch (error) {
+        _showError(error);
+      }
+    } finally {
+      _jobsInFlight.remove(job.id);
     }
   }
 
   Future<void> _cancelJob(HouseholdJob job) async {
-    final confirmed = await _confirmDialog(
-      context,
-      title: 'Cancel this job?',
-      message: "This can't be undone.",
-      destructive: true,
-    );
-    if (!confirmed) return;
+    // Claimed before the dialog: a second tap lands before the first
+    // dialog covers the button and would open (and send) a second one.
+    if (!_jobsInFlight.add(job.id)) return;
     try {
-      await widget.repository.updateJobStatus(job.id, 'cancelled');
-      _reload();
-    } catch (error) {
-      _showError(error);
+      final confirmed = await _confirmDialog(
+        context,
+        title: 'Cancel this job?',
+        message: "This can't be undone.",
+        destructive: true,
+      );
+      if (!confirmed) return;
+      try {
+        await widget.repository.updateJobStatus(job.id, 'cancelled');
+        _reload();
+      } catch (error) {
+        _showError(error);
+      }
+    } finally {
+      _jobsInFlight.remove(job.id);
     }
   }
 
   Future<void> _rateWorker(HouseholdJob job) async {
-    final worker = _selectedWorker(job);
+    final worker = _workerToReview(job);
     if (worker == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No worker is assigned to this job yet.')),
@@ -402,6 +518,9 @@ class _DashboardState extends State<_Dashboard> {
           ),
     );
     if (submitted) {
+      if (mounted) {
+        await _offerSkillRatings(context, widget.repository, job, worker);
+      }
       _reload();
       if (mounted) {
         ScaffoldMessenger.of(
@@ -518,14 +637,15 @@ class _DashboardState extends State<_Dashboard> {
                   label: const Text('Post a New Job'),
                   style: FilledButton.styleFrom(
                     backgroundColor: GawaGoColors.primary,
-                    foregroundColor: Colors.white,
+                    foregroundColor: GawaGoColors.onPrimary,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
                     textStyle: const TextStyle(
+                      fontFamily: GawaGoColors.fontBody,
                       fontSize: 15,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -534,7 +654,7 @@ class _DashboardState extends State<_Dashboard> {
               Text(
                 'IN PROCESS · ${inProcessJobs.length}',
                 style: const TextStyle(
-                  color: Color(0xFF7C8A7F),
+                  color: GawaGoColors.textMuted,
                   fontSize: 12,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.6,
@@ -563,7 +683,7 @@ class _DashboardState extends State<_Dashboard> {
                 Text(
                   'COMPLETED · ${pendingReviewJobs.length}',
                   style: const TextStyle(
-                    color: Color(0xFF7C8A7F),
+                    color: GawaGoColors.textMuted,
                     fontSize: 12,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0.6,
@@ -608,7 +728,7 @@ Future<bool> _confirmDialog(
         FilledButton(
           onPressed: () => Navigator.of(dialogContext).pop(true),
           style: destructive
-              ? FilledButton.styleFrom(backgroundColor: const Color(0xFFB3413A))
+              ? FilledButton.styleFrom(backgroundColor: GawaGoColors.danger)
               : null,
           child: const Text('Confirm'),
         ),
@@ -625,30 +745,13 @@ class _HouseholdWelcomeBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 74),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      alignment: Alignment.centerLeft,
-      decoration: BoxDecoration(
-        color: GawaGoColors.cardGreen,
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x1F092F20),
-            blurRadius: 24,
-            offset: Offset(0, 12),
-          ),
-        ],
-      ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
       child: Text(
         'Welcome, ${profile.fullName}',
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-          color: Colors.white,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0,
-        ),
+        style: gawagoHeading(fontSize: 26, height: 1.2),
       ),
     );
   }
@@ -709,26 +812,29 @@ class _InProcessJobCard extends StatelessWidget {
 
     final (Color bg, Color fg, IconData icon) = switch (tone) {
       _ProcessTone.review => (
-        const Color(0xFFE8F5E9),
         GawaGoColors.primary,
+        GawaGoColors.onPrimary,
         Icons.check_circle_outline,
       ),
       _ProcessTone.assigned => (
-        const Color(0xFFFDEFDC),
-        const Color(0xFFC07C12),
+        const Color(0x479EBF5E),
+        GawaGoColors.leafDeep,
         Icons.access_time_rounded,
       ),
       _ProcessTone.applicants => (
-        const Color(0xFFF1E9FB),
-        const Color(0xFF6A3FA0),
+        const Color(0x2E9EBF5E),
+        GawaGoColors.leafDeep,
         Icons.groups_outlined,
       ),
       _ProcessTone.open => (
-        const Color(0xFFE8F0FB),
-        const Color(0xFF2F6BB0),
+        const Color(0x2E9EBF5E),
+        GawaGoColors.leafDeep,
         Icons.search_rounded,
       ),
     };
+    final dotColor = tone == _ProcessTone.assigned
+        ? GawaGoColors.leafDeep
+        : GawaGoColors.primary;
 
     final statusLabel = needsConfirmation
         ? 'Marked done — confirm to finish'
@@ -747,16 +853,15 @@ class _InProcessJobCard extends StatelessWidget {
         'verified';
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        color: GawaGoColors.surface,
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: needsConfirmation
-              ? GawaGoColors.primary
-              : const Color(0xFFD8D0C3),
-          width: needsConfirmation ? 1.6 : 1.2,
+          color: needsConfirmation ? GawaGoColors.primary : GawaGoColors.line,
+          width: needsConfirmation ? 1.6 : 1,
         ),
+        boxShadow: gawagoCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -779,14 +884,7 @@ class _InProcessJobCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      job.title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                        color: GawaGoColors.ink,
-                      ),
-                    ),
+                    Text(job.title, style: gawagoHeading(fontSize: 16)),
                     const SizedBox(height: 3),
                     Row(
                       children: [
@@ -794,7 +892,7 @@ class _InProcessJobCard extends StatelessWidget {
                           width: 7,
                           height: 7,
                           decoration: BoxDecoration(
-                            color: fg,
+                            color: dotColor,
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -823,12 +921,12 @@ class _InProcessJobCard extends StatelessWidget {
                 radius: 15,
                 backgroundColor: assignedApp != null
                     ? GawaGoColors.primary
-                    : const Color(0xFFF3F0E8),
+                    : GawaGoColors.surfaceMuted,
                 child: assignedApp != null
                     ? Text(
                         _initial(workerName),
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: GawaGoColors.onPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 12,
                         ),
@@ -836,7 +934,7 @@ class _InProcessJobCard extends StatelessWidget {
                     : const Icon(
                         Icons.question_mark,
                         size: 14,
-                        color: Color(0xFF9A9384),
+                        color: GawaGoColors.textFaint,
                       ),
               ),
               const SizedBox(width: 10),
@@ -851,7 +949,7 @@ class _InProcessJobCard extends StatelessWidget {
                         fontSize: 13.5,
                         color: assignedApp != null
                             ? GawaGoColors.ink
-                            : const Color(0xFF7C7C72),
+                            : GawaGoColors.textFaint,
                       ),
                     ),
                     if (assignedApp != null)
@@ -876,8 +974,8 @@ class _InProcessJobCard extends StatelessWidget {
                   : _barangay(job),
               if ((job.jobStartDate ?? '').isNotEmpty)
                 job.jobEndDate != null && job.jobEndDate!.isNotEmpty
-                    ? '${job.jobStartDate} to ${job.jobEndDate}'
-                    : job.jobStartDate!,
+                    ? '${formatJobDate(job.jobStartDate)} to ${formatJobDate(job.jobEndDate)}'
+                    : formatJobDate(job.jobStartDate),
             ].join(' · '),
             style: const TextStyle(
               fontSize: 12.5,
@@ -892,7 +990,7 @@ class _InProcessJobCard extends StatelessWidget {
                 onPressed: onConfirmCompletion,
                 style: FilledButton.styleFrom(
                   backgroundColor: GawaGoColors.primary,
-                  foregroundColor: Colors.white,
+                  foregroundColor: GawaGoColors.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -906,7 +1004,7 @@ class _InProcessJobCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFFF7F4EC),
+                color: GawaGoColors.leafTint,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
@@ -936,8 +1034,11 @@ class _InProcessJobCard extends StatelessWidget {
                       : 'Browse Workers',
                 ),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: GawaGoColors.ink,
-                  side: const BorderSide(color: GawaGoColors.ink, width: 1.4),
+                  foregroundColor: GawaGoColors.leafDeep,
+                  side: const BorderSide(
+                    color: GawaGoColors.primary,
+                    width: 1.5,
+                  ),
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -951,7 +1052,7 @@ class _InProcessJobCard extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF7F4EC),
+                  color: GawaGoColors.leafTint,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
@@ -970,7 +1071,7 @@ class _InProcessJobCard extends StatelessWidget {
               child: TextButton(
                 onPressed: onCancel,
                 style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFB3413A),
+                  foregroundColor: GawaGoColors.danger,
                   padding: EdgeInsets.zero,
                 ),
                 child: const Text(
@@ -1008,9 +1109,9 @@ class _PendingReviewJobCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+        border: Border.all(color: GawaGoColors.border, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1023,13 +1124,13 @@ class _PendingReviewJobCard extends StatelessWidget {
                 height: 34,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
+                  color: GawaGoColors.leafTint,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
                   Icons.check_circle_outline,
                   size: 18,
-                  color: GawaGoColors.primary,
+                  color: GawaGoColors.leafDeep,
                 ),
               ),
               const SizedBox(width: 10),
@@ -1037,14 +1138,7 @@ class _PendingReviewJobCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      job.title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                        color: GawaGoColors.ink,
-                      ),
-                    ),
+                    Text(job.title, style: gawagoHeading(fontSize: 16)),
                     const SizedBox(height: 3),
                     Row(
                       children: [
@@ -1079,13 +1173,13 @@ class _PendingReviewJobCard extends StatelessWidget {
                 radius: 15,
                 backgroundColor: assignedApp != null
                     ? GawaGoColors.primary
-                    : const Color(0xFFF3F0E8),
+                    : GawaGoColors.surfaceMuted,
                 child: Text(
                   assignedApp != null ? _initial(workerName) : '?',
                   style: TextStyle(
                     color: assignedApp != null
-                        ? Colors.white
-                        : const Color(0xFF9A9384),
+                        ? GawaGoColors.onPrimary
+                        : GawaGoColors.textFaint,
                     fontWeight: FontWeight.w800,
                     fontSize: 12,
                   ),
@@ -1124,8 +1218,8 @@ class _PendingReviewJobCard extends StatelessWidget {
                   icon: const Icon(Icons.star_rounded, size: 16),
                   label: const Text('Rate & Review'),
                   style: FilledButton.styleFrom(
-                    backgroundColor: GawaGoColors.deepGreen,
-                    foregroundColor: Colors.white,
+                    backgroundColor: GawaGoColors.primary,
+                    foregroundColor: GawaGoColors.onPrimary,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -1139,7 +1233,7 @@ class _PendingReviewJobCard extends StatelessWidget {
                 icon: const Icon(Icons.flag_outlined, size: 16),
                 label: const Text('Report'),
                 style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFB3413A),
+                  foregroundColor: GawaGoColors.danger,
                 ),
               ),
             ],
@@ -1158,10 +1252,10 @@ class _JobStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (status) {
-      'completed' => GawaGoColors.primary,
-      'cancelled' => const Color(0xFFE24A4A),
-      'assigned' || 'completion_requested' => const Color(0xFF0A78A8),
-      _ => const Color(0xFF25853E),
+      'completed' => GawaGoColors.leafDeep,
+      'cancelled' => GawaGoColors.textMuted,
+      'assigned' || 'completion_requested' => GawaGoColors.leafDeep,
+      _ => GawaGoColors.leafDeep,
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
@@ -1246,7 +1340,7 @@ String _streetFromLocation(String value) {
 }
 
 String _rateLabel(HouseholdJob job) =>
-    'PHP ${job.serviceRate.toStringAsFixed(2)} / Per Day';
+    'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}';
 
 String _normalizedJobStatus(String status) => status
     .trim()
@@ -1261,6 +1355,16 @@ String _normalizedJobStatus(String status) => status
 bool _isInProgressDashboardJob(HouseholdJob job) {
   final status = _normalizedJobStatus(job.status);
   return status != 'completed' && status != 'cancelled';
+}
+
+/// The worker a Rate/Review action is for: on a job with several hired
+/// workers, the first one this household hasn't reviewed yet -- always taking
+/// the first hired worker left the others unreviewable.
+HouseholdApplication? _workerToReview(HouseholdJob job) {
+  for (final application in job.applications) {
+    if (application.householdCanReview) return application;
+  }
+  return _selectedWorker(job);
 }
 
 HouseholdApplication? _selectedWorker(HouseholdJob job) {
@@ -1303,19 +1407,23 @@ class _PostJob extends StatefulWidget {
     required this.repository,
     required this.onCreated,
     required this.onCancel,
+    this.onNetworkUncertainty,
   });
 
   final HouseholdRepository repository;
   final ValueChanged<HouseholdJob> onCreated;
   final VoidCallback onCancel;
 
+  /// Called when the connection dropped before the server confirmed, so the
+  /// job may or may not exist and the household should go and look.
+  final VoidCallback? onNetworkUncertainty;
+
   @override
   State<_PostJob> createState() => _PostJobState();
 }
 
 class _PostJobState extends State<_PostJob> {
-  late final Future<HouseholdProfile> _profileFuture = widget.repository
-      .getProfile();
+  late Future<HouseholdProfile> _profileFuture = widget.repository.getProfile();
   final _title = TextEditingController();
   final _description = TextEditingController();
   final _location = TextEditingController();
@@ -1336,8 +1444,6 @@ class _PostJobState extends State<_PostJob> {
     '10km': 10.0,
     'unlimited': 999999,
   };
-  DateTime? _date;
-  TimeOfDay? _time;
   DateTime? _startDate;
   DateTime? _endDate;
   LatLng? _pin;
@@ -1350,6 +1456,25 @@ class _PostJobState extends State<_PostJob> {
   static const int _maxJobImages = 5;
   static const int _maxJobImageBytes = 5 * 1024 * 1024;
 
+  /// Clears everything that describes one job. The location and pin are
+  /// the household's own address, so they stay for the next posting.
+  void _resetJobFields() {
+    setState(() {
+      _title.clear();
+      _description.clear();
+      _rate.clear();
+      _slots.text = '1';
+      _workingDays.clear();
+      _skill = null;
+      _scheduleType = 'One-Time';
+      _rateType = 'Per Day';
+      _geographicBoundary = '1km';
+      _startDate = null;
+      _endDate = null;
+      _imagePaths.clear();
+    });
+  }
+
   Future<void> _pickImages() async {
     const group = XTypeGroup(
       label: 'Job reference images',
@@ -1361,12 +1486,15 @@ class _PostJobState extends State<_PostJob> {
     final oversized = <String>[];
     final accepted = <String>[];
     for (final file in files) {
-      if (await File(file.path).length() > _maxJobImageBytes) {
+      // XFile.length() also works in the web build, where dart:io File
+      // throws.
+      if (await file.length() > _maxJobImageBytes) {
         oversized.add(file.name);
       } else {
         accepted.add(file.path);
       }
     }
+    if (!mounted) return;
 
     final combined = {..._imagePaths, ...accepted}.toList();
     final overflow = combined.length - _maxJobImages;
@@ -1409,11 +1537,11 @@ class _PostJobState extends State<_PostJob> {
   }
 
   Future<void> _submit() async {
+    if (_posting) return;
     if (_title.text.trim().isEmpty ||
         _skill == null ||
         _barangay == null ||
-        _date == null ||
-        _time == null ||
+        _startDate == null ||
         _location.text.trim().isEmpty ||
         _pin == null ||
         (double.tryParse(_rate.text) ?? 0) <= 0) {
@@ -1422,9 +1550,35 @@ class _PostJobState extends State<_PostJob> {
     }
     if (_startDate != null &&
         _endDate != null &&
-        !_endDate!.isAfter(_startDate!)) {
-      _message('Job end date must be after the job start date.');
+        _endDate!.isBefore(_startDate!)) {
+      _message('Job end date must be on or after the job start date.');
       return;
+    }
+    // A one-day job ends on the day it starts, so only check that the day
+    // count fits the schedule -- this mirrors the backend's rule.
+    if (_startDate != null && _endDate != null) {
+      final span = _endDate!.difference(_startDate!).inDays + 1;
+      final workingDays = int.tryParse(_workingDays.text.trim());
+      if (workingDays != null && workingDays > span) {
+        _message(
+          'That is more working days than the $span-day schedule allows.',
+        );
+        return;
+      }
+    }
+    final slots = int.tryParse(_slots.text.trim());
+    if (_slots.text.trim().isNotEmpty &&
+        (slots == null || slots < 1 || slots > 50)) {
+      _message('Workers needed must be a number between 1 and 50.');
+      return;
+    }
+    final workingDaysText = _workingDays.text.trim();
+    if (workingDaysText.isNotEmpty) {
+      final parsed = int.tryParse(workingDaysText);
+      if (parsed == null || parsed < 1 || parsed > 366) {
+        _message('Estimated working days must be a number between 1 and 366.');
+        return;
+      }
     }
     setState(() => _posting = true);
     try {
@@ -1434,11 +1588,12 @@ class _PostJobState extends State<_PostJob> {
         'job_type': _skill,
         'required_skill': _skill,
         'schedule_type': _scheduleType,
-        'preferred_date': _date!.toIso8601String().split('T').first,
-        'preferred_time': _clock(_time!),
-        'description': _description.text.trim().isEmpty
-            ? 'Rate type: $_rateType'
-            : '${_description.text.trim()}\n\nRate type: $_rateType',
+        'description': _description.text.trim(),
+        'rate_type': switch (_rateType) {
+          'Per Hour' => 'per_hour',
+          'Fixed Rate' => 'fixed',
+          _ => 'per_day',
+        },
         'location_label': locationLabel,
         'latitude': _coordinateForApi(_pin!.latitude),
         'longitude': _coordinateForApi(_pin!.longitude),
@@ -1457,7 +1612,25 @@ class _PostJobState extends State<_PostJob> {
         'max_distance_km':
             _geographicBoundaryDistanceKm[_geographicBoundary] ?? 1.0,
       }, imagePaths: _imagePaths);
+      // This page stays alive in the IndexedStack, so without a reset coming
+      // back to it showed the last job filled in, one tap from a duplicate.
+      if (mounted) _resetJobFields();
       widget.onCreated(created);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      if (error.type == ApiErrorType.network) {
+        // A timeout does not mean the job was not created: the server may
+        // have finished after the client gave up, and posting again would
+        // create a duplicate. Send the household to their job list to check
+        // rather than inviting a second submission.
+        _message(
+          'We lost the connection before confirming. Check My Jobs -- the '
+          'job may already have been posted.',
+        );
+        widget.onNetworkUncertainty?.call();
+      } else {
+        _message(friendlyApiError(error));
+      }
     } catch (error) {
       if (mounted) _message(friendlyApiError(error));
     } finally {
@@ -1477,7 +1650,11 @@ class _PostJobState extends State<_PostJob> {
         if (snapshot.hasError) {
           return AppErrorState(
             error: snapshot.error,
-            onRetry: () => (context as Element).markNeedsBuild(),
+            // markNeedsBuild() alone just rebuilt against the same already-
+            // failed Future -- it never actually retried the request (F-25).
+            onRetry: () => setState(() {
+              _profileFuture = widget.repository.getProfile();
+            }),
           );
         }
         if (!snapshot.hasData) return const AppLoadingState();
@@ -1502,7 +1679,10 @@ class _PostJobState extends State<_PostJob> {
                     Text(
                       'Submit your verification documents from the Get '
                       'Verified menu, then come back here once approved.',
-                      style: TextStyle(color: Color(0xFF5F687A), fontSize: 13),
+                      style: TextStyle(
+                        color: GawaGoColors.textMuted,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
@@ -1549,9 +1729,10 @@ class _PostJobState extends State<_PostJob> {
                   const Text(
                     'Post a New Job',
                     style: TextStyle(
+                      fontFamily: GawaGoColors.fontHeading,
                       color: GawaGoColors.ink,
                       fontSize: 23,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
                   ),
@@ -1571,12 +1752,6 @@ class _PostJobState extends State<_PostJob> {
                         barangay: _barangay,
                         rateType: _rateType,
                         geographicBoundary: _geographicBoundary,
-                        dateLabel: _date == null
-                            ? 'mm/dd/yyyy'
-                            : '${_date!.month.toString().padLeft(2, '0')}/${_date!.day.toString().padLeft(2, '0')}/${_date!.year}',
-                        timeLabel: _time == null
-                            ? '--:-- --'
-                            : _time!.format(context),
                         startDateLabel: _startDate == null
                             ? 'mm/dd/yyyy'
                             : '${_startDate!.month.toString().padLeft(2, '0')}/${_startDate!.day.toString().padLeft(2, '0')}/${_startDate!.year}',
@@ -1596,23 +1771,6 @@ class _PostJobState extends State<_PostJob> {
                           () => _geographicBoundary =
                               value ?? _geographicBoundary,
                         ),
-                        onPickDate: () async {
-                          final value = await showDatePicker(
-                            context: context,
-                            firstDate: DateTime.now(),
-                            lastDate: DateTime.now().add(
-                              const Duration(days: 730),
-                            ),
-                          );
-                          if (value != null) setState(() => _date = value);
-                        },
-                        onPickTime: () async {
-                          final value = await showTimePicker(
-                            context: context,
-                            initialTime: TimeOfDay.now(),
-                          );
-                          if (value != null) setState(() => _time = value);
-                        },
                         onPickStartDate: () async {
                           final value = await showDatePicker(
                             context: context,
@@ -1670,8 +1828,8 @@ class _PostJobState extends State<_PostJob> {
                       FilledButton(
                         onPressed: _posting ? null : _submit,
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF74),
-                          foregroundColor: Colors.white,
+                          backgroundColor: GawaGoColors.primary,
+                          foregroundColor: GawaGoColors.onPrimary,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 24,
                             vertical: 15,
@@ -1685,8 +1843,8 @@ class _PostJobState extends State<_PostJob> {
                       OutlinedButton(
                         onPressed: _posting ? null : widget.onCancel,
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF355444),
-                          side: const BorderSide(color: Color(0xFFD8D0C3)),
+                          foregroundColor: GawaGoColors.ink,
+                          side: const BorderSide(color: GawaGoColors.border),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 26,
                             vertical: 15,
@@ -1719,9 +1877,9 @@ class _PostJobShell extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: child,
     );
@@ -1741,8 +1899,6 @@ class _PostJobFields extends StatelessWidget {
     required this.barangay,
     required this.rateType,
     required this.geographicBoundary,
-    required this.dateLabel,
-    required this.timeLabel,
     required this.startDateLabel,
     required this.endDateLabel,
     required this.onServiceChanged,
@@ -1750,8 +1906,6 @@ class _PostJobFields extends StatelessWidget {
     required this.onBarangayChanged,
     required this.onRateTypeChanged,
     required this.onGeographicBoundaryChanged,
-    required this.onPickDate,
-    required this.onPickTime,
     required this.onPickStartDate,
     required this.onPickEndDate,
   });
@@ -1767,8 +1921,6 @@ class _PostJobFields extends StatelessWidget {
   final String? barangay;
   final String rateType;
   final String geographicBoundary;
-  final String dateLabel;
-  final String timeLabel;
   final String startDateLabel;
   final String endDateLabel;
   final ValueChanged<String?> onServiceChanged;
@@ -1776,8 +1928,6 @@ class _PostJobFields extends StatelessWidget {
   final ValueChanged<String?> onBarangayChanged;
   final ValueChanged<String?> onRateTypeChanged;
   final ValueChanged<String?> onGeographicBoundaryChanged;
-  final VoidCallback onPickDate;
-  final VoidCallback onPickTime;
   final VoidCallback onPickStartDate;
   final VoidCallback onPickEndDate;
 
@@ -1803,20 +1953,6 @@ class _PostJobFields extends StatelessWidget {
             value: scheduleType,
             items: const ['One-Time', 'Recurring'],
             onChanged: onScheduleChanged,
-          ),
-        ),
-        _PostJobTwoColumn(
-          left: _PostJobPickerField(
-            label: 'Preferred Date',
-            value: dateLabel,
-            icon: Icons.calendar_today_outlined,
-            onTap: onPickDate,
-          ),
-          right: _PostJobPickerField(
-            label: 'Preferred Time',
-            value: timeLabel,
-            icon: Icons.schedule,
-            onTap: onPickTime,
           ),
         ),
         _PostJobInput(
@@ -1859,7 +1995,7 @@ class _PostJobFields extends StatelessWidget {
             child: _PostJobDropdown(
               label: 'Rate Type',
               value: rateType,
-              items: const ['Per Day', 'Per Hour'],
+              items: const ['Per Day', 'Per Hour', 'Fixed Rate'],
               onChanged: onRateTypeChanged,
             ),
           ),
@@ -1947,26 +2083,26 @@ class _PostJobInput extends StatelessWidget {
         maxLines: lines,
         keyboardType: keyboardType,
         style: const TextStyle(
-          color: Color(0xFF334C3C),
+          color: GawaGoColors.ink,
           fontSize: 16,
           letterSpacing: 0,
         ),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: const TextStyle(color: Color(0xFF8DA0C4)),
+          hintStyle: const TextStyle(color: GawaGoColors.textFaint),
           contentPadding: EdgeInsets.symmetric(
             horizontal: 13,
             vertical: lines > 1 ? 14 : 12,
           ),
           filled: true,
-          fillColor: const Color(0xFFF7F1E8),
+          fillColor: GawaGoColors.surfaceMuted,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
         ),
       ),
@@ -2002,14 +2138,14 @@ class _PostJobDropdown extends StatelessWidget {
             vertical: 10,
           ),
           filled: true,
-          fillColor: const Color(0xFFF7F1E8),
+          fillColor: GawaGoColors.surfaceMuted,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
         ),
         hint: hint == null ? null : Text(hint!),
@@ -2040,7 +2176,7 @@ class _PostJobPickerField extends StatelessWidget {
     return _PostJobLabeledField(
       label: label,
       child: Material(
-        color: const Color(0xFFF7F1E8),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
@@ -2050,7 +2186,7 @@ class _PostJobPickerField extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 13),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFD8D0C3)),
+              border: Border.all(color: GawaGoColors.border),
             ),
             child: Row(
               children: [
@@ -2059,7 +2195,7 @@ class _PostJobPickerField extends StatelessWidget {
                     value,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0xFF334C3C),
+                      color: GawaGoColors.ink,
                       fontSize: 16,
                       letterSpacing: 0,
                     ),
@@ -2091,7 +2227,7 @@ class _PostJobLabeledField extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(
-              color: Color(0xFF001A4A),
+              color: GawaGoColors.ink,
               fontSize: 13,
               fontWeight: FontWeight.w800,
               letterSpacing: 0,
@@ -2129,9 +2265,12 @@ class _PostJobMapPanel extends StatelessWidget {
             height: 462,
             child: FlutterMap(
               options: MapOptions(
+                // Fallback is Tayabas City (the service area), the same
+                // center the worker screens use -- not the whole country,
+                // where a tap can't place a usable pin.
                 initialCenter:
-                    pin ?? profilePin ?? const LatLng(12.8797, 121.7740),
-                initialZoom: pin == null && profilePin == null ? 5.4 : 14,
+                    pin ?? profilePin ?? const LatLng(14.0253, 121.5929),
+                initialZoom: pin == null && profilePin == null ? 13 : 14,
                 onTap: (_, point) => onSetPin(point),
               ),
               children: [
@@ -2163,8 +2302,8 @@ class _PostJobMapPanel extends StatelessWidget {
               icon: const Icon(Icons.my_location, size: 18),
               label: const Text('Use My Current Location'),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF4CAF74),
-                foregroundColor: Colors.white,
+                backgroundColor: GawaGoColors.primary,
+                foregroundColor: GawaGoColors.onPrimary,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -2177,8 +2316,8 @@ class _PostJobMapPanel extends StatelessWidget {
                 );
               },
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF355444),
-                side: const BorderSide(color: Color(0xFFD8D0C3)),
+                foregroundColor: GawaGoColors.ink,
+                side: const BorderSide(color: GawaGoColors.border),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -2191,8 +2330,8 @@ class _PostJobMapPanel extends StatelessWidget {
                 icon: const Icon(Icons.home_work_outlined, size: 18),
                 label: const Text('Use Profile Pin'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF355444),
-                  side: const BorderSide(color: Color(0xFFD8D0C3)),
+                  foregroundColor: GawaGoColors.ink,
+                  side: const BorderSide(color: GawaGoColors.border),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -2224,7 +2363,7 @@ class _PostJobImagesBox extends StatelessWidget {
         const Text(
           'Reference Images',
           style: TextStyle(
-            color: Color(0xFF001A4A),
+            color: GawaGoColors.ink,
             fontSize: 16,
             fontWeight: FontWeight.w800,
             letterSpacing: 0,
@@ -2235,9 +2374,9 @@ class _PostJobImagesBox extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: GawaGoColors.surface,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFD8D0C3)),
+            border: Border.all(color: GawaGoColors.border),
           ),
           child: Column(
             children: [
@@ -2246,10 +2385,7 @@ class _PostJobImagesBox extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 24),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: const Color(0xFFA7B8FF),
-                    width: 1.4,
-                  ),
+                  border: Border.all(color: GawaGoColors.leafLine, width: 1.4),
                 ),
                 child: Column(
                   children: [
@@ -2263,8 +2399,8 @@ class _PostJobImagesBox extends StatelessWidget {
                     OutlinedButton(
                       onPressed: onPickImages,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF355444),
-                        side: const BorderSide(color: Color(0xFFD8D0C3)),
+                        foregroundColor: GawaGoColors.ink,
+                        side: const BorderSide(color: GawaGoColors.border),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -2279,7 +2415,7 @@ class _PostJobImagesBox extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'Choose reference images from your phone.',
-                  style: TextStyle(color: Color(0xFF355444)),
+                  style: TextStyle(color: GawaGoColors.ink),
                 ),
               ),
               if (imagePaths.isEmpty) ...[
@@ -2378,7 +2514,7 @@ class _MyJobsState extends State<_MyJobs> {
   }
 
   Future<void> _rateWorker(HouseholdJob job) async {
-    final worker = _selectedWorker(job);
+    final worker = _workerToReview(job);
     if (worker == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No worker is assigned to this job yet.')),
@@ -2411,6 +2547,9 @@ class _MyJobsState extends State<_MyJobs> {
           ),
     );
     if (submitted) {
+      if (mounted) {
+        await _offerSkillRatings(context, widget.repository, job, worker);
+      }
       widget.onChanged();
       _reload();
       if (mounted) {
@@ -2473,9 +2612,10 @@ class _MyJobsState extends State<_MyJobs> {
               const Text(
                 'My Jobs',
                 style: TextStyle(
+                  fontFamily: GawaGoColors.fontHeading,
                   color: GawaGoColors.ink,
                   fontSize: 24,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
               ),
@@ -2492,24 +2632,24 @@ class _MyJobsState extends State<_MyJobs> {
               const SizedBox(height: 16),
               _HistoryStatCard(
                 icon: Icons.check_circle_outline,
-                iconColor: GawaGoColors.primary,
-                background: const Color(0xFFDFF5E3),
+                iconColor: GawaGoColors.onPrimary,
+                background: GawaGoColors.primary,
                 value: '${completedJobs.length}',
                 label: 'Jobs Completed',
               ),
               const SizedBox(height: 10),
               _HistoryStatCard(
                 icon: Icons.attach_money_rounded,
-                iconColor: const Color(0xFF8A6A00),
-                background: const Color(0xFFFBF0C8),
+                iconColor: GawaGoColors.cream,
+                background: GawaGoColors.leafDeep,
                 value: 'PHP ${totalSpent.toStringAsFixed(2)}',
                 label: 'Total Spent',
               ),
               const SizedBox(height: 10),
               _HistoryStatCard(
                 icon: Icons.star_rounded,
-                iconColor: const Color(0xFF6A3FA0),
-                background: const Color(0xFFE6DEFA),
+                iconColor: GawaGoColors.leafDeep,
+                background: const Color(0x4D9EBF5E),
                 value: avgRatingGiven == null
                     ? '—'
                     : avgRatingGiven.toStringAsFixed(1),
@@ -2532,9 +2672,10 @@ class _MyJobsState extends State<_MyJobs> {
                         'No finished jobs yet.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
+                          fontFamily: GawaGoColors.fontHeading,
                           color: GawaGoColors.ink,
                           fontSize: 18,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -2608,20 +2749,22 @@ class _HistoryStatCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(14),
+        color: GawaGoColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: GawaGoColors.line),
+        boxShadow: gawagoCardShadow,
       ),
       child: Row(
         children: [
           Container(
-            width: 38,
-            height: 38,
+            width: 42,
+            height: 42,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: iconColor,
-              borderRadius: BorderRadius.circular(10),
+              color: background,
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 19, color: Colors.white),
+            child: Icon(icon, size: 20, color: iconColor),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2631,8 +2774,9 @@ class _HistoryStatCard extends StatelessWidget {
                 Text(
                   value,
                   style: const TextStyle(
+                    fontFamily: GawaGoColors.fontHeading,
                     fontSize: 20,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     color: GawaGoColors.ink,
                   ),
                 ),
@@ -2723,16 +2867,22 @@ class _MyJobsTabButton extends StatelessWidget {
       child: OutlinedButton(
         onPressed: () => onChanged(value),
         style: OutlinedButton.styleFrom(
-          backgroundColor: selected ? GawaGoColors.cardGreen : Colors.white,
-          foregroundColor: selected ? Colors.white : const Color(0xFF355444),
-          side: const BorderSide(color: Color(0xFFD8D0C3), width: 1.2),
+          backgroundColor: selected ? GawaGoColors.ink : Colors.transparent,
+          foregroundColor: selected
+              ? GawaGoColors.cream
+              : GawaGoColors.textMuted,
+          side: BorderSide(
+            color: selected ? GawaGoColors.ink : GawaGoColors.lineStrong,
+            width: 1.2,
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 14),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(999),
           ),
           textStyle: const TextStyle(
+            fontFamily: GawaGoColors.fontBody,
             fontSize: 13,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w800,
             letterSpacing: 0,
           ),
         ),
@@ -2768,9 +2918,9 @@ class _HistoryJobCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+        border: Border.all(color: GawaGoColors.border, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2796,17 +2946,17 @@ class _HistoryJobCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isCancelled
                       ? const Color(0xFFFBE2E2)
-                      : const Color(0xFFDFF5E3),
+                      : GawaGoColors.leafTint,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  formatStatus(job.status),
+                  statusText(job.statusLabel, job.status),
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w800,
                     color: isCancelled
-                        ? const Color(0xFFB3413A)
-                        : GawaGoColors.primary,
+                        ? GawaGoColors.danger
+                        : GawaGoColors.leafDeep,
                   ),
                 ),
               ),
@@ -2828,13 +2978,13 @@ class _HistoryJobCard extends StatelessWidget {
                   height: 26,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF3F0E8),
+                    color: GawaGoColors.surfaceMuted,
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
                     Icons.close,
                     size: 15,
-                    color: Color(0xFF9A9384),
+                    color: GawaGoColors.textFaint,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -2870,13 +3020,13 @@ class _HistoryJobCard extends StatelessWidget {
                   radius: 15,
                   backgroundColor: assignedApp != null
                       ? GawaGoColors.primary
-                      : const Color(0xFFF3F0E8),
+                      : GawaGoColors.surfaceMuted,
                   child: Text(
                     assignedApp != null ? _initial(workerName) : '?',
                     style: TextStyle(
                       color: assignedApp != null
-                          ? Colors.white
-                          : const Color(0xFF9A9384),
+                          ? GawaGoColors.onPrimary
+                          : GawaGoColors.textFaint,
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
                     ),
@@ -2909,7 +3059,7 @@ class _HistoryJobCard extends StatelessWidget {
                             const Icon(
                               Icons.check_circle,
                               size: 14,
-                              color: GawaGoColors.primary,
+                              color: GawaGoColors.leafDeep,
                             ),
                           ],
                         ],
@@ -2992,7 +3142,7 @@ class _HistoryJobCard extends StatelessWidget {
               TextButton(
                 onPressed: onViewDetails,
                 style: TextButton.styleFrom(
-                  foregroundColor: GawaGoColors.primary,
+                  foregroundColor: GawaGoColors.leafDeep,
                   padding: EdgeInsets.zero,
                   alignment: Alignment.centerLeft,
                 ),
@@ -3029,6 +3179,7 @@ class _JobDetailState extends State<_JobDetail> {
   });
 
   Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
     setState(() => _busy = true);
     try {
       await action();
@@ -3065,12 +3216,21 @@ class _JobDetailState extends State<_JobDetail> {
                 job: job,
                 busy: _busy,
                 onCancel: job.status == 'open' || job.status == 'assigned'
-                    ? () => _run(
-                        () => widget.repository.updateJobStatus(
-                          job.id,
-                          'cancelled',
-                        ),
-                      )
+                    ? () async {
+                        final confirmed = await _confirmDialog(
+                          context,
+                          title: 'Cancel this job?',
+                          message: "This can't be undone.",
+                          destructive: true,
+                        );
+                        if (!confirmed) return;
+                        await _run(
+                          () => widget.repository.updateJobStatus(
+                            job.id,
+                            'cancelled',
+                          ),
+                        );
+                      }
                     : null,
               ),
               const SizedBox(height: 26),
@@ -3084,12 +3244,21 @@ class _JobDetailState extends State<_JobDetail> {
                 // straight to completed, but that isn't a household action
                 // to expose before the worker has requested it.
                 onConfirmCompleted: job.status == 'completion_requested'
-                    ? () => _run(
-                        () => widget.repository.updateJobStatus(
-                          job.id,
-                          'completed',
-                        ),
-                      )
+                    ? () async {
+                        final confirmed = await _confirmDialog(
+                          context,
+                          title: 'Confirm this job is complete?',
+                          message:
+                              'The worker will be marked as having finished this job.',
+                        );
+                        if (!confirmed) return;
+                        await _run(
+                          () => widget.repository.updateJobStatus(
+                            job.id,
+                            'completed',
+                          ),
+                        );
+                      }
                     : null,
               ),
               const SizedBox(height: 26),
@@ -3181,9 +3350,10 @@ class _JobDetailsSummaryCard extends StatelessWidget {
               Text(
                 job.title.toUpperCase(),
                 style: const TextStyle(
+                  fontFamily: GawaGoColors.fontHeading,
                   color: GawaGoColors.ink,
                   fontSize: 20,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                   height: 1.1,
                 ),
@@ -3201,7 +3371,7 @@ class _JobDetailsSummaryCard extends StatelessWidget {
             _LargeDetailBox(
               label: 'Job Period',
               value:
-                  '${job.jobStartDate ?? 'Not set'} to ${job.jobEndDate ?? 'Not set'}',
+                  '${formatJobDate(job.jobStartDate)} to ${formatJobDate(job.jobEndDate)}',
             ),
           if (job.estimatedWorkingDays != null)
             _LargeDetailBox(
@@ -3234,6 +3404,7 @@ class _JobDetailsSummaryCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 textStyle: const TextStyle(
+                  fontFamily: GawaGoColors.fontBody,
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0,
@@ -3244,6 +3415,58 @@ class _JobDetailsSummaryCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// After a review is saved, offers the optional per-skill ratings the web
+/// shows. A failure to load the worker's skills is not worth interrupting the
+/// flow for -- the review itself is already in -- so it just skips.
+Future<void> _offerSkillRatings(
+  BuildContext context,
+  HouseholdRepository repository,
+  HouseholdJob job,
+  HouseholdApplication application,
+) async {
+  final List<RatableSkill> skills;
+  // The job's own skill is always rateable, even if the worker never listed
+  // it -- otherwise the household can't rate the very work it hired them for
+  // (the web client offers it too). It has no portfolio id yet, so it rides
+  // on a placeholder id and is sent by name.
+  const unlistedJobSkillId = -1;
+  final unlistedSkillNames = <int, String>{};
+  try {
+    final portfolio = await repository.getWorkerPortfolio(application.workerId);
+    skills = [
+      for (final skill in portfolio.skills)
+        RatableSkill(id: skill.id, name: skill.skillName),
+    ];
+    final jobSkill = job.requiredSkill.trim();
+    final listed = skills.any(
+      (skill) => skill.name.toLowerCase() == jobSkill.toLowerCase(),
+    );
+    if (jobSkill.isNotEmpty && !listed) {
+      skills.add(RatableSkill(id: unlistedJobSkillId, name: jobSkill));
+      unlistedSkillNames[unlistedJobSkillId] = jobSkill;
+    }
+  } catch (_) {
+    return;
+  }
+  if (!context.mounted) return;
+  final saved = await showRateSkillsDialog(
+    context: context,
+    workerName: application.workerName,
+    skills: skills,
+    onSubmit: (ratings) => repository.rateSkills(
+      job,
+      ratings,
+      workerId: application.workerId,
+      unlistedSkillNames: unlistedSkillNames,
+    ),
+  );
+  if (saved && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Skill ratings saved.')));
   }
 }
 
@@ -3267,19 +3490,13 @@ class _CompletionReviewPanel extends StatelessWidget {
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
-            decoration: BoxDecoration(
-              color: const Color(0xFF4CAF74),
-              borderRadius: BorderRadius.circular(8),
+            padding: const EdgeInsets.only(bottom: 12),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: GawaGoColors.line)),
             ),
-            child: const Text(
+            child: Text(
               'Completion & Review',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
+              style: gawagoHeading(fontSize: 18),
             ),
           ),
           const SizedBox(height: 14),
@@ -3290,9 +3507,10 @@ class _CompletionReviewPanel extends StatelessWidget {
                 Text(
                   job.title,
                   style: const TextStyle(
+                    fontFamily: GawaGoColors.fontHeading,
                     color: GawaGoColors.ink,
                     fontSize: 18,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
                 ),
@@ -3301,7 +3519,7 @@ class _CompletionReviewPanel extends StatelessWidget {
                 Text(
                   worker?.workerName ?? 'No worker selected',
                   style: const TextStyle(
-                    color: Color(0xFF4A5E4F),
+                    color: GawaGoColors.textMuted,
                     fontSize: 15,
                     height: 1.4,
                     letterSpacing: 0,
@@ -3310,9 +3528,9 @@ class _CompletionReviewPanel extends StatelessWidget {
                 const SizedBox(height: 12),
                 const _SmallLabel('Status'),
                 Text(
-                  formatStatus(job.status),
+                  statusText(job.statusLabel, job.status),
                   style: const TextStyle(
-                    color: Color(0xFF4A5E4F),
+                    color: GawaGoColors.textMuted,
                     fontSize: 15,
                     letterSpacing: 0,
                   ),
@@ -3332,20 +3550,24 @@ class _CompletionReviewPanel extends StatelessWidget {
                   "You'll be notified once the worker marks this job done.",
             ),
           const SizedBox(height: 14),
-          const Divider(color: Color(0xFFD8CDBB)),
+          const Divider(color: GawaGoColors.border),
           const SizedBox(height: 12),
           FilledButton(
             onPressed: busy ? null : onConfirmCompleted,
             style: FilledButton.styleFrom(
               backgroundColor: onConfirmCompleted == null
-                  ? const Color(0xFFA4AAB0)
-                  : const Color(0xFF4CAF74),
-              foregroundColor: Colors.white,
+                  ? GawaGoColors.textFaint
+                  : GawaGoColors.primary,
+              foregroundColor: GawaGoColors.onPrimary,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
-              textStyle: const TextStyle(fontSize: 14, letterSpacing: 0),
+              textStyle: const TextStyle(
+                fontFamily: GawaGoColors.fontBody,
+                fontSize: 14,
+                letterSpacing: 0,
+              ),
             ),
             child: Text(busy ? 'Confirming...' : 'Confirm Completed'),
           ),
@@ -3378,9 +3600,10 @@ class _ApplicantsPanel extends StatelessWidget {
           const Text(
             'Applicants',
             style: TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
               color: GawaGoColors.ink,
               fontSize: 20,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
           ),
@@ -3388,7 +3611,7 @@ class _ApplicantsPanel extends StatelessWidget {
           const Text(
             'Workers who submitted an application for this job.',
             style: TextStyle(
-              color: Color(0xFF244C3A),
+              color: GawaGoColors.ink,
               fontSize: 13,
               letterSpacing: 0,
             ),
@@ -3432,7 +3655,7 @@ Future<void> showApplicantsDialog({
       final applicants = _visibleApplicants(job);
       final topMatchId = _topApplicantId(applicants);
       return Dialog(
-        backgroundColor: Colors.white,
+        backgroundColor: GawaGoColors.surface,
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         clipBehavior: Clip.antiAlias,
@@ -3465,9 +3688,10 @@ Future<void> showApplicantsDialog({
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
+                            fontFamily: GawaGoColors.fontHeading,
                             color: Colors.white,
                             fontSize: 18,
-                            fontWeight: FontWeight.w900,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                         const SizedBox(height: 3),
@@ -3559,7 +3783,7 @@ Future<void> showApplicantsDialog({
                       ),
                     ),
             ),
-            const Divider(height: 1, color: Color(0xFFD8D0C3)),
+            const Divider(height: 1, color: GawaGoColors.border),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
               style: TextButton.styleFrom(
@@ -3621,7 +3845,7 @@ Widget _buildApplicantCard({
             content: Text(
               next == 'rejected'
                   ? 'Application declined.'
-                  : 'Request sent. The worker can accept or reject it.',
+                  : '${application.workerName} is hired. The job is now in progress.',
             ),
           ),
         );
@@ -3664,7 +3888,16 @@ Widget _buildApplicantCard({
       if (confirmed) await respond('rejected');
     },
     onViewProfile: () => onOpenApplicant(application),
-    onSendRequest: () => respond('hire_requested'),
+    // Applying is consent, so accepting an applicant hires them outright,
+    // as on the website; only invited workers get a request to confirm.
+    onAccept: () async {
+      final confirmed = await _confirmDialog(
+        context,
+        title: 'Accept ${application.workerName}?',
+        message: 'They will be hired and the job moves to In progress.',
+      );
+      if (confirmed) await respond('hired');
+    },
   );
 }
 
@@ -3688,9 +3921,10 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
           const Text(
             'Smart Matched Workers',
             style: TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
               color: GawaGoColors.ink,
               fontSize: 20,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
           ),
@@ -3698,7 +3932,7 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
           const Text(
             'Suggested workers ranked by skill, verification status, distance, ratings, and service rate.',
             style: TextStyle(
-              color: Color(0xFF244C3A),
+              color: GawaGoColors.ink,
               fontSize: 13,
               letterSpacing: 0,
             ),
@@ -3741,6 +3975,8 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
                           rateLabel: _shortRate(worker.workerRate),
                           skills: worker.skills,
                           bio: worker.bio,
+                          // Smart Matching order; it has no AI score.
+                          showScore: false,
                           requestSent:
                               _applicationForWorker(
                                 job,
@@ -3789,9 +4025,9 @@ class _SectionCard extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: child,
     );
@@ -3811,9 +4047,9 @@ class _LargeDetailBox extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3823,7 +4059,7 @@ class _LargeDetailBox extends StatelessWidget {
           Text(
             value,
             style: const TextStyle(
-              color: Color(0xFF001A4A),
+              color: GawaGoColors.ink,
               fontSize: 15,
               fontWeight: FontWeight.w900,
               letterSpacing: 0,
@@ -3845,7 +4081,7 @@ class _SmallLabel extends StatelessWidget {
     return Text(
       value,
       style: const TextStyle(
-        color: Color(0xFF5F687A),
+        color: GawaGoColors.textMuted,
         fontSize: 12,
         fontWeight: FontWeight.w900,
         letterSpacing: 0,
@@ -3893,69 +4129,20 @@ class _DashedEmptyBox extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       alignment: Alignment.center,
       child: Text(
         message,
         textAlign: TextAlign.center,
         style: const TextStyle(
-          color: Color(0xFF5F687A),
+          color: GawaGoColors.textMuted,
           fontSize: 14,
           height: 1.35,
           letterSpacing: 0,
         ),
-      ),
-    );
-  }
-}
-
-/// Two-segment bar showing how much of a worker's AI score came from skill
-/// fit versus proximity, mirroring the breakdown workers see on recommended
-/// jobs. Renders nothing when the worker could not be scored.
-class _AiMatchBreakdown extends StatelessWidget {
-  const _AiMatchBreakdown({required this.worker});
-
-  final RecommendedWorker worker;
-
-  @override
-  Widget build(BuildContext context) {
-    final skillShare = worker.skillSharePercent;
-    if (skillShare == null) return const SizedBox.shrink();
-    final proximityShare = 100 - skillShare;
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: SizedBox(
-              height: 6,
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: skillShare,
-                    child: Container(color: const Color(0xFF2D7A4F)),
-                  ),
-                  Expanded(
-                    flex: proximityShare,
-                    child: Container(color: const Color(0xFFF0C040)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Why this match: $skillShare% skill fit, $proximityShare% proximity'
-            '${worker.exactSkillMatch ? ' — exact skill match' : ''}',
-            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 11),
-          ),
-        ],
       ),
     );
   }
@@ -3986,7 +4173,10 @@ Future<void> _showWorkerMatchProfile(
             : requested == 'hire_requested'
             ? 'Request Sent'
             : null,
-        matchBreakdown: _AiMatchBreakdown(worker: worker),
+        matchBreakdown: AiMatchBreakdown(
+          skillSharePercent: worker.skillSharePercent,
+          exactSkillMatch: worker.exactSkillMatch,
+        ),
         onHire: () => _hireRecommendedWorker(
           context: context,
           repository: repository,
@@ -4012,9 +4202,9 @@ class _CompactProfileFact extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFEFB),
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4022,7 +4212,7 @@ class _CompactProfileFact extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(
-              color: Color(0xFF1A2A1E),
+              color: GawaGoColors.ink,
               fontSize: 13,
               fontWeight: FontWeight.w900,
               letterSpacing: 0,
@@ -4032,7 +4222,7 @@ class _CompactProfileFact extends StatelessWidget {
           Text(
             value.isEmpty ? 'Not available' : value,
             style: const TextStyle(
-              color: Color(0xFF4A5E4F),
+              color: GawaGoColors.textMuted,
               fontSize: 15,
               height: 1.25,
               letterSpacing: 0,
@@ -4063,7 +4253,7 @@ class _ApplicantFeedbackItem extends StatelessWidget {
             Text(
               rating,
               style: const TextStyle(
-                color: GawaGoColors.primary,
+                color: GawaGoColors.leafDeep,
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
               ),
@@ -4073,7 +4263,7 @@ class _ApplicantFeedbackItem extends StatelessWidget {
             Text(
               review.feedback,
               style: const TextStyle(
-                color: Color(0xFF355444),
+                color: GawaGoColors.ink,
                 fontSize: 13,
                 height: 1.35,
               ),
@@ -4083,7 +4273,10 @@ class _ApplicantFeedbackItem extends StatelessWidget {
             const SizedBox(height: 3),
             Text(
               review.jobTitle,
-              style: const TextStyle(color: Color(0xFF5F687A), fontSize: 12),
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 12,
+              ),
             ),
           ],
         ],
@@ -4102,16 +4295,16 @@ class _ServiceReviewCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: child,
     );
   }
 }
 
-class _ApplicantDetail extends StatelessWidget {
+class _ApplicantDetail extends StatefulWidget {
   const _ApplicantDetail({
     required this.job,
     required this.application,
@@ -4124,10 +4317,33 @@ class _ApplicantDetail extends StatelessWidget {
   final HouseholdRepository repository;
   final VoidCallback onChanged;
 
+  @override
+  State<_ApplicantDetail> createState() => _ApplicantDetailState();
+}
+
+class _ApplicantDetailState extends State<_ApplicantDetail> {
+  bool _busy = false;
+
+  HouseholdJob get job => widget.job;
+  HouseholdApplication get application => widget.application;
+  HouseholdRepository get repository => widget.repository;
+
   Future<void> _action(BuildContext context, String status) async {
+    if (_busy) return;
+    final isHire = status == 'hired';
+    final confirmed = await _confirmDialog(
+      context,
+      title: isHire ? 'Hire this worker?' : 'Reject this application?',
+      message: isHire
+          ? '${application.workerName.isEmpty ? application.workerUsername : application.workerName} will be hired for this job.'
+          : "This can't be undone.",
+      destructive: !isHire,
+    );
+    if (!confirmed || !context.mounted) return;
+    setState(() => _busy = true);
     try {
       await repository.setApplicationStatus(application.id, status);
-      onChanged();
+      widget.onChanged();
       if (context.mounted) Navigator.pop(context);
     } catch (error) {
       if (context.mounted) {
@@ -4135,6 +4351,8 @@ class _ApplicantDetail extends StatelessWidget {
           context,
         ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
       }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -4165,7 +4383,10 @@ class _ApplicantDetail extends StatelessWidget {
           ),
     );
     if (submitted) {
-      onChanged();
+      if (context.mounted) {
+        await _offerSkillRatings(context, repository, job, application);
+      }
+      widget.onChanged();
       if (context.mounted) Navigator.pop(context);
     }
   }
@@ -4175,13 +4396,13 @@ class _ApplicantDetail extends StatelessWidget {
     final actions = <Widget>[
       if (application.status == 'pending')
         OutlinedButton.icon(
-          onPressed: () => _action(context, 'rejected'),
+          onPressed: _busy ? null : () => _action(context, 'rejected'),
           icon: const Icon(Icons.close),
           label: const Text('Reject'),
         ),
       if (job.status == 'completed' &&
           application.status == 'completed' &&
-          job.canReview)
+          application.householdCanReview)
         FilledButton.icon(
           onPressed: () => _review(context),
           icon: const Icon(Icons.star_outline),
@@ -4191,7 +4412,7 @@ class _ApplicantDetail extends StatelessWidget {
     return _WorkerProfileScreen(
       subject: _WorkerProfileSubject.fromApplication(application),
       repository: repository,
-      hireEnabled: application.status == 'pending',
+      hireEnabled: application.status == 'pending' && !_busy,
       hireLabel: application.status == 'pending'
           ? null
           : (application.statusLabel.isNotEmpty
@@ -4199,20 +4420,27 @@ class _ApplicantDetail extends StatelessWidget {
                 : applicationStatusLabel(application.status)),
       onHire: () => _action(context, 'hired'),
       bottomActions: actions,
-      mapPanel: LocationRouteMap(
-        start:
-            application.workerLatitude == null ||
-                application.workerLongitude == null
-            ? null
-            : LatLng(application.workerLatitude!, application.workerLongitude!),
-        end: LatLng(job.latitude, job.longitude),
-        startLabel: 'Worker',
-        endLabel: 'Job',
-        routePoints: application.routePoints
-            .map((point) => LatLng(point.latitude, point.longitude))
-            .toList(),
-        roadDistanceKm: application.distanceKm,
-      ),
+      // Coordinates arrive for any applicant now, so this fallback only
+      // means the worker never pinned a location on their profile.
+      mapPanel:
+          application.workerLatitude == null ||
+              application.workerLongitude == null
+          ? _WorkerLocationPrivatePanel(
+              distanceLabel: application.distanceLabel,
+            )
+          : LocationRouteMap(
+              start: LatLng(
+                application.workerLatitude!,
+                application.workerLongitude!,
+              ),
+              end: LatLng(job.latitude, job.longitude),
+              startLabel: 'Worker',
+              endLabel: 'Job',
+              routePoints: application.routePoints
+                  .map((point) => LatLng(point.latitude, point.longitude))
+                  .toList(),
+              roadDistanceKm: application.distanceKm,
+            ),
     );
   }
 }
@@ -4291,12 +4519,40 @@ class _ProfileFormState extends State<_ProfileForm> {
     text: _streetFromLocation(widget.profile.locationLabel),
   );
   late String? _barangay = _barangayFromText(widget.profile.locationLabel);
-  late final LatLng? _profilePin =
+  // Mutable, and with a map picker below to set it: this used to be
+  // `late final`, computed once from the profile's (possibly null -- web
+  // registration can save a label with no coordinates, see P-07)
+  // lat/lng and never settable afterward, so a household with no pin
+  // saved was told "select your location" with no way to do it (F-12).
+  late LatLng? _profilePin =
       widget.profile.latitude == null || widget.profile.longitude == null
       ? null
       : LatLng(widget.profile.latitude!, widget.profile.longitude!);
   String? _photoPath;
   bool _saving = false;
+
+  Future<void> _locateProfilePin() async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw Exception('Location permission was denied.');
+      }
+      final value = await Geolocator.getCurrentPosition();
+      if (mounted) {
+        setState(() => _profilePin = LatLng(value.latitude, value.longitude));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
+      }
+    }
+  }
 
   Future<void> _pickPhoto() async {
     const group = XTypeGroup(
@@ -4309,7 +4565,9 @@ class _ProfileFormState extends State<_ProfileForm> {
   }
 
   Future<void> _save() async {
-    if (_profilePin == null) {
+    if (_saving) return;
+    final pin = _profilePin;
+    if (pin == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Select your exact Tayabas location on the map.'),
@@ -4329,13 +4587,13 @@ class _ProfileFormState extends State<_ProfileForm> {
         'first_name': _first.text.trim(),
         'last_name': _last.text.trim(),
         'email': _email.text.trim(),
-        'phone': _phone.text.trim(),
+        'phone': sanitizePhilippinesPhone(_phone.text),
         'location_label': [
           _barangay!,
           _street.text.trim(),
         ].where((part) => part.trim().isNotEmpty).join(', '),
-        'latitude': _coordinateForApi(_profilePin.latitude),
-        'longitude': _coordinateForApi(_profilePin.longitude),
+        'latitude': _coordinateForApi(pin.latitude),
+        'longitude': _coordinateForApi(pin.longitude),
       }, profilePhotoPath: _photoPath);
       widget.onSaved();
       if (mounted) {
@@ -4364,9 +4622,10 @@ class _ProfileFormState extends State<_ProfileForm> {
         const Text(
           'My Profile Household',
           style: TextStyle(
+            fontFamily: GawaGoColors.fontHeading,
             color: GawaGoColors.ink,
             fontSize: 24,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
         ),
@@ -4388,9 +4647,10 @@ class _ProfileFormState extends State<_ProfileForm> {
                       widget.profile.fullName,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
+                        fontFamily: GawaGoColors.fontHeading,
                         color: GawaGoColors.ink,
                         fontSize: 20,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
                     ),
@@ -4398,7 +4658,7 @@ class _ProfileFormState extends State<_ProfileForm> {
                     Text(
                       '@${widget.profile.username}',
                       style: const TextStyle(
-                        color: Color(0xFF5F687A),
+                        color: GawaGoColors.textMuted,
                         fontSize: 14,
                       ),
                     ),
@@ -4449,7 +4709,7 @@ class _ProfileFormState extends State<_ProfileForm> {
               const Text(
                 'Profile Photo',
                 style: TextStyle(
-                  color: Color(0xFF001A4A),
+                  color: GawaGoColors.ink,
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
                 ),
@@ -4464,7 +4724,7 @@ class _ProfileFormState extends State<_ProfileForm> {
               const SizedBox(height: 10),
               const Text(
                 'Choose a clear photo from your phone.',
-                style: TextStyle(color: Color(0xFF355444), fontSize: 13),
+                style: TextStyle(color: GawaGoColors.ink, fontSize: 13),
               ),
               const SizedBox(height: 16),
               _ProfileTextField(label: 'First Name', controller: _first),
@@ -4489,20 +4749,38 @@ class _ProfileFormState extends State<_ProfileForm> {
                 hint: 'QZ, Philippines',
               ),
               const SizedBox(height: 14),
+              const Text(
+                'Exact Household Location',
+                style: TextStyle(
+                  color: GawaGoColors.ink,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 7),
+              _PostJobMapPanel(
+                pin: _profilePin,
+                profilePin: null,
+                onSetPin: (point) => setState(() => _profilePin = point),
+                onLocate: _locateProfilePin,
+              ),
+              const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
                 height: 48,
                 child: FilledButton(
                   onPressed: _saving ? null : _save,
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF74),
-                    foregroundColor: Colors.white,
+                    backgroundColor: GawaGoColors.primary,
+                    foregroundColor: GawaGoColors.onPrimary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                     textStyle: const TextStyle(
+                      fontFamily: GawaGoColors.fontBody,
                       fontSize: 15,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                       letterSpacing: 0,
                     ),
                   ),
@@ -4516,9 +4794,10 @@ class _ProfileFormState extends State<_ProfileForm> {
         const Text(
           'Feedback & Rating',
           style: TextStyle(
+            fontFamily: GawaGoColors.fontHeading,
             color: GawaGoColors.ink,
             fontSize: 22,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
         ),
@@ -4549,26 +4828,21 @@ class _ProfilePanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        color: GawaGoColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: GawaGoColors.line),
+        boxShadow: gawagoCardShadow,
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 15, 16, 16),
-            decoration: const BoxDecoration(color: Color(0xFF4CAF74)),
-            child: Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: GawaGoColors.line)),
             ),
+            child: Text(title, style: gawagoHeading(fontSize: 17)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
@@ -4597,15 +4871,16 @@ class _ProfileAvatar extends StatelessWidget {
     }
     return CircleAvatar(
       radius: 68,
-      backgroundColor: const Color(0xFFF2EEE6),
+      backgroundColor: GawaGoColors.surfaceMuted,
       backgroundImage: image,
       child: image == null
           ? Text(
               initial,
               style: const TextStyle(
-                color: Color(0xFF365B60),
+                fontFamily: GawaGoColors.fontHeading,
+                color: GawaGoColors.leafDeep,
                 fontSize: 32,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w700,
               ),
             )
           : null,
@@ -4623,14 +4898,14 @@ class _ProfileChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFE7F5E9),
+        color: GawaGoColors.leafTint,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF9BD9A9)),
+        border: Border.all(color: GawaGoColors.leafLine),
       ),
       child: Text(
         label,
         style: const TextStyle(
-          color: Color(0xFF197A35),
+          color: GawaGoColors.leafDeep,
           fontSize: 13,
           fontWeight: FontWeight.w900,
           letterSpacing: 0,
@@ -4650,8 +4925,8 @@ class _ProfileInfoLine extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
-      child: RichText(
-        text: TextSpan(
+      child: Text.rich(
+        TextSpan(
           style: const TextStyle(
             color: GawaGoColors.ink,
             fontSize: 14,
@@ -4682,9 +4957,9 @@ class _FileChooserRow extends StatelessWidget {
     return Container(
       height: 46,
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F1E8),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: Row(
@@ -4696,7 +4971,11 @@ class _FileChooserRow extends StatelessWidget {
               foregroundColor: Colors.black,
               padding: const EdgeInsets.symmetric(horizontal: 14),
               shape: const RoundedRectangleBorder(),
-              textStyle: const TextStyle(fontSize: 14, letterSpacing: 0),
+              textStyle: const TextStyle(
+                fontFamily: GawaGoColors.fontBody,
+                fontSize: 14,
+                letterSpacing: 0,
+              ),
             ),
             child: const Text('Choose File'),
           ),
@@ -4707,7 +4986,7 @@ class _FileChooserRow extends StatelessWidget {
                 filename,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Color(0xFF355444),
+                  color: GawaGoColors.ink,
                   fontSize: 14,
                   letterSpacing: 0,
                 ),
@@ -4741,25 +5020,25 @@ class _ProfileTextField extends StatelessWidget {
         controller: controller,
         enabled: enabled,
         style: const TextStyle(
-          color: Color(0xFF355444),
+          color: GawaGoColors.ink,
           fontSize: 14,
           letterSpacing: 0,
         ),
         decoration: InputDecoration(
           hintText: hint,
           filled: true,
-          fillColor: const Color(0xFFF7F1E8),
+          fillColor: GawaGoColors.surfaceMuted,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 14,
             vertical: 12,
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
         ),
       ),
@@ -4791,18 +5070,18 @@ class _ProfileDropdownField extends StatelessWidget {
         isExpanded: true,
         decoration: InputDecoration(
           filled: true,
-          fillColor: const Color(0xFFF7F1E8),
+          fillColor: GawaGoColors.surfaceMuted,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 14,
             vertical: 10,
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFD8D0C3)),
+            borderSide: const BorderSide(color: GawaGoColors.border),
           ),
         ),
         hint: hint == null ? null : Text(hint!),
@@ -4831,7 +5110,7 @@ class _ProfileFieldShell extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(
-              color: Color(0xFF001A4A),
+              color: GawaGoColors.ink,
               fontSize: 14,
               fontWeight: FontWeight.w900,
               letterSpacing: 0,
@@ -4872,9 +5151,10 @@ class _ReviewsPanel extends StatelessWidget {
             Text(
               title,
               style: const TextStyle(
+                fontFamily: GawaGoColors.fontHeading,
                 color: GawaGoColors.ink,
                 fontSize: 24,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 18),
@@ -4899,15 +5179,19 @@ class _ReviewsPanel extends StatelessWidget {
             child: OutlinedButton(
               onPressed: () => _showAll(context),
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF197A35),
-                backgroundColor: Colors.white,
-                side: BorderSide.none,
+                foregroundColor: GawaGoColors.leafDeep,
+                backgroundColor: Colors.transparent,
+                side: const BorderSide(
+                  color: GawaGoColors.lineStrong,
+                  width: 1.5,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(22),
                 ),
                 textStyle: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
+                  fontFamily: GawaGoColors.fontBody,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               child: const Text('View All'),
@@ -4942,9 +5226,9 @@ class _ReviewPreviewCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4956,9 +5240,10 @@ class _ReviewPreviewCard extends StatelessWidget {
                 child: Text(
                   name,
                   style: const TextStyle(
+                    fontFamily: GawaGoColors.fontHeading,
                     color: GawaGoColors.ink,
                     fontSize: 20,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
                 ),
@@ -4966,9 +5251,10 @@ class _ReviewPreviewCard extends StatelessWidget {
               Text(
                 rating,
                 style: const TextStyle(
+                  fontFamily: GawaGoColors.fontHeading,
                   color: GawaGoColors.ink,
                   fontSize: 20,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
               ),
@@ -4978,7 +5264,7 @@ class _ReviewPreviewCard extends StatelessWidget {
           Text(
             review.feedback.isEmpty ? 'No written feedback.' : review.feedback,
             style: const TextStyle(
-              color: Color(0xFF244C3A),
+              color: GawaGoColors.ink,
               fontSize: 18,
               height: 1.3,
               letterSpacing: 0,
@@ -4988,7 +5274,7 @@ class _ReviewPreviewCard extends StatelessWidget {
           Text(
             formatLocalDateTime(review.createdAt, fallback: review.displayDate),
             style: const TextStyle(
-              color: Color(0xFF244C3A),
+              color: GawaGoColors.ink,
               fontSize: 17,
               letterSpacing: 0,
             ),
@@ -5012,6 +5298,8 @@ class _Verification extends StatefulWidget {
 class _VerificationState extends State<_Verification> {
   String? _primary;
   String? _secondary;
+  String? _idType;
+  final _idOtherName = TextEditingController();
   final _notes = TextEditingController();
   bool _submitting = false;
   late Future<List<VerificationRequest>> _future = widget.repository
@@ -5026,9 +5314,26 @@ class _VerificationState extends State<_Verification> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) return;
     if (_primary == null || _secondary == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Choose both required documents.')),
+      );
+      return;
+    }
+    if (_idType == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Choose which government ID you are uploading.'),
+        ),
+      );
+      return;
+    }
+    if (_idType == 'other' && _idOtherName.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Name the government ID you are uploading.'),
+        ),
       );
       return;
     }
@@ -5037,6 +5342,8 @@ class _VerificationState extends State<_Verification> {
       await widget.repository.submitVerification(
         primaryPath: _primary!,
         secondaryPath: _secondary!,
+        primaryIdType: _idType!,
+        primaryIdOtherName: _idOtherName.text.trim(),
         notes: _notes.text.trim(),
       );
       widget.onSubmitted();
@@ -5102,9 +5409,36 @@ class _VerificationState extends State<_Verification> {
                     'Verification helps workers trust that job postings come from a reviewed household account.',
               ),
               const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _idType,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Which government ID are you uploading?',
+                ),
+                items: [
+                  for (final option in gawagoGovernmentIdTypes)
+                    DropdownMenuItem(
+                      value: option.value,
+                      child: Text(option.label),
+                    ),
+                ],
+                onChanged: (value) => setState(() => _idType = value),
+              ),
+              if (_idType == 'other') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _idOtherName,
+                  maxLength: 255,
+                  decoration: const InputDecoration(
+                    labelText: 'Name the ID',
+                    hintText: 'e.g. PRC Professional ID',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
               _VerificationDocumentPicker(
                 title: 'Primary ID document',
-                subtitle: 'Government-issued ID or a clear identity document.',
+                subtitle: 'A clear photo or scan of the ID you chose above.',
                 path: _primary,
                 icon: Icons.badge_outlined,
                 onPick: () async {
@@ -5196,7 +5530,7 @@ class _VerificationDocumentPicker extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: GawaGoColors.border),
       ),
@@ -5205,7 +5539,7 @@ class _VerificationDocumentPicker extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, color: GawaGoColors.primary),
+              Icon(icon, color: GawaGoColors.leafDeep),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -5293,9 +5627,9 @@ class _VerificationDocumentRow extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD8D0C3)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5374,7 +5708,11 @@ class _NotificationsState extends State<_Notifications> {
 
   Future<void> _viewDetails(WorkerNotification item) async {
     if (!item.isRead) {
-      await widget.repository.markNotificationRead(item.id);
+      try {
+        await widget.repository.markNotificationRead(item.id);
+      } catch (_) {
+        // Still show the notification; it just stays marked unread.
+      }
     }
     if (!mounted) return;
     final jobId = item.targetJobId;
@@ -5458,7 +5796,20 @@ class _NotificationsState extends State<_Notifications> {
       ),
     );
     if (confirmed != true) return;
-    await widget.repository.deleteNotification(item.id);
+    try {
+      await widget.repository.deleteNotification(item.id);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't delete that notification. Please try again.",
+            ),
+          ),
+        );
+      }
+      return;
+    }
     _reload();
   }
 
@@ -5553,7 +5904,11 @@ class _NotificationsState extends State<_Notifications> {
                     if (value == 'details') {
                       await _viewDetails(item);
                     } else if (value == 'read') {
-                      await widget.repository.markNotificationRead(item.id);
+                      try {
+                        await widget.repository.markNotificationRead(item.id);
+                      } catch (_) {
+                        return;
+                      }
                       _reload();
                     } else {
                       await _delete(item);
@@ -5600,13 +5955,14 @@ class _HouseholdNotificationPreview extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 28,
-                  backgroundColor: const Color(0xFFF2EEE6),
+                  backgroundColor: GawaGoColors.surfaceMuted,
                   child: Text(
                     _initial(application!.workerName),
                     style: const TextStyle(
-                      color: Color(0xFF4B6354),
+                      fontFamily: GawaGoColors.fontHeading,
+                      color: GawaGoColors.textMuted,
                       fontSize: 20,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -5620,9 +5976,10 @@ class _HouseholdNotificationPreview extends StatelessWidget {
                             ? application!.workerUsername
                             : application!.workerName,
                         style: const TextStyle(
+                          fontFamily: GawaGoColors.fontHeading,
                           color: GawaGoColors.text,
                           fontSize: 18,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -5655,7 +6012,8 @@ class _HouseholdNotificationPreview extends StatelessWidget {
             _CompactProfileFact(label: 'Location', value: job!.locationLabel),
             _CompactProfileFact(
               label: 'Rate',
-              value: 'PHP ${job!.serviceRate.toStringAsFixed(2)} / Per Day',
+              value:
+                  'PHP ${job!.serviceRate.toStringAsFixed(2)} / ${job!.rateTypeLabel}',
             ),
           ],
         ],
@@ -5698,7 +6056,7 @@ class _Card extends StatelessWidget {
   Widget build(BuildContext context) => Card(
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(8),
-      side: const BorderSide(color: Color(0xFFD8D0C3)),
+      side: const BorderSide(color: GawaGoColors.border),
     ),
     child: Padding(padding: const EdgeInsets.all(14), child: child),
   );
@@ -5804,7 +6162,7 @@ class _FindingWorkersHeroState extends State<_FindingWorkersHero> {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [GawaGoColors.deepGreen, Color(0xFF1A4A2E)],
+          colors: [GawaGoColors.deepGreen, GawaGoColors.cardGreen],
         ),
         borderRadius: BorderRadius.circular(18),
       ),
@@ -5824,9 +6182,10 @@ class _FindingWorkersHeroState extends State<_FindingWorkersHero> {
           const Text(
             'Finding workers for your job',
             style: TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
               color: Colors.white,
               fontSize: 20,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 8),
@@ -5835,7 +6194,7 @@ class _FindingWorkersHeroState extends State<_FindingWorkersHero> {
             "We're matching it to available workers nearby by skill fit and "
             'travel distance.',
             style: const TextStyle(
-              color: Color(0xFFD7E5DB),
+              color: GawaGoColors.leafLine,
               fontSize: 13,
               height: 1.4,
             ),
@@ -5930,6 +6289,30 @@ class _JobMatchesState extends State<_JobMatches> {
   late Future<List<RecommendedWorker>> _future = _load();
   bool _minDurationElapsed = false;
   String _skillFilter = 'All';
+  bool _mapView = false;
+  // widget.job is a snapshot from when this screen opened and never
+  // refreshes, so a sent request never showed on the card and a second tap
+  // could re-POST it (F-10). These track what's actually happened this
+  // session, independent of that stale snapshot.
+  final Set<int> _sendingWorkerIds = {};
+  final Set<int> _sentWorkerIds = {};
+
+  Future<void> _sendRequest(RecommendedWorker worker) async {
+    if (_sendingWorkerIds.contains(worker.id)) return;
+    setState(() => _sendingWorkerIds.add(worker.id));
+    try {
+      final sent = await _hireRecommendedWorker(
+        context: context,
+        repository: widget.repository,
+        job: widget.job,
+        worker: worker,
+        onChanged: widget.onChanged,
+      );
+      if (mounted && sent) setState(() => _sentWorkerIds.add(worker.id));
+    } finally {
+      if (mounted) setState(() => _sendingWorkerIds.remove(worker.id));
+    }
+  }
 
   @override
   void initState() {
@@ -5989,6 +6372,60 @@ class _JobMatchesState extends State<_JobMatches> {
                 : workers
                       .where((worker) => worker.skills.contains(_skillFilter))
                       .toList();
+            final viewToggle = ListMapViewToggle(
+              mapView: _mapView,
+              onChanged: (value) => setState(() => _mapView = value),
+            );
+
+            // The map owns drag gestures, so it can't sit inside the
+            // scrolling list: Map View fills the screen below the toggle
+            // instead. Mirrors the worker's Find Jobs map.
+            if (_mapView) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    viewToggle,
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Every matched worker is pinned by their general area. '
+                      "Tap a pin to see who's available there.",
+                      style: TextStyle(
+                        color: GawaGoColors.textMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: HouseholdWorkersMap(
+                        workers: visible,
+                        // HouseholdJob defaults a missing coordinate to 0,
+                        // which would pin the job site off the coast of
+                        // Africa rather than nowhere.
+                        jobLatitude: widget.job.latitude == 0
+                            ? null
+                            : widget.job.latitude,
+                        jobLongitude: widget.job.longitude == 0
+                            ? null
+                            : widget.job.longitude,
+                        onViewProfile: (worker) => _showWorkerMatchProfile(
+                          context,
+                          repository: widget.repository,
+                          job: widget.job,
+                          worker: worker,
+                          onChanged: widget.onChanged,
+                        ),
+                        onHire: (worker) => _sendRequest(worker),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
             return ListView(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
               children: [
@@ -5998,6 +6435,8 @@ class _JobMatchesState extends State<_JobMatches> {
                   selected: _skillFilter,
                   onSelect: (value) => setState(() => _skillFilter = value),
                 ),
+                const SizedBox(height: 14),
+                viewToggle,
                 const SizedBox(height: 14),
                 if (visible.isEmpty)
                   _DashedEmptyBox(
@@ -6027,12 +6466,17 @@ class _JobMatchesState extends State<_JobMatches> {
                         rateLabel: _shortRate(worker.workerRate),
                         skills: worker.skills,
                         bio: worker.bio,
+                        breakdown: AiMatchBreakdown(
+                          skillSharePercent: worker.skillSharePercent,
+                          exactSkillMatch: worker.exactSkillMatch,
+                        ),
                         requestSent:
+                            _sentWorkerIds.contains(worker.id) ||
                             _applicationForWorker(
-                              widget.job,
-                              worker,
-                            )?.status.toLowerCase() ==
-                            'hire_requested',
+                                  widget.job,
+                                  worker,
+                                )?.status.toLowerCase() ==
+                                'hire_requested',
                         onViewProfile: () => _showWorkerMatchProfile(
                           context,
                           repository: widget.repository,
@@ -6040,13 +6484,9 @@ class _JobMatchesState extends State<_JobMatches> {
                           worker: worker,
                           onChanged: widget.onChanged,
                         ),
-                        onSendRequest: () => _hireRecommendedWorker(
-                          context: context,
-                          repository: widget.repository,
-                          job: widget.job,
-                          worker: worker,
-                          onChanged: widget.onChanged,
-                        ),
+                        onSendRequest: _sendingWorkerIds.contains(worker.id)
+                            ? () {}
+                            : () => _sendRequest(worker),
                       ),
                     ),
                   ),
@@ -6074,9 +6514,10 @@ String _shortRate(String rate) {
   final whole = amount.truncateToDouble() == amount
       ? amount.toStringAsFixed(0)
       : amount.toStringAsFixed(2);
-  return rate.toLowerCase().contains('hour')
-      ? 'PHP $whole/hr'
-      : 'PHP $whole/day';
+  final lower = rate.toLowerCase();
+  if (lower.contains('hour')) return 'PHP $whole/hr';
+  if (lower.contains('fixed')) return 'PHP $whole fixed';
+  return 'PHP $whole/day';
 }
 
 /// Page heading for the AI match list: the eyebrow/title/weights line, the
@@ -6106,7 +6547,7 @@ class _MatchesHeader extends StatelessWidget {
               child: Text(
                 'AI MATCHED WORKERS',
                 style: TextStyle(
-                  color: GawaGoColors.primary,
+                  color: GawaGoColors.leafDeep,
                   fontSize: 11,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 1.1,
@@ -6116,7 +6557,7 @@ class _MatchesHeader extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
+                color: GawaGoColors.leafTint,
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Row(
@@ -6130,7 +6571,7 @@ class _MatchesHeader extends StatelessWidget {
                   Text(
                     'Live matches',
                     style: TextStyle(
-                      color: GawaGoColors.primary,
+                      color: GawaGoColors.leafDeep,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -6144,9 +6585,10 @@ class _MatchesHeader extends StatelessWidget {
         Text(
           jobTitle,
           style: const TextStyle(
+            fontFamily: GawaGoColors.fontHeading,
             color: GawaGoColors.ink,
             fontSize: 22,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 4),
@@ -6170,18 +6612,21 @@ class _MatchesHeader extends StatelessWidget {
                   alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   decoration: BoxDecoration(
-                    color: active ? GawaGoColors.deepGreen : Colors.white,
+                    color: active ? GawaGoColors.ink : Colors.transparent,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
                       color: active
-                          ? GawaGoColors.deepGreen
-                          : const Color(0xFFD8D0C3),
+                          ? GawaGoColors.ink
+                          : GawaGoColors.lineStrong,
+                      width: 1.5,
                     ),
                   ),
                   child: Text(
                     skill,
                     style: TextStyle(
-                      color: active ? Colors.white : GawaGoColors.ink,
+                      color: active
+                          ? GawaGoColors.cream
+                          : GawaGoColors.textMuted,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -6201,7 +6646,11 @@ class _MatchesHeader extends StatelessWidget {
 /// Shared by the job detail panel and the post-a-job matches screen. The
 /// guards mirror the backend's own rules so the household gets an immediate
 /// answer instead of a round-trip failure.
-Future<void> _hireRecommendedWorker({
+/// Returns true when a hire or a hire request actually went through, so
+/// callers that track their own "sent" state (e.g. _JobMatches, F-10) know
+/// to update it -- this function swallows its own errors into a snackbar
+/// rather than throwing, so the return value is the only success signal.
+Future<bool> _hireRecommendedWorker({
   required BuildContext context,
   required HouseholdRepository repository,
   required HouseholdJob job,
@@ -6217,28 +6666,34 @@ Future<void> _hireRecommendedWorker({
 
   if (worker.verificationStatus.trim().toLowerCase() != 'verified') {
     notify('This worker must be verified before they can be hired.');
-    return;
+    return false;
   }
   if (job.hiredCount >= job.workerSlots) {
     notify('This job already has enough hired workers.');
-    return;
+    return false;
   }
 
   final existing = _applicationForWorker(job, worker);
   final existingStatus = existing?.status.trim().toLowerCase();
   if (existingStatus == 'hired') {
     notify('This worker is already hired for this job.');
-    return;
+    return false;
   }
   if (existingStatus == 'hire_requested') {
     notify('A hire request was already sent to this worker.');
-    return;
+    return false;
   }
 
   try {
-    // Always an offer the worker accepts, never a booking made for them --
-    // an applicant the household picks is asked the same way a matched
-    // worker is.
+    // Same hybrid rule as the website: a worker who applied is hired
+    // outright (applying is consent); one who never applied is invited and
+    // confirms first.
+    if (existingStatus == 'pending') {
+      await repository.setApplicationStatus(existing!.id, 'hired');
+      onChanged();
+      notify('${worker.name} is hired. The job is now in progress.');
+      return true;
+    }
     if (existing != null) {
       await repository.setApplicationStatus(existing.id, 'hire_requested');
     } else {
@@ -6246,8 +6701,10 @@ Future<void> _hireRecommendedWorker({
     }
     onChanged();
     notify('Request sent. The worker can accept or reject it.');
+    return true;
   } catch (error) {
     notify(friendlyApiError(error));
+    return false;
   }
 }
 
@@ -6255,6 +6712,7 @@ String _title(_Page page) => switch (page) {
   _Page.dashboard => 'Dashboard',
   _Page.postJob => 'Post a Job',
   _Page.jobs => 'My Jobs',
+  _Page.messages => 'Messages',
   _Page.myReports => 'My Reports',
   _Page.profile => 'My Profile',
   _Page.reviews => 'Reviews & Feedback',
@@ -6266,6 +6724,7 @@ IconData _icon(_Page page) => switch (page) {
   _Page.dashboard => Icons.dashboard_outlined,
   _Page.postJob => Icons.post_add,
   _Page.jobs => Icons.work_outline,
+  _Page.messages => Icons.chat_bubble_outline,
   _Page.myReports => Icons.flag_outlined,
   _Page.profile => Icons.person_outline,
   _Page.reviews => Icons.star_outline,
@@ -6275,10 +6734,6 @@ IconData _icon(_Page page) => switch (page) {
 
 double _coordinateForApi(double value) =>
     double.parse(value.toStringAsFixed(7));
-
-String _clock(TimeOfDay value) =>
-    '${value.hour.toString().padLeft(2, '0')}:'
-    '${value.minute.toString().padLeft(2, '0')}:00';
 
 /// Everything the household-facing worker profile renders, normalised so the
 /// same screen serves an applicant and a Smart-Matched / AI-recommended
@@ -6362,7 +6817,7 @@ class _WorkerProfileSubject {
       rateFallback: item.workerRateLabel,
       yearsExperience: item.workerYearsExperience,
       distanceKm: item.distanceKm,
-      distanceLabel: '',
+      distanceLabel: item.distanceLabel,
       matchScore: item.workerMatchScore,
       matchBasis: 'Based on verification, skills and distance',
     );
@@ -6457,7 +6912,7 @@ class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
             onPressed: widget.hireEnabled ? widget.onHire : null,
             style: FilledButton.styleFrom(
               backgroundColor: GawaGoColors.primary,
-              foregroundColor: Colors.white,
+              foregroundColor: GawaGoColors.onPrimary,
               disabledBackgroundColor: Colors.white.withValues(alpha: 0.16),
               disabledForegroundColor: Colors.white.withValues(alpha: 0.7),
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -6465,8 +6920,9 @@ class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
                 borderRadius: BorderRadius.circular(999),
               ),
               textStyle: const TextStyle(
+                fontFamily: GawaGoColors.fontBody,
                 fontSize: 13.5,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
                 letterSpacing: 0,
               ),
             ),
@@ -6699,9 +7155,9 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
     const avatarRadius = 38.0;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+        border: Border.all(color: GawaGoColors.border, width: 1.2),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -6732,7 +7188,7 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.all(3),
                       decoration: const BoxDecoration(
-                        color: Colors.white,
+                        color: GawaGoColors.surface,
                         shape: BoxShape.circle,
                       ),
                       child: WorkerPhoto(
@@ -6751,9 +7207,10 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
             subject.displayName,
             textAlign: TextAlign.center,
             style: const TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
               color: GawaGoColors.ink,
               fontSize: 22,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
           ),
@@ -6766,7 +7223,7 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
           const SizedBox(height: 10),
           const Center(child: SoftGreenPill(label: 'Worker')),
           const SizedBox(height: 18),
-          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          const Divider(height: 1, color: GawaGoColors.border),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
             child: Column(
@@ -6798,7 +7255,7 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          const Divider(height: 1, color: GawaGoColors.border),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
             child: Column(
@@ -6853,7 +7310,7 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1, color: Color(0xFFE6E0D6)),
+          const Divider(height: 1, color: GawaGoColors.border),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
             child: Column(
@@ -6874,14 +7331,15 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
                   child: FilledButton(
                     onPressed: onHire,
                     style: FilledButton.styleFrom(
-                      backgroundColor: GawaGoColors.deepGreen,
-                      foregroundColor: Colors.white,
+                      backgroundColor: GawaGoColors.primary,
+                      foregroundColor: GawaGoColors.onPrimary,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                       textStyle: const TextStyle(
+                        fontFamily: GawaGoColors.fontHeading,
                         fontSize: 17,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
                     ),
@@ -6958,9 +7416,9 @@ class _MatchScoreCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD8D0C3), width: 1.2),
+        border: Border.all(color: GawaGoColors.border, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6976,9 +7434,10 @@ class _MatchScoreCard extends StatelessWidget {
                     const Text(
                       'Match Score',
                       style: TextStyle(
+                        fontFamily: GawaGoColors.fontHeading,
                         color: GawaGoColors.ink,
                         fontSize: 17,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
                     ),
@@ -7047,9 +7506,9 @@ class _NeutralChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1EEE6),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE0D8CC)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Text(
         label,
@@ -7074,21 +7533,20 @@ class _ReadOnlyCertificationTile extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F5F0),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE6E0D6)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // The file route needs the bearer token, which Image.network
+          // can't send; PDFs get a pointer to the website instead.
           if (certificate.fileUrl.isNotEmpty && certificate.isImage)
-            Image.network(
-              certificate.fileUrl,
-              height: 160,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
-            ),
+            AuthenticatedImage(url: certificate.fileUrl, height: 160)
+          else if (certificate.fileUrl.isNotEmpty)
+            CertificateFileNote(isPdf: certificate.isPdf),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
             child: Column(
@@ -7151,9 +7609,9 @@ class _ReadOnlyWorkSampleTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F5F0),
+        color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE6E0D6)),
+        border: Border.all(color: GawaGoColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -7208,12 +7666,12 @@ class _WorkSampleThumb extends StatelessWidget {
             height: 110,
             width: double.infinity,
             child: url.isEmpty
-                ? Container(color: const Color(0xFFE2DCD0))
+                ? Container(color: GawaGoColors.border)
                 : Image.network(
                     url,
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) =>
-                        Container(color: const Color(0xFFE2DCD0)),
+                        Container(color: GawaGoColors.border),
                   ),
           ),
         ),
@@ -7250,7 +7708,7 @@ class _EmploymentHistoryRow extends StatelessWidget {
             height: 40,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: const Color(0xFFEDF5EF),
+              color: GawaGoColors.leafTint,
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(
@@ -7284,16 +7742,84 @@ class _EmploymentHistoryRow extends StatelessWidget {
                     fontSize: 13.5,
                   ),
                 ),
+                if (entry.locationLabel.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    entry.locationLabel,
+                    style: const TextStyle(
+                      color: GawaGoColors.textMuted,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
                 if (period.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   Text(
                     period,
                     style: const TextStyle(
-                      color: Color(0xFF8A9690),
+                      color: GawaGoColors.textFaint,
                       fontSize: 12.5,
                     ),
                   ),
                 ],
+                JobSkillRatingChips(
+                  ratings: [
+                    for (final rating in entry.skillRatings)
+                      MapEntry(rating.skillName, rating.rating),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown on an applicant's profile until they are hired for this job: the
+/// road distance only, since the API withholds their exact location and
+/// route before then.
+class _WorkerLocationPrivatePanel extends StatelessWidget {
+  const _WorkerLocationPrivatePanel({required this.distanceLabel});
+
+  final String distanceLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: GawaGoColors.cream,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: GawaGoColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.lock_outline, color: GawaGoColors.textMuted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  distanceLabel.isEmpty
+                      ? 'Road distance unavailable'
+                      : distanceLabel,
+                  style: const TextStyle(
+                    color: GawaGoColors.ink,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  "This worker hasn't pinned a location on their profile "
+                  'yet, so there is nothing to show on the map.',
+                  style: TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
+                ),
               ],
             ),
           ),

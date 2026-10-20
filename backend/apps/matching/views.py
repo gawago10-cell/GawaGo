@@ -97,6 +97,7 @@ class RecommendedWorkersView(APIView):
             UserProfile.objects.select_related("user")
             .prefetch_related("user__availability_windows")
             .filter(role=UserProfile.ROLE_WORKER, user__is_staff=False)
+            .not_suspended()
         )
         match_results = build_match_results(job, workers)
         if rank == RANK_AI:
@@ -104,7 +105,7 @@ class RecommendedWorkersView(APIView):
             # breakdown, so the (expensive, content-based) scoring pass only
             # runs when that view actually asked for it.
             results = _merge_ai_scores(job, workers, match_results)
-            results.sort(key=lambda result: result["ai_score"], reverse=True)
+            results.sort(key=lambda result: result["_ai_sort"], reverse=True)
         else:
             results = _default_ai_fields(match_results)
         return Response(
@@ -146,12 +147,22 @@ def _merge_ai_scores(job, worker_profiles, match_results):
         for result in get_recommended_workers(job, worker_profiles, limit=len(worker_profiles))
     }
 
+    # Two decimals (the UI shows whole percentages): proximity_contribution
+    # is 0.3 / (1 + distance_km), so at 4 decimals it -- or ai_score minus
+    # skill_contribution -- gives back the worker's distance to within a few
+    # metres, undoing the rounding of distance_km.
+    # The displayed ai_score is the sum of the two rounded terms so the
+    # breakdown still adds up; the unrounded score is kept (unserialized)
+    # so rounding never reorders candidates.
     for result in match_results:
         scored = ai_by_worker.get(result["worker_id"])
-        result["ai_score"] = scored["ai_score"] if scored else 0.0
-        result["skill_similarity"] = scored["skill_similarity"] if scored else 0.0
-        result["skill_contribution"] = scored["skill_contribution"] if scored else 0.0
-        result["proximity_contribution"] = scored["proximity_contribution"] if scored else 0.0
+        skill_contribution = round(scored["skill_contribution"], 2) if scored else 0.0
+        proximity_contribution = round(scored["proximity_contribution"], 2) if scored else 0.0
+        result["_ai_sort"] = scored["ai_score"] if scored else 0.0
+        result["ai_score"] = round(skill_contribution + proximity_contribution, 2)
+        result["skill_similarity"] = round(scored["skill_similarity"], 2) if scored else 0.0
+        result["skill_contribution"] = skill_contribution
+        result["proximity_contribution"] = proximity_contribution
         result["exact_skill_match"] = scored["exact_skill_match"] if scored else False
 
     return match_results

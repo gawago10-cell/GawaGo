@@ -7,6 +7,7 @@ import {
 } from "../services/backendDataService";
 import { parseLocationLabel } from "../utils/locationUtils";
 import AdminUserHistorySection from "./AdminUserHistorySection";
+import AuthImage from "./AuthImage";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
@@ -19,7 +20,7 @@ const STATUS_OPTIONS = [
 const TYPE_LABELS = {
   payment_issue: "Payment Issue",
   quality_of_work: "Quality of Work",
-  no_show: "No-Show",
+  no_show: "No Show",
   safety_concern: "Safety Concern",
   behavior: "Inappropriate Behavior",
   other: "Other",
@@ -434,13 +435,12 @@ export default function AdminComplaintsQueue({
                 {selected.evidence?.length > 0 ? (
                   <div className="d-flex gap-2 flex-wrap">
                     {selected.evidence.map((item) => (
-                      <a key={item.id} href={item.imageUrl} target="_blank" rel="noreferrer">
-                        <img
-                          src={item.imageUrl}
-                          alt={`Evidence for report ${selected.id}`}
-                          className="admin-report-evidence-thumb"
-                        />
-                      </a>
+                      <AuthImage
+                        key={item.id}
+                        src={item.imageUrl}
+                        alt={`Evidence for report ${selected.id}`}
+                        className="admin-report-evidence-thumb"
+                      />
                     ))}
                   </div>
                 ) : (

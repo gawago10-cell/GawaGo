@@ -10,7 +10,6 @@ import {
   normalizeAvailabilityWindow,
   normalizeCertificate,
   normalizeProfileRecord,
-  normalizeVerificationDocument,
   normalizeVerificationRequest,
   getApiErrorMessage,
 } from "../utils/normalizers";
@@ -59,6 +58,81 @@ export async function fetchVerificationRequests() {
     return null;
   }
   return records.map(normalizeVerificationRequest).filter(Boolean);
+}
+
+export async function fetchAdminAuditLog() {
+  const records = await fetchAllRecords("common/admin-action-log/", {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (!records) {
+    return null;
+  }
+  return records.map((row) => ({
+    id: `admin-action-${row.id}`,
+    timestamp: row.created_at,
+    admin: row.actor_username || "Unknown admin",
+    action: row.action_label || row.action,
+    target: row.target_label || "",
+    detail: row.detail || "",
+  }));
+}
+
+function normalizeAdminAccount(row) {
+  return {
+    id: row.id,
+    username: row.username || "",
+    email: row.email || "",
+    displayName: row.full_name || row.username || "",
+    isActive: Boolean(row.is_active),
+    isOwner: Boolean(row.is_superuser),
+    roleLabel: row.role_label || (row.is_superuser ? "Full System Control" : "Admin"),
+    lastLogin: row.last_login || null,
+    dateJoined: row.date_joined || null,
+  };
+}
+
+export async function fetchAdminAccounts() {
+  const records = await fetchAllRecords("accounts/admin/admins/", {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (!records) {
+    return null;
+  }
+  return records.map(normalizeAdminAccount);
+}
+
+export async function createAdminAccount({ username, email, password, firstName, lastName }) {
+  const response = await apiRequest("accounts/admin/admins/", {
+    method: "POST",
+    auth: true,
+    body: {
+      username,
+      email,
+      password,
+      first_name: firstName || "",
+      last_name: lastName || "",
+    },
+  });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "Unable to create that admin account."));
+  }
+  return normalizeAdminAccount(data);
+}
+
+export async function setAdminAccountActive(username, isActive) {
+  const response = await apiRequest(`accounts/admin/admins/${encodeURIComponent(username)}/`, {
+    method: "PATCH",
+    auth: true,
+    body: { is_active: isActive },
+  });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "Unable to update that admin account."));
+  }
+  return normalizeAdminAccount(data);
 }
 
 export async function fetchCurrentAccount(currentUser) {
@@ -118,6 +192,113 @@ export async function fetchJobs() {
     return null;
   }
   return records.map(normalizeBackendJob).filter(Boolean);
+}
+
+export async function fetchMyAccount() {
+  const response = await apiRequest("accounts/me/", {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (!response.ok) {
+    return null;
+  }
+  return readResponseData(response);
+}
+
+export async function fetchWorkerEmploymentHistory(workerId) {
+  const records = await fetchAllRecords(`jobs/?worker=${workerId}&status=completed`, {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (!records) {
+    return null;
+  }
+  return records.map((job) => ({
+    id: job.id,
+    title: job.title,
+    household_name: job.household_name,
+    location: job.location_label || "",
+    completed_at: job.completed_at,
+    skill_ratings: job.skill_ratings || [],
+  }));
+}
+
+export async function fetchMyPortfolio() {
+  const response = await apiRequest("accounts/me/portfolio/", {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const data = await readResponseData(response);
+  return {
+    bio: data?.bio || "",
+    yearsExperience: data?.years_experience ?? 0,
+    // One entry per profile skill (the backend keeps the two in step), with
+    // the proficiency the worker set and the households' rating.
+    portfolioSkills: (data?.skills || []).map((item) => ({
+      id: item.id,
+      name: item.skill_name || "",
+      proficiency: item.proficiency || "",
+      averageRating: item.average_rating ?? null,
+      ratingCount: item.rating_count ?? 0,
+    })),
+    certifications: (data?.certifications || []).map((item) => ({
+      id: item.id,
+      name: item.certificate_name || "",
+      certificateType: item.certificate_type || "",
+      issuer: item.issuer || "",
+      issueDate: item.issue_date || "",
+      expiryDate: item.expiry_date || "",
+      verificationStatus: item.verification_status || "pending",
+      isVerified: Boolean(item.is_verified),
+      certificatePreview: item.certificate_file_url || "",
+      fileType: item.certificate_file_type || "",
+    })),
+    workSamples: (data?.portfolio_items || []).map((item) => ({
+      id: item.id,
+      title: item.title || "",
+      description: item.description || "",
+      beforePreview: item.before_image_url || item.image_url || "",
+      afterPreview: item.after_image_url || "",
+    })),
+  };
+}
+
+export async function updatePortfolioSkillProficiency(skillId, proficiency) {
+  const response = await apiRequest(`accounts/me/portfolio/skills/${skillId}/`, {
+    method: "PATCH",
+    auth: true,
+    body: { proficiency },
+  });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "Unable to update this skill."));
+  }
+  return data;
+}
+
+export async function deletePortfolioCertification(certificationId) {
+  const response = await apiRequest(`accounts/me/portfolio/certifications/${certificationId}/`, {
+    method: "DELETE",
+    auth: true,
+  });
+  if (!response.ok && response.status !== 404) {
+    const data = await readResponseData(response);
+    throw new Error(getApiErrorMessage(data, "Unable to delete this certification."));
+  }
+}
+
+export async function deletePortfolioItem(itemId) {
+  const response = await apiRequest(`accounts/me/portfolio/items/${itemId}/`, {
+    method: "DELETE",
+    auth: true,
+  });
+  if (!response.ok && response.status !== 404) {
+    const data = await readResponseData(response);
+    throw new Error(getApiErrorMessage(data, "Unable to delete this work sample."));
+  }
 }
 
 export async function fetchProfiles() {
@@ -204,7 +385,86 @@ export async function fetchReviews({ username, role, selectedWorkerUsername = ""
     requests.push(fetchAllRecords(`reviews/?username=${encodeURIComponent(selectedWorkerUsername)}`, { auth: false, suppressUnauthorized: true }));
   }
   const results = await Promise.all(requests);
-  return results.map((records) => (records || []).map(normalizeBackendReview).filter(Boolean));
+  // A failed list stays null ("keep what we had"), the same contract as
+  // fetchAllRecords: turning it into [] used to blank the review screens
+  // until the next poll.
+  return results.map((records) => (records ? records.map(normalizeBackendReview).filter(Boolean) : null));
+}
+
+// Chat between a household and the worker it hired. A conversation id is the
+// hire's JobApplication id; the backend refuses (403) once the hire is no
+// longer active, so errors carry the HTTP status for the widget to react to.
+function normalizeChatMessage(message) {
+  return {
+    id: message.id,
+    conversationId: message.conversation_id,
+    senderId: message.sender_id,
+    senderName: message.sender_name || "",
+    isMine: Boolean(message.is_mine),
+    content: message.content || "",
+    createdAt: message.created_at || "",
+    isRead: Boolean(message.is_read),
+    status: "sent",
+  };
+}
+
+function normalizeConversation(conversation) {
+  const other = conversation.other_party || {};
+  return {
+    id: conversation.id,
+    jobId: conversation.job_id,
+    jobTitle: conversation.job_title || "Service Request",
+    statusLabel: conversation.status_label || "",
+    serviceRate: conversation.service_rate,
+    otherPartyName: other.name || other.username || "",
+    otherPartyRole: other.role || "",
+    otherPartyPhoto: other.photo_url || "",
+    lastMessage: conversation.last_message ? normalizeChatMessage(conversation.last_message) : null,
+    unreadCount: conversation.unread_count || 0,
+  };
+}
+
+async function chatRequest(path, options, fallbackMessage) {
+  const response = await apiRequest(path, { auth: true, ...options });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    const error = new Error(getApiErrorMessage(data, fallbackMessage));
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+export async function getConversations() {
+  const data = await chatRequest("conversations/", { suppressUnauthorized: true }, "Unable to load conversations.");
+  return unwrapRecords(data).map(normalizeConversation);
+}
+
+export async function getMessages(hireId, afterId = null) {
+  const query = afterId ? `?after=${encodeURIComponent(afterId)}` : "";
+  const data = await chatRequest(
+    `conversations/${hireId}/messages/${query}`,
+    { suppressUnauthorized: true },
+    "Unable to load messages.",
+  );
+  return unwrapRecords(data).map(normalizeChatMessage);
+}
+
+export async function sendMessage(hireId, content) {
+  const data = await chatRequest(
+    `conversations/${hireId}/messages/`,
+    { method: "POST", body: { content } },
+    "Message not sent.",
+  );
+  return normalizeChatMessage(data);
+}
+
+export async function markConversationRead(hireId) {
+  return chatRequest(
+    `conversations/${hireId}/read/`,
+    { method: "POST", suppressUnauthorized: true },
+    "Unable to update messages.",
+  );
 }
 
 /**
@@ -464,68 +724,3 @@ export async function reviewCertificate(certificateId, { status, notes = "" }) {
   return normalizeCertificate(data);
 }
 
-export async function fetchAdminVerificationDocuments(statusFilter = "pending") {
-  const query = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
-  const records = await fetchAllRecords(`accounts/admin/verification-documents/${query}`, {
-    auth: true,
-    suppressUnauthorized: true,
-  });
-  if (!records) {
-    return null;
-  }
-  return records.map(normalizeVerificationDocument).filter(Boolean);
-}
-
-export async function reviewVerificationDocument(documentId, { status, notes = "" }) {
-  const response = await apiRequest(`accounts/admin/verification-documents/${documentId}/`, {
-    method: "PATCH",
-    auth: true,
-    body: { verification_status: status, verification_notes: notes },
-  });
-  const data = await readResponseData(response);
-  if (!response.ok) {
-    throw new Error(getApiErrorMessage(data, "Unable to review this document."));
-  }
-  return normalizeVerificationDocument(data);
-}
-
-export async function fetchMyVerificationDocuments() {
-  const records = await fetchAllRecords("accounts/me/verification-documents/", {
-    auth: true,
-    suppressUnauthorized: true,
-  });
-  if (!records) {
-    return null;
-  }
-  return records.map(normalizeVerificationDocument).filter(Boolean);
-}
-
-export async function uploadVerificationDocument({ idType, idNumber, file, isPrimary = true }) {
-  const body = new FormData();
-  body.append("id_type", idType);
-  body.append("id_number", idNumber || "");
-  body.append("is_primary", isPrimary ? "true" : "false");
-  body.append("document_file", file);
-  const response = await apiRequest("accounts/me/verification-documents/", {
-    method: "POST",
-    auth: true,
-    body,
-  });
-  const data = await readResponseData(response);
-  if (!response.ok) {
-    throw new Error(getApiErrorMessage(data, "Unable to upload this document."));
-  }
-  return normalizeVerificationDocument(data);
-}
-
-export async function deleteVerificationDocument(documentId) {
-  const response = await apiRequest(`accounts/me/verification-documents/${documentId}/`, {
-    method: "DELETE",
-    auth: true,
-  });
-  if (!response.ok) {
-    const data = await readResponseData(response);
-    throw new Error(getApiErrorMessage(data, "Unable to delete this document."));
-  }
-  return true;
-}

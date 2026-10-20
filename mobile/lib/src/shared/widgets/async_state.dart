@@ -44,7 +44,7 @@ class _SkeletonCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD5E6DA)),
+        border: Border.all(color: GawaGoColors.leafLine),
       ),
     );
   }
@@ -75,14 +75,14 @@ class AppEmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (title == null)
-              Icon(icon, size: 42, color: GawaGoColors.primary)
+              Icon(icon, size: 42, color: GawaGoColors.leafDeep)
             else
               Container(
                 width: 64,
                 height: 64,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1EEE6),
+                  color: GawaGoColors.surfaceMuted,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(icon, size: 30, color: GawaGoColors.ink),
@@ -93,9 +93,10 @@ class AppEmptyState extends StatelessWidget {
                 title!,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
+                  fontFamily: GawaGoColors.fontHeading,
                   color: GawaGoColors.ink,
                   fontSize: 19,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
               ),

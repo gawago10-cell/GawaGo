@@ -1,19 +1,20 @@
 from rest_framework import serializers
 from django.urls import reverse
-from pathlib import Path
 
-from apps.common.models import VerificationRequest
+from apps.common.models import AdminActionLog, VerificationRequest
+from apps.common.uploads import UploadRejected, validate_document_upload
 
 
-ALLOWED_VERIFICATION_DOCUMENT_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".heic",
-    ".heif",
-    ".pdf",
-}
+class AdminActionLogSerializer(serializers.ModelSerializer):
+    action_label = serializers.CharField(source="get_action_display", read_only=True)
+
+    class Meta:
+        model = AdminActionLog
+        fields = [
+            "id", "actor_username", "action", "action_label",
+            "target_label", "target_type", "target_id", "detail", "created_at",
+        ]
+        read_only_fields = fields
 
 
 class VerificationRequestSerializer(serializers.ModelSerializer):
@@ -28,6 +29,7 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
     worker_daily_rate = serializers.SerializerMethodField()
     worker_years_experience = serializers.SerializerMethodField()
     worker_profile_photo = serializers.SerializerMethodField()
+    primary_id_type_label = serializers.CharField(source="get_primary_id_type_display", read_only=True)
     primary_id_preview = serializers.SerializerMethodField()
     secondary_doc_preview = serializers.SerializerMethodField()
 
@@ -47,6 +49,8 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
             "worker_daily_rate",
             "worker_years_experience",
             "worker_profile_photo",
+            "primary_id_type",
+            "primary_id_type_label",
             "primary_id_name",
             "secondary_doc_name",
             "primary_id_preview",
@@ -115,12 +119,31 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
 
 
 class VerificationRequestCreateSerializer(serializers.Serializer):
-    primary_id_name = serializers.CharField()
-    secondary_doc_name = serializers.CharField()
+    primary_id_type = serializers.ChoiceField(
+        choices=VerificationRequest.ID_TYPE_CHOICES,
+        default=VerificationRequest.ID_TYPE_OTHER,
+    )
+    # Only meaningful for "other"; for every listed type the label is taken
+    # from the choice itself, so the two can never disagree.
+    primary_id_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    secondary_doc_name = serializers.CharField(max_length=255)
     primary_id_file = serializers.FileField(required=True)
     secondary_doc_file = serializers.FileField(required=True)
     notes = serializers.CharField(required=False, allow_blank=True)
     worker_username = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        id_type = attrs.get("primary_id_type", VerificationRequest.ID_TYPE_OTHER)
+        typed_name = (attrs.get("primary_id_name") or "").strip()
+        if id_type == VerificationRequest.ID_TYPE_OTHER:
+            if not typed_name:
+                raise serializers.ValidationError(
+                    {"primary_id_name": "Name the ID you are uploading."}
+                )
+            attrs["primary_id_name"] = typed_name
+        else:
+            attrs["primary_id_name"] = dict(VerificationRequest.ID_TYPE_CHOICES)[id_type]
+        return attrs
 
     def validate_primary_id_file(self, value):
         return self.validate_document_file(value)
@@ -130,6 +153,7 @@ class VerificationRequestCreateSerializer(serializers.Serializer):
 
     @staticmethod
     def validate_document_file(value):
-        if Path(value.name).suffix.lower() not in ALLOWED_VERIFICATION_DOCUMENT_EXTENSIONS:
-            raise serializers.ValidationError("Choose an image or PDF document.")
-        return value
+        try:
+            return validate_document_upload(value)
+        except UploadRejected as rejected:
+            raise serializers.ValidationError(str(rejected)) from rejected
