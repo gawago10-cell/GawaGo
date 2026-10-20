@@ -1,43 +1,46 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from django.contrib.auth.models import User
-
+from apps.common.pagination import paginated_response
 from apps.notifications.models import Notification
 from apps.notifications.serializers import NotificationSerializer
 
 
 class NotificationListView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if request.user.is_authenticated:
-            recipient = request.user
-        else:
-            username = request.query_params.get("username") or request.query_params.get("recipient_username")
-            if not username:
-                return Response({"detail": "username is required when not authenticated."}, status=status.HTTP_400_BAD_REQUEST)
-            recipient = User.objects.filter(username=username).first()
-            if recipient is None:
-                return Response([])
-        queryset = Notification.objects.select_related("recipient").filter(recipient=recipient)
-        return Response(NotificationSerializer(queryset, many=True).data)
+        queryset = Notification.objects.select_related("recipient").filter(recipient=request.user)
+        return paginated_response(request, queryset, NotificationSerializer)
+
+
+class NotificationUnreadCountView(APIView):
+    """GET /api/notifications/unread-count/ -- just the badge number, so a
+    client polling for it doesn't download every page of notifications."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"unread": Notification.objects.filter(recipient=request.user, is_read=False).count()})
 
 
 class NotificationMarkReadView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
-        notification = get_object_or_404(Notification, pk=pk)
-        actor = request.user if request.user.is_authenticated else None
-        actor_username = None if actor is None else actor.username
-        if not actor_username:
-            actor_username = request.data.get("username") or request.query_params.get("username")
-        if notification.recipient.username != actor_username and not (actor and actor.is_staff):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+        notification = get_object_or_404(Notification, pk=pk, recipient=request.user)
         notification.is_read = True
         notification.save(update_fields=["is_read"])
-        return Response(NotificationSerializer(notification).data, status=status.HTTP_200_OK)
+        return Response(NotificationSerializer(notification).data)
+
+
+class NotificationDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        notification = get_object_or_404(Notification, pk=pk, recipient=request.user)
+        notification.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

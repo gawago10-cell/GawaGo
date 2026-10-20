@@ -1,19 +1,23 @@
 import { getApiBaseUrl } from "../api/apiClient";
 
+export const MAX_WORKER_SKILLS = 3;
+
+// Mirrors VerificationRequest.ID_TYPE_CHOICES in apps/common/models.py. The
+// backend rejects anything outside this list, so the two must stay in step.
+export const GOVERNMENT_ID_TYPES = [
+  { value: "national_id", label: "National ID (PhilSys)" },
+  { value: "passport", label: "Passport" },
+  { value: "drivers_license", label: "Driver's License" },
+  { value: "voter_id", label: "Voter ID" },
+  { value: "tin", label: "TIN ID" },
+  { value: "umid", label: "UMID" },
+  { value: "postal_id", label: "Postal ID" },
+  { value: "other", label: "Other Government ID" },
+];
 export const SKILLS = [
   "House Cleaning",
-  "Cooking",
   "Laundry",
-  "Childcare",
-  "Elder Care",
-  "Gardening",
-  "Electrical Work",
-  "Plumbing",
-  "Carpentry",
-  "Painting",
-  "Aircon Repair/Cleaning",
-  "Welding",
-  "Driving",
+  "Cooking",
   "Other",
 ];
 export const BARANGAYS = [
@@ -53,12 +57,13 @@ export const STORAGE_KEYS = {
   workers: "gawago-registered-workers",
   households: "gawago-registered-households",
   jobs: "gawago-posted-jobs",
+  chatMessages: "gawago-chat-messages",
   verificationRequests: "gawago-verification-requests",
   notificationReads: "gawago-notification-reads",
 };
-export const SUPER_ADMIN_ACCOUNT = { username: "superadmin", password: "superadmin123", displayName: "Super Admin" };
 export const DEMO_DATA_VERSION = "v18";
 export const DEMO_VERSION_KEY = "gawago-demo-data-version";
+export const IS_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 export const API_BASE_URL = getApiBaseUrl();
 export const ACCOUNTS_API_BASE_URL = `${API_BASE_URL}/accounts`;
 export const EMPTY_WORKER_FORM = {
@@ -69,6 +74,12 @@ export const EMPTY_WORKER_FORM = {
   phone: "",
   barangay: "",
   streetAddress: "",
+  latitude: null,
+  longitude: null,
+  locationLabel: "",
+  locationSource: "",
+  locationWarning: "",
+  locationAccuracy: "",
   bio: "",
   hourlyRate: "0.00",
   dailyRate: "0.00",
@@ -89,8 +100,24 @@ export const EMPTY_HOUSEHOLD_FORM = {
   password: "",
   confirmPassword: "",
 };
-export const EMPTY_HOUSEHOLD_REVIEW_FORM = { rating: "5", feedback: "", jobId: "" };
-export const EMPTY_WORKER_FEEDBACK_FORM = { feedback: "", jobId: "" };
+export const EMPTY_HOUSEHOLD_REVIEW_FORM = {
+  rating: "5",
+  feedback: "",
+  jobId: "",
+  quality_of_work: "",
+  punctuality: "",
+  communication: "",
+  professionalism: "",
+};
+export const EMPTY_WORKER_FEEDBACK_FORM = {
+  rating: "5",
+  feedback: "",
+  jobId: "",
+  quality_of_work: "",
+  punctuality: "",
+  communication: "",
+  professionalism: "",
+};
 export const GMAIL_ADDRESS_PATTERN = /^[A-Z0-9._%+-]+@gmail\.com$/i;
 export const OPENROUTESERVICE_API_KEY = import.meta.env.VITE_OPENROUTESERVICE_API_KEY || "";
 export const OPENROUTESERVICE_SEARCH_URL =
@@ -109,12 +136,28 @@ export const PHILIPPINES_MAP_BOUNDS = {
 };
 export const TAYABAS_CITY_CENTER = { latitude: 13.956, longitude: 121.592 };
 export const TAYABAS_MAP_BOUNDS = {
-  south: 13.905,
-  west: 121.535,
-  north: 14.005,
-  east: 121.635,
+  south: 13.9,
+  west: 121.5,
+  north: 14.11,
+  east: 121.73,
 };
-export const ANALYTICS_CHART_COLORS = ["#667eea", "#28a745", "#ffc107", "#dc3545", "#17a2b8", "#4f2ea4"];
+// Validated categorical palette (dataviz skill reference palette, light mode):
+// fixed hue order chosen so adjacent slots clear CVD-safety checks. Never reorder
+// or cycle the first N slots independently -- add categories in this order.
+// Mirrors SKILL_WEIGHT in backend/apps/matching/recommendations.py. Used only
+// to describe the blend in the UI; the scores themselves come from the backend.
+export const AI_SKILL_WEIGHT = 0.7;
+
+export const ANALYTICS_CHART_COLORS = [
+  "#5c7a34", // leaf deep
+  "#9ebf5e", // leaf
+  "#c9a04a", // amber
+  "#b5573e", // terracotta
+  "#29341f", // moss
+  "#b9d383", // sage
+  "#8b9480", // stone
+  "#d08a76", // clay
+];
 export const ANALYTICS_SERVICE_CATEGORIES = SKILLS.filter((skill) => skill !== "Other");
 export const SHARED_DEMO_PASSWORD = "GawaGo123";
 export const DEMO_LOCATIONS = [

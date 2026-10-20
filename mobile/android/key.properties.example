@@ -1,0 +1,24 @@
+# Copy this file to android/key.properties (same directory) and fill it in
+# with your own values. key.properties is gitignored -- it holds secrets and
+# must never be committed or shared. Without it, release builds fall back to
+# the debug key, which Google Play (and users' own OS install checks) will
+# refuse to treat as a real update path.
+#
+# 1. Generate a keystore once, keep it forever (losing it means you can
+#    never publish an update to an app already installed by users):
+#
+#      keytool -genkey -v -keystore ~/gawago-release.keystore \
+#        -keyalg RSA -keysize 2048 -validity 10000 -alias gawago
+#
+#    keytool will ask for a store password and a key password -- write both
+#    down somewhere safe (a password manager), not in this repo.
+#
+# 2. Fill in the four values below. storeFile is resolved relative to this
+#    android/ directory, so either copy the keystore in here (and keep it
+#    out of git -- *.keystore and *.jks are already gitignored) or use an
+#    absolute path.
+
+storePassword=your-store-password
+keyPassword=your-key-password
+keyAlias=gawago
+storeFile=../gawago-release.keystore

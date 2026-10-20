@@ -9,10 +9,23 @@ venv/
 node_modules/
 dist/
 build/
+.expo/
+
+# User uploads
+media/
+private_media/
 
 # Env
 .env
 *.env
+# `*.env` only matches names *ending* in .env, so a backup or variant like
+# .env.bak.1234 / .env.local / .env.production slipped through and showed up
+# as an untracked file holding real credentials.
+.env.*
+*.env.*
+# ...but the committed template has no secrets in it and must stay tracked.
+!.env.example
+!*.env.example
 
 # IDE
 .vscode/
@@ -21,3 +34,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+backups/

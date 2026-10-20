@@ -1,10 +1,23 @@
 import React, { useEffect, useState } from "react";
+import ComplaintModal from "./ComplaintModal";
 import { DashboardSidebar, DashboardTopbar } from "./DashboardLayout";
 import JobImageGallery from "./JobImageGallery";
 import LocationDistanceMap from "./LocationDistanceMap";
-import { formatDistance, formatLocation, formatRate, getDisplayName, getHouseholdPhoto } from "../utils/formatters";
-import { getHiringProgressLabel, getJobStatusBadgeClass } from "../utils/jobUtils";
-import { haversineDistanceKm } from "../utils/locationServices";
+import {
+  formatDateTime,
+  formatDistance,
+  formatLocation,
+  formatRate,
+  getDisplayName,
+  getHouseholdPhoto,
+} from "../utils/formatters";
+import { getVerificationNavLabel } from "../utils/normalizers";
+import {
+  getApplicationStatusLabel,
+  getHiringProgressLabel,
+  getJobStatusBadgeClass,
+  getJobStatusText,
+} from "../utils/jobUtils";
 
 export default function WorkerJobDetailView({
   currentWorker,
@@ -12,13 +25,18 @@ export default function WorkerJobDetailView({
   currentWorkerJobHousehold,
   handleApplyToJob,
   handleLogout,
+  handleWorkerHireDecision,
+  handleWorkerRequestCompletion,
   openWorkerApplications,
   openWorkerDashboard,
   openWorkerFindJobs,
   openWorkerGetVerified,
+  openWorkerMyJobs,
+  openMyComplaints,
   openWorkerNotifications,
   openWorkerProfile,
   workerApplicationUnreadCount,
+  addToast,
 }) {
   const job = currentWorkerJobDetail;
   const household = currentWorkerJobHousehold;
@@ -28,23 +46,35 @@ export default function WorkerJobDetailView({
     job?.householdName || job?.householdUsername || "Household",
   );
   const householdPhoto = getHouseholdPhoto(household);
-  const alreadyApplied =
-    job && currentWorker
-      ? (job.applications || []).some(
-          (application) =>
-            String(application.workerId) === String(currentWorker.id) ||
-            application.workerUsername === currentWorker.username,
-        )
-      : false;
+  const currentWorkerApplication = job?.currentWorkerApplication || null;
+  const alreadyApplied = Boolean(currentWorkerApplication);
   const jobLatitude = job?.latitude ?? household?.latitude ?? null;
   const jobLongitude = job?.longitude ?? household?.longitude ?? null;
   const workerLatitude = currentWorker?.latitude ?? null;
   const workerLongitude = currentWorker?.longitude ?? null;
-  const jobDistanceKm = haversineDistanceKm(workerLatitude, workerLongitude, jobLatitude, jobLongitude);
+  const jobDistanceKm = job?.routeDistanceKm ?? null;
   const [routeDistanceKm, setRouteDistanceKm] = useState(null);
-  const distanceLabel = formatDistance(routeDistanceKm ?? jobDistanceKm);
-  const canApply = currentWorker?.verification === "Verified";
+  const [completionNote, setCompletionNote] = useState("I have completed the service today.");
+  // Prefer the backend's own wording, but only while showing the job's own
+  // distance -- once a fresher live route comes back (routeDistanceKm),
+  // format that value instead rather than showing a label computed from a
+  // now-stale number.
+  const distanceLabel =
+    routeDistanceKm === null && job?.distanceLabel
+      ? job.distanceLabel
+      : formatDistance(routeDistanceKm ?? jobDistanceKm);
+  const currentWorkerApplicationStatus = job?.applicationStatus || currentWorkerApplication?.status || "";
+  const currentWorkerApplicationId = job?.applicationId || currentWorkerApplication?.id || null;
+  const hasRejectedHireRequest = currentWorkerApplicationStatus === "Rejected";
+  const isAssignedWorker = ["Hired", "Completed"].includes(currentWorkerApplicationStatus);
+  const verificationNavLabel = getVerificationNavLabel(currentWorker);
+  const isCompletionRequested = job?.status === "Waiting for Household Confirmation";
+  const isCompletedJob = job?.status === "Completed";
+  const canApply = Boolean(job?.canApply);
+  const canAcceptHireRequest = Boolean(job?.canAcceptHireRequest);
+  const canRequestCompletion = Boolean(job?.canRequestCompletion);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showComplaintModal, setShowComplaintModal] = useState(false);
   useEffect(() => {
     setRouteDistanceKm(null);
   }, [job?.id, currentWorker?.id, currentWorker?.username]);
@@ -53,23 +83,15 @@ export default function WorkerJobDetailView({
     return () => document.body.classList.remove("gawago-mobile-menu-open");
   }, [mobileMenuOpen]);
   useEffect(() => {
-    const handleMobileSidebarClick = (event) => {
-      const sidebarHead = event.target.closest(".worker-sidebar-head");
-      const sidebarAction = event.target.closest(".worker-nav-item, .worker-sidebar-logout");
-      if (!window.matchMedia("(max-width: 767px)").matches) {
-        return;
-      }
-      if (sidebarHead) {
-        sidebarHead.closest(".worker-sidebar")?.classList.toggle("mobile-menu-open");
-        return;
-      }
-      if (sidebarAction) {
-        sidebarAction.closest(".worker-sidebar")?.classList.remove("mobile-menu-open");
+    if (!mobileMenuOpen) return undefined;
+    const closeOnNavigate = (event) => {
+      if (event.target.closest(".worker-nav-item, .worker-sidebar-logout")) {
+        setMobileMenuOpen(false);
       }
     };
-    document.addEventListener("click", handleMobileSidebarClick);
-    return () => document.removeEventListener("click", handleMobileSidebarClick);
-  }, []);
+    document.addEventListener("click", closeOnNavigate);
+    return () => document.removeEventListener("click", closeOnNavigate);
+  }, [mobileMenuOpen]);
   return (
     <div className="app-shell">
       <div className="mobile-sidebar-overlay" onClick={() => setMobileMenuOpen(false)} />
@@ -115,8 +137,18 @@ export default function WorkerJobDetailView({
                   onClick: openWorkerApplications,
                 },
                 {
+                  id: "jobs",
+                  label: "My Jobs",
+                  onClick: openWorkerMyJobs,
+                },
+                {
+                  id: "flag",
+                  label: "My Reports",
+                  onClick: openMyComplaints,
+                },
+                {
                   id: "verified",
-                  label: "Get Verified",
+                  label: verificationNavLabel,
                   section: "Account",
                   onClick: openWorkerGetVerified,
                 },
@@ -162,9 +194,11 @@ export default function WorkerJobDetailView({
                             {formatLocation(household?.barangay || job.barangay, household?.streetAddress || job.streetAddress)}
                           </p>
                           <p className="mb-0 small text-muted">
-                            {[household?.phone ? `+63${household.phone}` : "", household?.email || ""]
-                              .filter(Boolean)
-                              .join(" | ") || "Contact details not provided"}
+                            {isAssignedWorker
+                              ? [job?.householdPhone ? `+63${job.householdPhone}` : "", job?.householdEmail || ""]
+                                  .filter(Boolean)
+                                  .join(" | ") || "Contact details not provided"
+                              : "Contact details become available after you are hired."}
                           </p>
                         </div>
                       </div>
@@ -173,7 +207,7 @@ export default function WorkerJobDetailView({
                     <div className="profile-card worker-job-info-card">
                       <div className="profile-card-head d-flex justify-content-between align-items-center gap-3">
                         <span>{job.jobTitle || job.serviceType}</span>
-                        <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{job.status || "Open"}</span>
+                        <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{getJobStatusText(job)}</span>
                       </div>
                       <div className="worker-job-info-body">
                         <dl className="worker-job-detail-list">
@@ -185,14 +219,24 @@ export default function WorkerJobDetailView({
                             <dt>Schedule</dt>
                             <dd>{job.scheduleType || "Not set"}</dd>
                           </div>
-                          <div>
-                            <dt>Date</dt>
-                            <dd>{job.preferredDate || "Not set"}</dd>
-                          </div>
-                          <div>
-                            <dt>Time</dt>
-                            <dd>{job.preferredTime || "Not set"}</dd>
-                          </div>
+                          {(job.jobStartDate || job.jobEndDate) && (
+                            <div>
+                              <dt>Job Period</dt>
+                              <dd>
+                                {job.jobStartDate || "Not set"}
+                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
+                              </dd>
+                            </div>
+                          )}
+                          {job.estimatedWorkingDays ? (
+                            <div>
+                              <dt>Working Days</dt>
+                              <dd>
+                                {job.estimatedWorkingDays} day
+                                {Number(job.estimatedWorkingDays) === 1 ? "" : "s"}
+                              </dd>
+                            </div>
+                          ) : null}
                           <div>
                             <dt>Needed</dt>
                             <dd>{getHiringProgressLabel(job)} hired</dd>
@@ -207,25 +251,114 @@ export default function WorkerJobDetailView({
                           </div>
                         </dl>
                         <div className="worker-job-description">
-                          <p className="small text-muted fw-semibold mb-1">Descriptions</p>
+                          <p className="small text-muted fw-semibold mb-1">Description</p>
                           <p className="mb-0">{job.description || "No description provided."}</p>
                         </div>
+                        {isAssignedWorker && (
+                          <div className="worker-completion-request-card">
+                            <div>
+                              <p className="small text-muted fw-semibold mb-1">Completion Request</p>
+                              <p className="mb-0">
+                                {isCompletionRequested
+                                  ? "Completion request sent. The household has been notified to confirm the service."
+                                  : isCompletedJob
+                                    ? "This job is already completed."
+                                    : "When the service is done, notify the household so they can confirm completion."}
+                              </p>
+                            </div>
+                            {!isCompletionRequested && !isCompletedJob && (
+                              <>
+                                <label className="form-label fw-semibold" htmlFor="worker-completion-note">
+                                  Completion note
+                                </label>
+                                <textarea
+                                  className="form-control"
+                                  id="worker-completion-note"
+                                  rows="3"
+                                  value={completionNote}
+                                  onChange={(event) => setCompletionNote(event.target.value)}
+                                />
+                              </>
+                            )}
+                            <button
+                              className="btn btn-success btn-sm"
+                              type="button"
+                              disabled={!canRequestCompletion}
+                              onClick={() => handleWorkerRequestCompletion(job.id, completionNote)}
+                            >
+                              {isCompletionRequested
+                                ? "Waiting for Household Confirmation"
+                                : isCompletedJob
+                                  ? "Job Completed"
+                                  : "Request Completion"}
+                            </button>
+                          </div>
+                        )}
                         <div className="worker-job-actions">
-                          <button className="btn btn-outline-secondary btn-sm" type="button" onClick={openWorkerFindJobs}>
-                            Back to Find Jobs
-                          </button>
                           <button
-                            className="btn btn-primary btn-sm"
+                            className="btn btn-outline-secondary btn-sm"
                             type="button"
-                            disabled={alreadyApplied || !canApply}
-                            onClick={() => handleApplyToJob(job.id)}
+                            onClick={canAcceptHireRequest ? openWorkerNotifications : openWorkerFindJobs}
                           >
-                            {alreadyApplied ? "Already Applied" : "Apply Now"}
+                            {canAcceptHireRequest ? "Back to Notifications" : "Back to Find Jobs"}
                           </button>
+                          {canAcceptHireRequest ? (
+                            <>
+                              <button
+                                className="btn btn-success btn-sm"
+                                type="button"
+                                disabled={!currentWorkerApplicationId}
+                                onClick={() => handleWorkerHireDecision(currentWorkerApplicationId, "accept")}
+                              >
+                                Accept Request
+                              </button>
+                              <button
+                                className="btn btn-outline-danger btn-sm"
+                                type="button"
+                                disabled={!currentWorkerApplicationId}
+                                onClick={() => {
+                                  if (window.confirm("Reject this hire request? This can't be undone.")) {
+                                    handleWorkerHireDecision(currentWorkerApplicationId, "reject");
+                                  }
+                                }}
+                              >
+                                Reject Request
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              type="button"
+                              disabled={!canApply}
+                              onClick={() => handleApplyToJob(job.id)}
+                            >
+                              {alreadyApplied
+                                ? hasRejectedHireRequest
+                                  ? "Request Rejected"
+                                  : "Already Applied"
+                                : "Apply Now"}
+                            </button>
+                          )}
                         </div>
-                        {!canApply && !alreadyApplied && (
+                        {canAcceptHireRequest && (
+                          <div className="alert alert-info mt-3 mb-0 py-2">
+                            This household sent you a hire request. Review the job details before accepting or rejecting.
+                          </div>
+                        )}
+                        {!canApply && !alreadyApplied && !canAcceptHireRequest && (
                           <div className="alert alert-warning mt-3 mb-0 py-2">
-                            You cannot apply yet. Please complete your verification first to unlock job applications.
+                            Applications are unavailable for this job right now.
+                          </div>
+                        )}
+                        {alreadyApplied && (
+                          <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #e0e0e0" }}>
+                            <button
+                              type="button"
+                              className="btn btn-outline-danger btn-sm"
+                              onClick={() => setShowComplaintModal(true)}
+                            >
+                              🚩 Report an Issue
+                            </button>
                           </div>
                         )}
                       </div>
@@ -248,7 +381,10 @@ export default function WorkerJobDetailView({
                           household?.barangay || job.barangay,
                           household?.streetAddress || job.streetAddress,
                         )}
+                        userMarkerType="worker"
+                        targetMarkerType="household"
                         distanceKm={jobDistanceKm}
+                        routePoints={job.routePoints || []}
                         formatDistanceFn={formatDistance}
                         onRouteDistanceChange={setRouteDistanceKm}
                       />
@@ -263,6 +399,15 @@ export default function WorkerJobDetailView({
                     </div>
                   </div>
                 </div>
+              )}
+              {job && showComplaintModal && (
+                <ComplaintModal
+                  isOpen={showComplaintModal}
+                  onClose={() => setShowComplaintModal(false)}
+                  onSubmitted={() => addToast?.("Report submitted. Our admin team will review it.", "success")}
+                  job={job}
+                  role="worker"
+                />
               )}
             </div>
           </div>

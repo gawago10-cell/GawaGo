@@ -17,19 +17,72 @@ export function isImagePreviewUrl(url) {
   return /^data:image\//i.test(normalizedUrl) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(normalizedUrl.split("?")[0]);
 }
 
+/** A job date ("2026-10-04") as "Oct 4, 2026", matching the mobile app's
+ * formatting. Non-date text (a schedule description, "Not set") passes
+ * through unchanged rather than being mangled. */
+export function formatJobDate(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (!/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed;
+  }
+  const parsed = new Date(trimmed.length === 10 ? `${trimmed}T00:00:00` : trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return trimmed;
+  }
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export function formatScheduleLabel(scheduleType) {
-  return (scheduleType || "").replace(" - ", "-");
+  if (typeof scheduleType !== "string") {
+    return "";
+  }
+  return scheduleType.replace(/\s*-\s*/g, "-");
 }
 
 export function formatDateTime(dateValue, timeValue) {
   if (!dateValue) {
     return "Schedule not set";
   }
-  const parsedDate = new Date(`${dateValue}T${timeValue || "00:00"}`);
+  const rawDate = String(dateValue).trim();
+  const hasEmbeddedTime = /[T ]\d{2}:\d{2}/.test(rawDate);
+  const parsedDate = new Date(hasEmbeddedTime ? rawDate : `${rawDate}T${timeValue || "00:00"}`);
   if (Number.isNaN(parsedDate.getTime())) {
-    return "Schedule not set";
+    return rawDate;
   }
-  return parsedDate.toLocaleString("en-PH", { month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return parsedDate.toLocaleString("en-PH", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function formatExperience(years) {
+  const numericYears = Number(years || 0);
+  return `${numericYears} ${numericYears === 1 ? "year" : "years"}`;
+}
+
+/**
+ * "Santos Residence" -> "SR". Falls back to the first two characters when the
+ * name is a single word, so a bare username still reads as a monogram.
+ */
+export function getHouseholdInitials(name) {
+  const parts = String(name || "")
+    .trim()
+    .split(/[\s_-]+/)
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return "H";
+  }
+  if (parts.length === 1) {
+    const single = parts[0];
+    return (single.length === 1 ? single : single.slice(0, 2)).toUpperCase();
+  }
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }
 
 export function formatLocation(barangay, streetAddress) {
@@ -50,8 +103,50 @@ export function formatDistance(distanceKm, fallbackLabel = "") {
   return fallbackLabel || "Distance not available";
 }
 
+export function formatTimeAgo(value) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
+  if (seconds < 60) {
+    return "just now";
+  }
+  const units = [
+    ["minute", 60],
+    ["hour", 60],
+    ["day", 24],
+    ["month", 30],
+    ["year", 12],
+  ];
+  let amount = seconds;
+  let label = "second";
+  for (const [nextLabel, size] of units) {
+    if (amount < size) {
+      break;
+    }
+    amount = Math.floor(amount / size);
+    label = nextLabel;
+  }
+  return `${amount} ${label}${amount === 1 ? "" : "s"} ago`;
+}
+
+/** The numeric part of a display_rating ("4.90" -> 4.9), or null when the
+ * worker has no ratings yet -- star rows need a number, not the label. */
+export function parseRatingValue(ratingLabel) {
+  const match = String(ratingLabel ?? "").match(/\d+(\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[0]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 export function getWorkerPhoto(worker) {
-  const preview = worker?.profilePhotoPreview || worker?.verificationSubmission?.primaryIdPreview || "";
+  const preview = worker?.profilePhotoPreview || "";
   return /^blob:/i.test(String(preview || "")) ? "" : preview;
 }
 

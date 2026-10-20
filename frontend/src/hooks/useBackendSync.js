@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { clearAuthToken, getAuthToken } from "../api/apiClient";
 import {
   fetchCurrentAccount,
@@ -26,6 +27,20 @@ export function useBackendSync({
   setVerificationRequests,
   setView,
 }) {
+  const [recommendedWorkersLoading, setRecommendedWorkersLoading] = useState(false);
+  // The polling hook re-fires these refreshes every few seconds. Each async
+  // function below closes over the `currentUser` from whichever render
+  // started it, so if the user logs out or switches accounts while a
+  // request is still in flight, that stale closure has no way to see the
+  // change -- it would apply a previous account's data on top of the new
+  // session once the request resolves. A ref (kept current on every render,
+  // unlike the closure) lets each refresh check the *live* identity right
+  // before it commits, and skip the write if it's no longer current.
+  const currentUserRef = useRef(currentUser);
+  const recommendedRequestSeqRef = useRef({});
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   function mergeBackendWorkerIntoState(backendWorker) {
     if (!backendWorker) {
       return;
@@ -43,7 +58,6 @@ export function useBackendSync({
           ? {
               ...item,
               ...backendWorker,
-              password: item.password || backendWorker.password || "",
               receivedReviews:
                 item.receivedReviews?.length ? item.receivedReviews : backendWorker.receivedReviews || [],
               givenFeedback:
@@ -57,15 +71,19 @@ export function useBackendSync({
     if (!currentUser?.username) {
       return;
     }
+    const requestedUsername = currentUser.username;
     try {
       const normalizedRequests = await fetchVerificationRequests();
+      if (currentUserRef.current?.username !== requestedUsername) {
+        return;
+      }
       if (normalizedRequests) {
         setVerificationRequests(normalizedRequests);
         setSelectedVerificationRequestId((prevSelectedId) => {
           if (normalizedRequests.some((item) => item.id === prevSelectedId)) {
             return prevSelectedId;
           }
-          if (currentUser.role === "worker") {
+          if (currentUser.role === "worker" || currentUser.role === "household") {
             return (
               normalizedRequests.find((item) => item.workerUsername === currentUser.username)?.id ||
               normalizedRequests[0]?.id ||
@@ -74,7 +92,7 @@ export function useBackendSync({
           }
           return normalizedRequests[0]?.id || null;
         });
-        if (currentUser.role === "worker") {
+        if (currentUser.role === "worker" || currentUser.role === "household") {
           const matchingRequest = normalizedRequests.find((item) => item.workerUsername === currentUser.username);
           if (!getAuthToken() && matchingRequest) {
             const nextVerificationStatus =
@@ -96,7 +114,7 @@ export function useBackendSync({
                 : prev,
             );
           }
-          if (matchingRequest) {
+          if (matchingRequest && currentUser.role === "worker") {
             const nextVerificationLabel =
               matchingRequest.status === "Approved"
                 ? "Verified"
@@ -118,7 +136,7 @@ export function useBackendSync({
                   : worker,
               ),
             );
-          } else {
+          } else if (currentUser.role === "worker") {
             setRegisteredWorkers((prev) =>
               prev.map((worker) =>
                 worker.username === currentUser.username
@@ -131,9 +149,35 @@ export function useBackendSync({
               ),
             );
           }
+          if (matchingRequest && currentUser.role === "household") {
+            const nextVerificationLabel =
+              matchingRequest.status === "Approved"
+                ? "Verified"
+                : matchingRequest.status === "Rejected"
+                  ? "Rejected"
+                  : "Under Review";
+            setRegisteredHouseholds((prev) =>
+              prev.map((household) =>
+                household.username === currentUser.username
+                  ? {
+                      ...household,
+                      verification: nextVerificationLabel,
+                      verificationRequestId: matchingRequest.id,
+                      verificationSubmission: matchingRequest,
+                      verificationReviewedAt:
+                        matchingRequest.reviewedAt || household.verificationReviewedAt || "",
+                      verificationReviewedBy:
+                        matchingRequest.reviewedBy || household.verificationReviewedBy || "",
+                      verificationRejectionNote:
+                        matchingRequest.reviewNote || household.verificationRejectionNote || "",
+                    }
+                  : household,
+              ),
+            );
+          }
         }
       }
-      if (currentUser.role === "worker" && getAuthToken()) {
+      if (getAuthToken()) {
         const accountData = await fetchCurrentAccount(currentUser);
         if (accountData) {
           setCurrentUser((prev) =>
@@ -144,7 +188,9 @@ export function useBackendSync({
                 }
               : prev,
           );
-          mergeBackendWorkerIntoState(accountData.worker);
+          if (currentUser.role === "worker") {
+            mergeBackendWorkerIntoState(accountData.worker);
+          }
         }
       }
     } catch (error) {
@@ -152,9 +198,15 @@ export function useBackendSync({
     }
   }
   async function refreshJobsFromBackend() {
+    // Per-job fields like can_apply/current_worker_application depend on
+    // whichever auth token was active when the request went out, so a
+    // response for a since-logged-out (or since-switched) identity must not
+    // be applied on top of the new session.
+    const requestedUsername = currentUser?.username;
     try {
       const normalizedJobs = await fetchJobs();
       if (!normalizedJobs) return;
+      if (currentUserRef.current?.username !== requestedUsername) return;
       setPostedJobs(normalizedJobs);
       if (normalizedJobs.length === 0) {
         setMatchedWorkersByJob({});
@@ -189,7 +241,7 @@ export function useBackendSync({
             phone: workerProfile.phone || existing?.phone || "",
             yearsExperience: workerProfile.yearsExperience ?? existing?.yearsExperience ?? "0",
             status: existing?.status || "Available",
-            distanceKm: existing?.distanceKm || "0.00",
+            distanceKm: existing?.distanceKm ?? null,
             distanceLabel: existing?.distanceLabel || "",
           };
         }),
@@ -213,7 +265,8 @@ export function useBackendSync({
           };
         }),
       );
-      if (currentUser?.role && currentUser.role !== "admin") {
+      const isPlatformAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
+      if (currentUser?.role && !isPlatformAdmin) {
         const userStillExists = normalizedProfiles.some((profile) => profile.username === currentUser.username);
         if (!userStillExists) {
           clearAuthToken();
@@ -229,48 +282,82 @@ export function useBackendSync({
       return;
     }
   }
-  async function refreshRecommendedWorkers(jobId) {
+  async function refreshRecommendedWorkers(jobId, rank) {
     if (!jobId) {
       return;
     }
+    // The AI ranking takes ~10s on a job's first call, so a Smart Matching
+    // request sent later can finish first -- or the other way round. Only the
+    // newest request for a job may write its results, otherwise a late
+    // "smart" reply zeroes the AI breakdown on the AI matches screen.
+    const requestSeq = (recommendedRequestSeqRef.current[jobId] || 0) + 1;
+    recommendedRequestSeqRef.current[jobId] = requestSeq;
+    const isLatest = () => recommendedRequestSeqRef.current[jobId] === requestSeq;
+    setRecommendedWorkersLoading(true);
     try {
-      const results = await fetchRecommendedWorkers(jobId);
-      if (results === null) return;
+      const results = await fetchRecommendedWorkers(jobId, rank);
+      if (results === null || !isLatest()) return;
       setMatchedWorkersByJob((prev) => ({
         ...prev,
         [jobId]: results.map((result) => {
           const existingWorker = registeredWorkers.find(
             (worker) => String(worker.id) === String(result.worker_id) || worker.username === result.worker_username,
           );
-          const distanceLabel = formatDistance(result.distance_km, result.distance_label);
+          const distanceLabel = result.distance_label || formatDistance(result.distance_km);
           return {
             ...existingWorker,
             id: existingWorker?.id || result.worker_id,
             username: existingWorker?.username || result.worker_username,
             firstName: existingWorker?.firstName || "",
             lastName: existingWorker?.lastName || "",
+            // The match endpoint now carries the profile fields the match
+            // cards render, so they no longer depend on the worker also
+            // being present in the separately fetched registeredWorkers.
+            displayName: result.worker_name || existingWorker?.displayName || "",
+            profilePhotoPreview: result.worker_profile_photo_url || existingWorker?.profilePhotoPreview || "",
+            barangay: existingWorker?.barangay || result.worker_location_label || "",
+            bio: result.worker_bio || existingWorker?.bio || "",
+            completedJobs: result.worker_completed_jobs ?? 0,
             skills: result.skills || existingWorker?.skills || [],
             verification: getWorkerVerificationLabel(result.verification_status),
             rating: result.rating_label || existingWorker?.rating || "No ratings yet",
-            reviewsDone: existingWorker?.reviewsDone || 0,
+            reviewsDone: result.worker_rating_count ?? existingWorker?.reviewsDone ?? 0,
             hourlyRate: existingWorker?.hourlyRate || "0.00",
-            dailyRate: existingWorker?.dailyRate || "0.00",
+            dailyRate: existingWorker?.dailyRate || result.worker_rate || "0.00",
             status: existingWorker?.status || "Available",
             avatar: existingWorker?.avatar || (result.worker_username || "W").slice(0, 1).toUpperCase(),
+            // Match candidates are never hired yet, so the API sends no exact
+            // coordinates and no route to plot -- only a rounded distance and
+            // a ~1 km grid-snapped point for the matches map.
+            latitude: null,
+            longitude: null,
+            approximateLatitude: result.worker_approximate_latitude ?? null,
+            approximateLongitude: result.worker_approximate_longitude ?? null,
+            matchesSkill: Boolean(result.matches_skill),
             distanceKm:
               result.distance_km !== null &&
               result.distance_km !== undefined &&
               result.distance_km !== "" &&
               Number.isFinite(Number(result.distance_km))
-                ? Number(result.distance_km).toFixed(1)
-                : "",
+                ? Number(result.distance_km)
+                : null,
             distanceLabel,
+            routePoints: [],
             matchScore: result.match_score,
+            availableAtRequestedTime: result.available_at_requested_time,
+            aiScore: result.ai_score,
+            aiSkillContribution: result.skill_contribution,
+            aiProximityContribution: result.proximity_contribution,
+            aiExactSkillMatch: result.exact_skill_match,
           };
         }),
       }));
     } catch (error) {
       return;
+    } finally {
+      if (isLatest()) {
+        setRecommendedWorkersLoading(false);
+      }
     }
   }
   async function refreshNotificationsFromBackend() {
@@ -278,9 +365,15 @@ export function useBackendSync({
       setBackendNotifications([]);
       return;
     }
+    if (!getAuthToken()) {
+      setBackendNotifications([]);
+      return;
+    }
+    const requestedUsername = currentUser.username;
     try {
       const notifications = await fetchNotifications(currentUser.username);
       if (!notifications) return;
+      if (currentUserRef.current?.username !== requestedUsername) return;
       setBackendNotifications(notifications);
     } catch (error) {
       return;
@@ -290,22 +383,24 @@ export function useBackendSync({
     if (!currentUser?.username) {
       return;
     }
+    const requestedUsername = currentUser.username;
     try {
       const payloads = await fetchReviews({
         username: currentUser.username,
         role: currentUser.role,
         selectedWorkerUsername: selectedWorker?.username || "",
       });
-      const receivedReviews = payloads[0] || [];
-      const authoredReviews = payloads[1] || [];
+      if (currentUserRef.current?.username !== requestedUsername) return;
+      // null means that list failed to load: keep what is already shown.
+      const [receivedReviews, authoredReviews] = payloads;
       if (currentUser.role === "worker") {
         setRegisteredWorkers((prev) =>
           prev.map((worker) =>
             worker.username === currentUser.username
               ? {
                   ...worker,
-                  receivedReviews,
-                  givenFeedback: authoredReviews,
+                  ...(receivedReviews ? { receivedReviews } : {}),
+                  ...(authoredReviews ? { givenFeedback: authoredReviews } : {}),
                 }
               : worker,
           ),
@@ -317,14 +412,14 @@ export function useBackendSync({
             household.username === currentUser.username
               ? {
                   ...household,
-                  receivedFeedback: receivedReviews,
-                  givenFeedback: authoredReviews,
+                  ...(receivedReviews ? { receivedFeedback: receivedReviews } : {}),
+                  ...(authoredReviews ? { givenFeedback: authoredReviews } : {}),
                 }
               : household,
           ),
         );
-        if (selectedWorker?.username) {
-          const selectedWorkerReviews = payloads[2] || [];
+        if (selectedWorker?.username && payloads[2]) {
+          const selectedWorkerReviews = payloads[2];
           setRegisteredWorkers((prev) =>
             prev.map((worker) =>
               worker.username === selectedWorker.username
@@ -349,5 +444,6 @@ export function useBackendSync({
     refreshRecommendedWorkers,
     refreshNotificationsFromBackend,
     refreshReviewsFromBackend,
+    recommendedWorkersLoading,
   };
 }

@@ -9,3 +9,4 @@ class DashboardMetricsSerializer(serializers.Serializer):
     active_applications = serializers.IntegerField()
     total_accounts = serializers.IntegerField()
     avg_rating = serializers.FloatField(allow_null=True)
+    analytics = serializers.JSONField()

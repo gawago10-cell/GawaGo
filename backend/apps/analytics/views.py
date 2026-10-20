@@ -1,29 +1,18 @@
-from django.contrib.auth.models import User
-from django.db.models import Avg, Sum
-from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.models import UserProfile
 from apps.analytics.serializers import DashboardMetricsSerializer
-from apps.jobs.models import JobApplication, JobPosting
+from apps.analytics.services import build_dashboard_metrics
+from apps.common.permissions import IsPlatformAdmin
+from apps.reviews.services import assign_due_default_worker_ratings_on_read
 
 
 class DashboardMetricsView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsPlatformAdmin]
 
     def get(self, request):
-        open_job_slots = JobPosting.objects.filter(status=JobPosting.STATUS_OPEN).aggregate(total=Sum("worker_slots"))["total"] or 0
-
-        data = {
-            "open_jobs": open_job_slots,
-            "verified_workers": UserProfile.objects.filter(role=UserProfile.ROLE_WORKER, verification_status="verified").count(),
-            "completed_jobs": JobPosting.objects.filter(status=JobPosting.STATUS_COMPLETED).count(),
-            "cancelled_jobs": JobPosting.objects.filter(status=JobPosting.STATUS_CANCELLED).count(),
-            "active_applications": JobApplication.objects.filter(status=JobApplication.STATUS_PENDING).count(),
-            "total_accounts": User.objects.count(),
-            "avg_rating": UserProfile.objects.filter(role=UserProfile.ROLE_WORKER, rating_count__gt=0, average_rating__isnull=False).aggregate(value=Avg("average_rating"))["value"],
-        }
+        assign_due_default_worker_ratings_on_read()
+        data = build_dashboard_metrics()
         serializer = DashboardMetricsSerializer(data=data)
         serializer.is_valid(raise_exception=True)
         return Response(serializer.validated_data)

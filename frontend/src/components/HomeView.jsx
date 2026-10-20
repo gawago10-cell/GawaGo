@@ -3,6 +3,8 @@ import React from "react";
 export default function HomeView({
   dashboardMetrics,
   initialShowLogin = false,
+  isAdminPortal = false,
+  loginError = "",
   loginForm,
   onLoginChange,
   onLoginSubmit,
@@ -12,21 +14,99 @@ export default function HomeView({
 }) {
   const [showLogin, setShowLogin] = React.useState(initialShowLogin);
   const [authMode, setAuthMode] = React.useState("login");
-  const [selectedAuthRole, setSelectedAuthRole] = React.useState(null);
-
-  const selectLoginRole = (role) => {
-    onLoginChange({
-      target: {
-        name: "role",
-        value: role,
-      },
-    });
-    setSelectedAuthRole(role);
-  };
 
   React.useEffect(() => {
     setShowLogin(initialShowLogin);
   }, [initialShowLogin]);
+
+  React.useEffect(() => {
+    if (isAdminPortal) {
+      onLoginChange({
+        target: {
+          name: "role",
+          value: "admin",
+        },
+      });
+    }
+  }, [isAdminPortal]);
+
+  if (isAdminPortal) {
+    return (
+      <main className="admin-portal-page">
+        <header className="admin-portal-topbar">
+          <span className="admin-portal-brand">Gawa<span>Go</span></span>
+          <span className="admin-portal-label">Administrator Portal</span>
+        </header>
+
+        <section className="admin-portal-shell" aria-label="Administrator login">
+          <div className="admin-portal-copy">
+            <span className="admin-portal-kicker">Secure Access</span>
+            <h1>Platform management for GawaGo administrators.</h1>
+            <p>
+              Review worker verification, monitor job activity, manage users, and keep the employment platform reliable
+              from one dedicated portal.
+            </p>
+            <div className="admin-portal-highlights" aria-label="Admin portal responsibilities">
+              <span>Verification Review</span>
+              <span>Employment Analytics</span>
+              <span>User Monitoring</span>
+            </div>
+          </div>
+
+          <aside className="admin-portal-card">
+            <div className="admin-portal-card-head">
+              <span>Admin Sign In</span>
+              <h2>Welcome back</h2>
+              <p>Use an administrator or superadmin account to continue.</p>
+            </div>
+            <form onSubmit={onLoginSubmit}>
+              {loginError && (
+                <div className="home-login-error" role="alert">
+                  {loginError}
+                </div>
+              )}
+              <div className="mb-3">
+                <label className="form-label fw-semibold" htmlFor="admin-login-username">
+                  Email or Username
+                </label>
+                <input
+                  className={`form-control${loginError ? " is-invalid" : ""}`}
+                  id="admin-login-username"
+                  name="username"
+                  onChange={onLoginChange}
+                  placeholder="Enter admin username"
+                  type="text"
+                  value={loginForm.username}
+                />
+              </div>
+              <div className="mb-3">
+                <label className="form-label fw-semibold" htmlFor="admin-login-password">
+                  Password
+                </label>
+                <input
+                  className={`form-control${loginError ? " is-invalid" : ""}`}
+                  id="admin-login-password"
+                  name="password"
+                  onChange={onLoginChange}
+                  placeholder="Enter password"
+                  type="password"
+                  value={loginForm.password}
+                />
+              </div>
+              <div className="admin-portal-form-row">
+                <button className="btn btn-link btn-sm text-decoration-none p-0" type="button" onClick={onOpenForgotPassword}>
+                  Forgot password?
+                </button>
+              </div>
+              <button className="btn btn-primary w-100 admin-portal-submit" type="submit">
+                Login to Admin Dashboard
+              </button>
+            </form>
+          </aside>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <React.Fragment>
@@ -38,7 +118,6 @@ export default function HomeView({
             type="button"
             onClick={() => {
               setAuthMode("login");
-              setSelectedAuthRole(null);
               setShowLogin(true);
             }}
           >
@@ -49,7 +128,6 @@ export default function HomeView({
             type="button"
             onClick={() => {
               setAuthMode("signup");
-              setSelectedAuthRole(null);
               setShowLogin(true);
             }}
           >
@@ -69,14 +147,26 @@ export default function HomeView({
                 near you.
               </h1>
               <p className="lead hero-subtitle mb-4">
-                GawaGo connects households and workers with smart matching, transparent rates, and a fair reputation
-                system.
+                GawaGo connects households and workers with smart matching, transparent rates, and a fair reputation system.
               </p>
+              <div className="home-task-strip" aria-label="Available services">
+                <span>Post jobs</span>
+                <span>Apply nearby</span>
+                <span>Verify profiles</span>
+              </div>
               <div className="d-flex gap-2 flex-wrap">
-                <button className="btn btn-primary btn-lg hero-primary-btn" type="button" aria-disabled="true">
+                <button
+                  className="btn btn-primary btn-lg hero-primary-btn"
+                  type="button"
+                  onClick={onOpenHouseholdRegister}
+                >
                   Post a Job
                 </button>
-                <button className="btn btn-outline-light btn-lg hero-secondary-btn" type="button" aria-disabled="true">
+                <button
+                  className="btn btn-outline-light btn-lg hero-secondary-btn"
+                  type="button"
+                  onClick={onOpenWorkerRegister}
+                >
                   Find Work
                 </button>
               </div>
@@ -84,82 +174,80 @@ export default function HomeView({
             {!showLogin && (
               <div className="hero-snapshot-slot">
                 <div className="hero-snapshot hero-snapshot-alt">
-                <div className="hero-snapshot-card">
-                  <span className="hero-snapshot-badge">Open jobs live</span>
-                  <p className="hero-snapshot-label mb-1">Open Jobs</p>
-                  <p className="hero-snapshot-value mb-2">{dashboardMetrics.openJobs}</p>
-                  <p className="hero-snapshot-note mb-0">Jobs waiting for workers to apply</p>
-                  <hr className="hero-snapshot-divider" />
-                  <div className="hero-snapshot-mini-grid">
-                    <div>
-                      <strong>8+</strong>
-                      <span>Job Categories</span>
-                    </div>
-                    <div>
-                      <strong>Free</strong>
-                      <span>To Sign Up</span>
-                    </div>
-                    <div>
-                      <strong>5.0</strong>
-                      <span>Ratings</span>
+                  <div className="hero-snapshot-card">
+                    <span className="hero-snapshot-badge">Open Jobs Live</span>
+                    <p className="hero-snapshot-label mb-1">Open Jobs</p>
+                    <p className="hero-snapshot-value mb-2">{dashboardMetrics.openJobs}</p>
+                    <p className="hero-snapshot-note mb-0">Jobs waiting for workers to apply</p>
+                    <hr className="hero-snapshot-divider" />
+                    <div className="hero-snapshot-mini-grid">
+                      <div>
+                        <strong>{dashboardMetrics.verifiedWorkers}</strong>
+                        <span>Verified Workers</span>
+                      </div>
+                      <div>
+                        <strong>{dashboardMetrics.completedJobs}</strong>
+                        <span>Completed Services</span>
+                      </div>
+                      <div>
+                        <strong>{dashboardMetrics.totalAccounts}</strong>
+                        <span>Registered Accounts</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
             )}
             {showLogin && (
               <aside className="home-login-card" aria-label="Authentication panel">
-                {!selectedAuthRole && (
+                {authMode === "signup" && (
                   <div className="home-role-card-grid home-role-choice-grid">
                     <button
                       className="home-role-card home-role-choice-card"
                       type="button"
-                      onClick={() => (authMode === "login" ? selectLoginRole("household") : onOpenHouseholdRegister())}
+                      onClick={onOpenHouseholdRegister}
                     >
                       <span className="home-role-illustration household-illustration" aria-hidden="true">
                         <i></i><b></b><em></em>
                       </span>
                       <strong>Household</strong>
                       <small>Post jobs and hire trusted workers</small>
-                      <span className="home-role-action">
-                        {authMode === "login" ? "Login" : "Create Account"}
-                      </span>
+                      <span className="home-role-action">Create Account</span>
                     </button>
                     <button
                       className="home-role-card home-role-choice-card"
                       type="button"
-                      onClick={() => (authMode === "login" ? selectLoginRole("worker") : onOpenWorkerRegister())}
+                      onClick={onOpenWorkerRegister}
                     >
                       <span className="home-role-illustration worker-illustration" aria-hidden="true">
                         <i></i><b></b><em></em>
                       </span>
                       <strong>Worker</strong>
                       <small>Find jobs near your barangay</small>
-                      <span className="home-role-action">
-                        {authMode === "login" ? "Login" : "Create Account"}
-                      </span>
+                      <span className="home-role-action">Create Account</span>
                     </button>
                   </div>
                 )}
 
-                {authMode === "login" && selectedAuthRole && (
+                {authMode === "login" && (
                   <form onSubmit={onLoginSubmit}>
                     <div className="home-login-form-head">
-                      <button type="button" onClick={() => setSelectedAuthRole(null)}>
-                        Back
-                      </button>
                       <div>
-                        <h2>Login as {selectedAuthRole === "household" ? "Household" : "Worker"}</h2>
-                        <p>Enter your account details to continue.</p>
+                        <h2>Login to GawaGo</h2>
+                        <p>Enter your credentials. We will open the right dashboard for your account.</p>
                       </div>
                     </div>
+                    {loginError && (
+                      <div className="home-login-error" role="alert">
+                        {loginError}
+                      </div>
+                    )}
                     <div className="mb-3">
                       <label className="form-label fw-semibold" htmlFor="home-login-username">
                         Email or Username
                       </label>
                       <input
-                        className="form-control"
+                        className={`form-control${loginError ? " is-invalid" : ""}`}
                         id="home-login-username"
                         name="username"
                         onChange={onLoginChange}
@@ -173,7 +261,7 @@ export default function HomeView({
                         Password
                       </label>
                       <input
-                        className="form-control"
+                        className={`form-control${loginError ? " is-invalid" : ""}`}
                         id="home-login-password"
                         name="password"
                         onChange={onLoginChange}

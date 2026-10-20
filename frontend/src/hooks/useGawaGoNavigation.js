@@ -1,7 +1,9 @@
-import { clearAuthToken } from "../api/apiClient";
+import { apiRequest, clearAuthToken } from "../api/apiClient";
+import { openProtectedFile } from "../utils/protectedFiles";
 import { EMPTY_HOUSEHOLD_FORM, EMPTY_WORKER_FORM } from "../constants/appConstants";
 import { getSavedHouseholdLocation } from "../utils/locationServices";
 import { markBackendNotificationRead } from "../services/backendDataService";
+import { dashboardViewForRole, getUserRole, ROLES } from "../utils/roles";
 
 export function useGawaGoNavigation({
   backendNotifications,
@@ -24,6 +26,7 @@ export function useGawaGoNavigation({
   setHouseholdProfileForm,
   setLoginForm,
   setNotificationReads,
+  setRegisterErrors,
   setSelectedJobId,
   setSelectedVerificationRequestId,
   setSelectedWorkerId,
@@ -38,22 +41,19 @@ export function useGawaGoNavigation({
   }
 
   function goBack() {
-    if (currentUser?.role === "admin") {
-      setView("admin-dashboard");
-      return;
+    const role = getUserRole(currentUser);
+    if (role === ROLES.ADMIN) {
+      // The admin dashboard is one view with sections; without resetting the
+      // section, "Back" from Workers History left the admin where they were.
+      setAdminSection?.("verification");
     }
-    if (currentUser?.role === "household") {
-      setView("household-dashboard");
-      return;
-    }
-    if (currentUser?.role === "worker") {
-      setView("worker-dashboard");
-      return;
-    }
-    setView("home");
+    setView(currentUser ? dashboardViewForRole(role) : "home");
   }
 
   function handleLogout() {
+    // Revoke the token server-side so it can't be reused if it leaks; fired
+    // without awaiting so a slow/failed request never delays logging out.
+    apiRequest("accounts/logout/", { method: "POST", auth: true, suppressUnauthorized: true }).catch(() => {});
     clearAuthToken();
     setCurrentUser(null);
     setSelectedWorkerId(null);
@@ -61,7 +61,7 @@ export function useGawaGoNavigation({
     setLoginForm({
       username: "",
       password: "",
-      role: "worker",
+      role: "",
     });
     setView("home");
   }
@@ -88,11 +88,13 @@ export function useGawaGoNavigation({
 
   function openWorkerRegister() {
     setWorkerForm(EMPTY_WORKER_FORM);
+    setRegisterErrors?.({});
     setView("register-worker");
   }
 
   function openHouseholdRegister() {
     setHouseholdForm(EMPTY_HOUSEHOLD_FORM);
+    setRegisterErrors?.({});
     setView("register-household");
   }
 
@@ -110,6 +112,11 @@ export function useGawaGoNavigation({
     setView("worker-applications");
   }
 
+  function openWorkerMyJobs() {
+    setSelectedJobId(null);
+    setView("worker-my-jobs");
+  }
+
   function openWorkerProfile() {
     if (currentWorker) {
       setWorkerProfileForm({
@@ -120,15 +127,23 @@ export function useGawaGoNavigation({
         phone: currentWorker.phone || "",
         barangay: currentWorker.barangay || "",
         streetAddress: currentWorker.streetAddress || "",
+        latitude: currentWorker.latitude ?? null,
+        longitude: currentWorker.longitude ?? null,
+        locationLabel: currentWorker.locationLabel || "",
+        locationSource: currentWorker.latitude && currentWorker.longitude ? "saved" : "",
+        locationWarning: "",
+        locationAccuracy: "",
         bio: currentWorker.bio || "",
         hourlyRate: currentWorker.hourlyRate || "0.00",
         dailyRate: currentWorker.dailyRate || "0.00",
         yearsExperience: currentWorker.yearsExperience || "0",
         skills: currentWorker.skills || [],
         availability: true,
+        availabilityWindows: currentWorker.availabilityWindows || [],
         profilePhotoFile: null,
-        profilePhotoPreview:
-          currentWorker.profilePhotoPreview || currentWorker.verificationSubmission?.primaryIdPreview || "",
+        // Never the government ID image: it's a private verification
+        // document, not something to show as the worker's public photo.
+        profilePhotoPreview: currentWorker.profilePhotoPreview || "",
       });
     }
     setView("worker-profile");
@@ -158,6 +173,11 @@ export function useGawaGoNavigation({
   }
 
   function openHouseholdPostJob() {
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can post a job.");
+      setView("household-get-verified");
+      return;
+    }
     const savedLocation = getSavedHouseholdLocation(currentHousehold, currentUser);
     setHouseholdJobForm((prev) => ({
       ...prev,
@@ -187,6 +207,10 @@ export function useGawaGoNavigation({
     setView("household-profile");
   }
 
+  function openHouseholdGetVerified() {
+    setView("household-get-verified");
+  }
+
   function openHouseholdFeedbackAll() {
     setView("household-feedback-all");
   }
@@ -201,14 +225,20 @@ export function useGawaGoNavigation({
   }
 
   function openHouseholdNotifications() {
-    markAllNotificationsRead(householdNotificationsWithReadState);
     setView("household-notifications");
   }
 
-  function openHouseholdJobDetail(jobId) {
+  // "My Reports" -- incidents the user filed or was reported in. The
+  // household/worker activity-summary report was removed; admin still has
+  // its own Reports tab inside SuperAdminDashboardView.
+  function openMyComplaints() {
+    setView("my-reports");
+  }
+
+  function openHouseholdJobMatches(jobId) {
     setSelectedJobId(jobId);
     setSelectedWorkerId(null);
-    setView("household-job-detail");
+    setView("household-job-matches");
   }
 
   function openWorkerJobDetail(jobId) {
@@ -233,7 +263,7 @@ export function useGawaGoNavigation({
     );
     const backendNotification = backendNotifications.find((item) => item.id === notificationId);
     if (backendNotification?.backendId && currentUser?.username) {
-      markBackendNotificationRead(backendNotification.backendId, currentUser.username)
+      markBackendNotificationRead(backendNotification.backendId)
         .then(async (wasMarked) => {
           if (wasMarked) {
             await refreshNotificationsFromBackend();
@@ -261,7 +291,7 @@ export function useGawaGoNavigation({
     });
     notifications.forEach((notification) => {
       if (notification.backendId && currentUser?.username) {
-        markBackendNotificationRead(notification.backendId, currentUser.username).catch(() => {
+        markBackendNotificationRead(notification.backendId).catch(() => {
           return;
         });
       }
@@ -296,13 +326,7 @@ export function useGawaGoNavigation({
   }
 
   function openFilePreview(fileUrl) {
-    if (!fileUrl) return;
-    window.open(fileUrl, "_blank", "noopener,noreferrer");
-  }
-
-  function openHouseholdNotificationWorker(notification) {
-    markNotificationRead(notification.id);
-    openMatchedWorkerProfile(notification.workerId, notification.jobId);
+    return openProtectedFile(fileUrl);
   }
 
   function openMatchedWorkerProfile(worker, jobId = selectedJob?.id) {
@@ -343,9 +367,10 @@ export function useGawaGoNavigation({
     openForgotPassword,
     openHouseholdDashboard,
     openHouseholdFeedbackAll,
-    openHouseholdJobDetail,
+    openHouseholdGetVerified,
+    openHouseholdJobMatches,
     openHouseholdMyJobs,
-    openHouseholdNotificationWorker,
+    openMyComplaints,
     openHouseholdNotifications,
     openHouseholdPostJob,
     openHouseholdProfile,
@@ -359,6 +384,7 @@ export function useGawaGoNavigation({
     openWorkerFindJobs,
     openWorkerGetVerified,
     openWorkerJobDetail,
+    openWorkerMyJobs,
     openWorkerNotifications,
     openWorkerProfile,
     openWorkerRegister,

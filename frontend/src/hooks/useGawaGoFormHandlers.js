@@ -1,6 +1,7 @@
 import { sanitizePhilippinesPhone } from "../utils/formatters";
 import { readFileAsDataUrl } from "../utils/mediaUtils";
 import { normalizeBarangayName } from "../utils/locationUtils";
+import { MAX_WORKER_SKILLS } from "../constants/appConstants";
 
 export function useGawaGoFormHandlers({
   setHouseholdForm,
@@ -8,14 +9,27 @@ export function useGawaGoFormHandlers({
   setHouseholdJobForm,
   setHouseholdJobLocationPreview,
   setHouseholdProfileForm,
+  setLoginError,
   setLoginForm,
+  setRegisterErrors,
   setVerificationForm,
   setWorkerForm,
   setWorkerProfileForm,
   syncHouseholdJobBarangayLocation,
 }) {
+  // Typing into a flagged field clears just that field's error, so the red
+  // state goes away as soon as the person starts fixing it.
+  function clearRegisterError(name) {
+    setRegisterErrors?.((prev) => {
+      if (!prev || !prev[name]) return prev;
+      const { [name]: _removed, ...rest } = prev;
+      return rest;
+    });
+  }
+
   function handleLoginChange(event) {
     const { name, value } = event.target;
+    setLoginError("");
     setLoginForm((prev) => ({
       ...prev,
       [name]: value,
@@ -24,6 +38,9 @@ export function useGawaGoFormHandlers({
 
   function handleWorkerChange(event) {
     const { name, value } = event.target;
+    clearRegisterError(name);
+    if (name === "barangay") clearRegisterError("streetAddress");
+    if (name === "password") clearRegisterError("confirmPassword");
     if (name === "phone") {
       setWorkerForm((prev) => ({
         ...prev,
@@ -44,6 +61,25 @@ export function useGawaGoFormHandlers({
         ...prev,
         barangay,
         streetAddress: barangay && !prev.streetAddress ? `Barangay ${barangay}, Tayabas City` : prev.streetAddress,
+        latitude: null,
+        longitude: null,
+        locationLabel: "",
+        locationSource: "",
+        locationWarning: "",
+        locationAccuracy: "",
+      }));
+      return;
+    }
+    if (name === "streetAddress") {
+      setWorkerForm((prev) => ({
+        ...prev,
+        streetAddress: value,
+        latitude: null,
+        longitude: null,
+        locationLabel: "",
+        locationSource: "",
+        locationWarning: "",
+        locationAccuracy: "",
       }));
       return;
     }
@@ -55,6 +91,8 @@ export function useGawaGoFormHandlers({
 
   function handleHouseholdChange(event) {
     const { name, value } = event.target;
+    clearRegisterError(name);
+    if (name === "password") clearRegisterError("confirmPassword");
     if (name === "phone") {
       setHouseholdForm((prev) => ({
         ...prev,
@@ -112,6 +150,21 @@ export function useGawaGoFormHandlers({
 
   function handleHouseholdJobChange(event) {
     const { name, value } = event.target;
+    if (name === "serviceType") {
+      setHouseholdJobForm((prev) => ({
+        ...prev,
+        serviceType: value,
+        customServiceType: value === "Other" ? prev.customServiceType : "",
+      }));
+      return;
+    }
+    if (name === "customServiceType") {
+      setHouseholdJobForm((prev) => ({
+        ...prev,
+        customServiceType: value.slice(0, 100),
+      }));
+      return;
+    }
     if (name === "barangay") {
       setHouseholdJobForm((prev) => ({
         ...prev,
@@ -169,6 +222,19 @@ export function useGawaGoFormHandlers({
         );
       return;
     }
+    if (name === "barangay" || name === "streetAddress") {
+      setWorkerProfileForm((prev) => ({
+        ...prev,
+        [name]: value,
+        latitude: null,
+        longitude: null,
+        locationLabel: "",
+        locationSource: "",
+        locationWarning: "",
+        locationAccuracy: "",
+      }));
+      return;
+    }
     setWorkerProfileForm((prev) => ({
       ...prev,
       [name]: type === "checkbox" ? checked : value,
@@ -183,6 +249,7 @@ export function useGawaGoFormHandlers({
         setVerificationForm((prev) => ({
           ...prev,
           primaryIdName: "",
+          primaryIdFile: null,
           primaryIdPreview: "",
         }));
         return;
@@ -190,6 +257,7 @@ export function useGawaGoFormHandlers({
       setVerificationForm((prev) => ({
         ...prev,
         primaryIdName: file.name,
+        primaryIdFile: file,
         primaryIdPreview: "",
       }));
       readFileAsDataUrl(file)
@@ -197,6 +265,7 @@ export function useGawaGoFormHandlers({
           setVerificationForm((prev) => ({
             ...prev,
             primaryIdName: file.name,
+            primaryIdFile: file,
             primaryIdPreview: preview,
           })),
         )
@@ -214,6 +283,7 @@ export function useGawaGoFormHandlers({
         setVerificationForm((prev) => ({
           ...prev,
           secondaryDocName: "",
+          secondaryDocFile: null,
           secondaryDocPreview: "",
         }));
         return;
@@ -221,6 +291,7 @@ export function useGawaGoFormHandlers({
       setVerificationForm((prev) => ({
         ...prev,
         secondaryDocName: file.name,
+        secondaryDocFile: file,
         secondaryDocPreview: "",
       }));
       readFileAsDataUrl(file)
@@ -228,6 +299,7 @@ export function useGawaGoFormHandlers({
           setVerificationForm((prev) => ({
             ...prev,
             secondaryDocName: file.name,
+            secondaryDocFile: file,
             secondaryDocPreview: preview,
           })),
         )
@@ -248,6 +320,10 @@ export function useGawaGoFormHandlers({
   function toggleSkill(skill) {
     setWorkerForm((prev) => {
       const exists = prev.skills.includes(skill);
+      if (!exists && prev.skills.length >= MAX_WORKER_SKILLS) {
+        alert(`You can select up to ${MAX_WORKER_SKILLS} skills only.`);
+        return prev;
+      }
       return {
         ...prev,
         skills: exists ? prev.skills.filter((s) => s !== skill) : [...prev.skills, skill],
@@ -258,6 +334,10 @@ export function useGawaGoFormHandlers({
   function toggleWorkerProfileSkill(skill) {
     setWorkerProfileForm((prev) => {
       const exists = prev.skills.includes(skill);
+      if (!exists && prev.skills.length >= MAX_WORKER_SKILLS) {
+        alert(`You can select up to ${MAX_WORKER_SKILLS} skills only.`);
+        return prev;
+      }
       return {
         ...prev,
         skills: exists ? prev.skills.filter((s) => s !== skill) : [...prev.skills, skill],

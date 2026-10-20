@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 export function SidebarIcon({ name, size = 18 }) {
   const commonProps = {
@@ -55,6 +55,13 @@ export function SidebarIcon({ name, size = 18 }) {
           <path d="M13.73 21a2 2 0 01-3.46 0" />
         </svg>
       );
+    case "flag":
+      return (
+        <svg {...commonProps}>
+          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+          <line x1="4" y1="22" x2="4" y2="15" />
+        </svg>
+      );
     case "logout":
       return (
         <svg {...commonProps} width={size - 2} height={size - 2}>
@@ -90,6 +97,7 @@ export function DashboardSidebar({ brand = "GawaGo Community Platform", items = 
             <button
               type="button"
               className={`worker-nav-item ${item.active ? "active" : ""}`}
+              aria-current={item.active ? "page" : undefined}
               onClick={item.onClick}
             >
               <SidebarIcon name={item.icon || item.id} />
@@ -108,6 +116,53 @@ export function DashboardSidebar({ brand = "GawaGo Community Platform", items = 
         </div>
       )}
     </aside>
+  );
+}
+
+/**
+ * Phone-width top bar with the burger that slides the sidebar in. Every page
+ * with a sidebar needs one, or the page has no way to navigate on a phone.
+ * `resetKey` closes the menu whenever it changes (i.e. on navigation).
+ */
+export function MobileDashboardTopbar({ resetKey }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    document.body.classList.toggle("gawago-mobile-menu-open", open);
+    return () => document.body.classList.remove("gawago-mobile-menu-open");
+  }, [open]);
+  useEffect(() => {
+    setOpen(false);
+  }, [resetKey]);
+  // Some sidebar items switch a section inside the same view (the admin
+  // panels), so a view change alone can't be relied on to close the menu.
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnNavigate = (event) => {
+      if (event.target.closest(".worker-nav-item, .worker-sidebar-logout")) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("click", closeOnNavigate);
+    return () => document.removeEventListener("click", closeOnNavigate);
+  }, [open]);
+  return (
+    <>
+      <div className="mobile-sidebar-overlay" onClick={() => setOpen(false)} />
+      <header className="mobile-dashboard-topbar">
+        <button
+          type="button"
+          className={`mobile-burger-button ${open ? "open" : ""}`}
+          aria-label="Toggle navigation"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        <span className="mobile-dashboard-title">GawaGo</span>
+      </header>
+    </>
   );
 }
 

@@ -1,0 +1,438 @@
+import React, { useEffect, useState } from "react";
+import { apiRequest } from "../api/apiClient";
+import { readResponseData } from "../utils/apiUtils";
+import { getApiErrorMessage } from "../utils/normalizers";
+import { SKILLS } from "../constants/appConstants";
+
+export default function SkillRatingForm({
+  jobId,
+  workerId,
+  workerName,
+  jobTitle,
+  jobSkill,
+  onSubmitSuccess,
+  onCancel,
+}) {
+  const [skills, setSkills] = useState([]);
+  const [skillRatings, setSkillRatings] = useState({});
+  const [extraSkills, setExtraSkills] = useState([]);
+  const [extraSkillChoice, setExtraSkillChoice] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const addExtraSkill = (name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    const alreadyListed = [
+      ...skills.map((skill) => skill.skill_name),
+      ...extraSkills.map((skill) => skill.name),
+    ].some((existing) => existing.toLowerCase() === trimmed.toLowerCase());
+    if (alreadyListed) return;
+    setExtraSkills((prev) => [...prev, { tempId: `extra-${Date.now()}-${Math.random()}`, name: trimmed }]);
+  };
+
+  const removeExtraSkill = (tempId) => {
+    setExtraSkills((prev) => prev.filter((skill) => skill.tempId !== tempId));
+    setSkillRatings((prev) => {
+      const next = { ...prev };
+      delete next[tempId];
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    fetchWorkerSkills();
+  }, [workerId]);
+
+  const fetchWorkerSkills = async () => {
+    try {
+      setLoading(true);
+      const response = await apiRequest(`accounts/profiles/${workerId}/portfolio/`, { auth: true });
+      const data = await readResponseData(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, "Unable to load worker skills."));
+      }
+      const workerSkills = data?.skills || [];
+      setSkills(workerSkills);
+      // Nothing is pre-rated: a household that only meant to rate one skill
+      // used to submit 5 stars for every other skill too. Matches mobile.
+      setSkillRatings({});
+      // The job's own service type is always rateable, even if the worker never
+      // added it to their portfolio -- otherwise you can't rate the very work
+      // you hired them for.
+      const seedSkill = (jobSkill || "").trim();
+      const alreadyListed = workerSkills.some(
+        (skill) => (skill.skill_name || "").toLowerCase() === seedSkill.toLowerCase(),
+      );
+      if (seedSkill && !alreadyListed) {
+        setExtraSkills([{ tempId: `extra-job-skill-${jobId}`, name: seedSkill }]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch worker skills:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRatingChange = (skillId, rating) => {
+    setSkillRatings((prev) => ({
+      ...prev,
+      [skillId]: parseInt(rating),
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (submitting) return;
+    if (Object.values(skillRatings).filter((r) => r).length === 0) {
+      setError("Rate at least one skill, or choose Skip.");
+      return;
+    }
+
+    try {
+      setError("");
+      setSubmitting(true);
+      const extraSkillByTempId = new Map(extraSkills.map((skill) => [skill.tempId, skill.name]));
+      for (const [skillId, rating] of Object.entries(skillRatings)) {
+        if (rating) {
+          const extraName = extraSkillByTempId.get(skillId);
+          const body = extraName
+            ? { skill_name: extraName, worker_id: workerId, rating, feedback }
+            : { skill: skillId, rating, feedback };
+          const response = await apiRequest(`accounts/jobs/${jobId}/skill-ratings/`, {
+            method: "POST",
+            auth: true,
+            body,
+          });
+          const data = await readResponseData(response);
+          if (!response.ok) {
+            throw new Error(getApiErrorMessage(data, "Unable to submit skill ratings."));
+          }
+        }
+      }
+      if (onSubmitSuccess) onSubmitSuccess();
+    } catch (submitError) {
+      setError(submitError.message || "Unable to submit skill ratings.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-5">Loading worker skills...</div>;
+  }
+
+  return (
+    <div className="skill-rating-form" style={{ maxWidth: "600px" }}>
+      <style>{`
+        .skill-rating-form {
+          background: white;
+          border-radius: 12px;
+          padding: 2rem;
+          border: 1px solid var(--gg-border);
+        }
+
+        .form-title {
+          font-size: 1.2rem;
+          font-weight: 600;
+          color: var(--gg-dark);
+          margin-bottom: 0.5rem;
+        }
+
+        .form-subtitle {
+          font-size: 0.9rem;
+          color: var(--gg-dark-3);
+          margin-bottom: 1.5rem;
+        }
+
+        .skill-rating-item {
+          margin-bottom: 1.5rem;
+          padding-bottom: 1.5rem;
+          border-bottom: 1px solid var(--gg-border);
+        }
+
+        .skill-rating-item:last-of-type {
+          border-bottom: none;
+        }
+
+        .skill-rating-label {
+          font-weight: 600;
+          color: var(--gg-dark);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 0.75rem;
+        }
+
+        .skill-level-badge {
+          background: var(--gg-accent-2);
+          color: var(--gg-leaf-text);
+          padding: 0.25rem 0.75rem;
+          border-radius: 4px;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+
+        .rating-stars {
+          display: flex;
+          gap: 0.5rem;
+          font-size: 1.5rem;
+        }
+
+        .star {
+          cursor: pointer;
+          color: #b8b2a2;
+          transition: color 0.2s;
+          background: none;
+          border: none;
+          padding: 0;
+          font-size: inherit;
+          line-height: 1;
+        }
+
+        .star.active {
+          color: #c98a00;
+        }
+
+        .star:hover,
+        .star:focus-visible {
+          color: #c98a00;
+        }
+
+        .rating-value {
+          color: var(--gg-dark-3);
+          font-size: 0.9rem;
+          margin-top: 0.5rem;
+        }
+
+        .form-group {
+          margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+          font-weight: 600;
+          color: var(--gg-dark);
+          display: block;
+          margin-bottom: 0.5rem;
+        }
+
+        .form-group textarea {
+          width: 100%;
+          padding: 0.75rem;
+          border: 1px solid var(--gg-border);
+          border-radius: 6px;
+          font-size: 0.95rem;
+          font-family: inherit;
+          resize: vertical;
+        }
+
+        .form-group textarea:focus {
+          outline: none;
+          border-color: var(--gg-primary);
+          box-shadow: 0 0 0 3px rgba(76, 175, 116, 0.1);
+        }
+
+        .action-buttons {
+          display: flex;
+          gap: 1rem;
+          margin-top: 2rem;
+        }
+
+        .btn-submit {
+          background: var(--gg-primary);
+          color: white;
+          border: none;
+          padding: 0.75rem 2rem;
+          border-radius: 6px;
+          cursor: pointer;
+          font-weight: 600;
+          flex: 1;
+        }
+
+        .btn-submit:hover {
+          background: var(--gg-primary-strong);
+        }
+
+        .btn-submit:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .btn-cancel {
+          /* --gg-bg is the dark sidebar green; on it the dark label vanished. */
+          background: var(--gg-card-muted);
+          color: var(--gg-ink);
+          border: 1px solid var(--gg-border);
+          padding: 0.75rem 2rem;
+          border-radius: 6px;
+          cursor: pointer;
+          font-weight: 600;
+          flex: 1;
+        }
+      `}</style>
+
+      <div className="form-title">Rate {workerName}'s Skills</div>
+      <div className="form-subtitle">
+        You worked together on: <strong>{jobTitle}</strong>
+      </div>
+
+      <form onSubmit={handleSubmit}>
+        {skills.map((skill) => (
+          <div key={skill.id} className="skill-rating-item">
+            <div className="skill-rating-label">
+              <div>
+                {skill.skill_name}
+                {skill.proficiency && (
+                  <span className="skill-level-badge" style={{ marginLeft: "0.5rem" }}>
+                    {skill.proficiency}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="rating-stars">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  type="button"
+                  key={star}
+                  className={`star ${skillRatings[skill.id] >= star ? "active" : ""}`}
+                  aria-label={`${skill.skill_name}: ${star} star${star > 1 ? "s" : ""}`}
+                  aria-pressed={skillRatings[skill.id] === star}
+                  onClick={() => handleRatingChange(skill.id, star)}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <div className="rating-value">
+              {skillRatings[skill.id]
+                ? `${skillRatings[skill.id]}/5 stars`
+                : "Not rated"}
+            </div>
+          </div>
+        ))}
+
+        {extraSkills.map((skill) => (
+          <div key={skill.tempId} className="skill-rating-item">
+            <div className="skill-rating-label">
+              <div>
+                {skill.name}
+                <span className="skill-level-badge" style={{ marginLeft: "0.5rem" }}>
+                  New
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeExtraSkill(skill.tempId)}
+                style={{ background: "none", border: "none", color: "var(--gg-dark-3)", cursor: "pointer" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rating-stars">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  type="button"
+                  key={star}
+                  className={`star ${skillRatings[skill.tempId] >= star ? "active" : ""}`}
+                  aria-label={`${skill.name}: ${star} star${star > 1 ? "s" : ""}`}
+                  aria-pressed={skillRatings[skill.tempId] === star}
+                  onClick={() => handleRatingChange(skill.tempId, star)}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <div className="rating-value">
+              {skillRatings[skill.tempId]
+                ? `${skillRatings[skill.tempId]}/5 stars`
+                : "Not rated"}
+            </div>
+          </div>
+        ))}
+
+        {skills.length === 0 && extraSkills.length === 0 && (
+          <div className="alert alert-info">
+            {workerName} hasn't added any skills to their portfolio yet. Add one below to rate the work they
+            actually did on this job.
+          </div>
+        )}
+
+        <div className="form-group">
+          <label>Add another skill to rate</label>
+          <div className="d-flex gap-2">
+            <input
+              type="text"
+              className="form-control"
+              list="skill-rating-form-options"
+              placeholder="e.g. Electrical Work"
+              value={extraSkillChoice}
+              onChange={(event) => setExtraSkillChoice(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addExtraSkill(extraSkillChoice);
+                  setExtraSkillChoice("");
+                }
+              }}
+            />
+            <datalist id="skill-rating-form-options">
+              {SKILLS.filter((skillName) => skillName !== "Other").map((skillName) => (
+                <option key={skillName} value={skillName} />
+              ))}
+            </datalist>
+            <button
+              type="button"
+              className="btn-cancel"
+              style={{ flex: "0 0 auto" }}
+              onClick={() => {
+                addExtraSkill(extraSkillChoice);
+                setExtraSkillChoice("");
+              }}
+            >
+              + Add
+            </button>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="feedback">Optional Feedback</label>
+          <textarea
+            id="feedback"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="Share details about the worker's performance..."
+            rows="3"
+          />
+        </div>
+
+        {error && (
+          <div className="alert alert-warning" role="alert">
+            {error}
+          </div>
+        )}
+
+        <div className="action-buttons">
+          <button
+            type="submit"
+            className="btn-submit"
+            disabled={submitting}
+          >
+            {submitting ? "Submitting..." : "Submit Ratings"}
+          </button>
+          <button
+            type="button"
+            className="btn-cancel"
+            onClick={onCancel}
+            disabled={submitting}
+          >
+            Skip
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

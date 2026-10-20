@@ -5,12 +5,9 @@ export function clearDemoStorage() {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.clear();
-  window.localStorage.removeItem(STORAGE_KEYS.workers);
-  window.localStorage.removeItem(STORAGE_KEYS.households);
-  window.localStorage.removeItem(STORAGE_KEYS.jobs);
-  window.localStorage.removeItem(STORAGE_KEYS.verificationRequests);
-  window.localStorage.removeItem(STORAGE_KEYS.notificationReads);
+  Object.values(STORAGE_KEYS).forEach((key) => {
+    window.localStorage.removeItem(key);
+  });
   window.localStorage.setItem(DEMO_VERSION_KEY, DEMO_DATA_VERSION);
 }
 

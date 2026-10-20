@@ -3,8 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Limits the blast radius of any future XSS bug: injected inline scripts
+         and eval() are blocked outright. connect-src/img-src stay open because
+         the API and media origins differ per environment; script execution is
+         the vector that matters here, not where data is fetched from. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self' https://unpkg.com;
+               style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com;
+               img-src * data: blob:;
+               font-src 'self' data: https://unpkg.com https://fonts.gstatic.com;
+               connect-src *;
+               object-src 'none';
+               base-uri 'self'"
+    />
     <title>GawaGo</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>
     <div id="root"></div>

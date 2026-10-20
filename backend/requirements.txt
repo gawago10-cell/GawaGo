@@ -1,8 +1,21 @@
 Django>=5.0
 djangorestframework>=3.15
 djangorestframework-simplejwt>=5.3
-mysqlclient>=2.2
+psycopg[binary]>=3.1
 Pillow>=10.0
 django-cors-headers>=4.4
 python-dotenv>=1.0
-Pillow>=10.0
+scikit-learn>=1.3
+django-q2>=1.11,<2
+# Cloudinary's own SDK, used by apps.common.cloudinary_storage for PUBLIC
+# uploads when USE_CLOUDINARY=True. Deliberately not django-cloudinary-storage:
+# its last release (0.3.0, 2020) configures itself through DEFAULT_FILE_STORAGE,
+# which Django removed in 5.1.
+cloudinary>=1.46
+
+# MySQL is a supported alternative to PostgreSQL (DJANGO_DB_ENGINE=mysql) but
+# its driver is not installed by default: mysqlclient builds against MySQL
+# system headers, so `pip install -r requirements.txt` failed on a clean
+# Ubuntu host that only had libpq-dev -- for a database the default
+# deployment does not use. For a MySQL deployment, install
+# requirements-mysql.txt as well.

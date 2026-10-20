@@ -30,6 +30,9 @@ urlpatterns = [
     path("api/notifications/", include("apps.notifications.urls")),
     path("api/analytics/", include("apps.analytics.urls")),
     path("api/common/", include("apps.common.urls")),
+    path("api/complaints/", include("apps.complaints.urls")),
+    path("api/reports/", include("apps.reports.urls")),
+    path("api/conversations/", include("apps.chat.urls")),
 ]
 
 if settings.DEBUG:

@@ -1,5 +1,9 @@
-import { BARANGAY_CENTERS } from "../constants/appConstants";
+import { useRef, useState } from "react";
+
+import { BARANGAY_CENTERS, MAX_WORKER_SKILLS } from "../constants/appConstants";
 import { getBarangayCenter, normalizeBarangayName } from "../utils/locationUtils";
+import { dashboardViewForRole, getUserRole, isAdminRole, ROLES } from "../utils/roles";
+import { focusFirstInvalidField, validateRegistration } from "../utils/registrationValidation";
 
 function getBarangayCenterCoordinates(barangay) {
   const normalizedBarangay = normalizeBarangayName(barangay);
@@ -10,15 +14,18 @@ function getBarangayCenterCoordinates(barangay) {
   };
 }
 
+function omitSensitiveAccountFields(account) {
+  const { password, confirmPassword, ...safeAccount } = account;
+  return safeAccount;
+}
+
 export function useGawaGoActions({
   EMPTY_HOUSEHOLD_FORM,
   EMPTY_HOUSEHOLD_REVIEW_FORM,
   EMPTY_WORKER_FEEDBACK_FORM,
   EMPTY_WORKER_FORM,
-  SUPER_ADMIN_ACCOUNT,
   apiRequest,
   clearAuthToken,
-  createJobRecord,
   currentHousehold,
   currentUser,
   currentWorker,
@@ -38,7 +45,6 @@ export function useGawaGoActions({
   householdJobLocationPreview,
   householdProfileForm,
   householdReviewForm,
-  isJobOpenForApplications,
   isNumericIdentifier,
   isValidGmailAddress,
   loginForm,
@@ -46,7 +52,6 @@ export function useGawaGoActions({
   normalizeBackendApplication,
   normalizeBackendJob,
   normalizeBackendWorkerPayload,
-  normalizeReview,
   normalizeVerificationRequest,
   postedJobs,
   readResponseData,
@@ -69,13 +74,14 @@ export function useGawaGoActions({
   setHouseholdJobImages,
   setHouseholdJobLocationPreview,
   setHouseholdReviewForm,
+  setLoginError,
+  setRegisterErrors,
   setLoginForm,
   setPostedJobs,
   setRegisteredHouseholds,
   setRegisteredWorkers,
   setSelectedJobId,
   setSelectedVerificationRequestId,
-  setSuperAdminSection,
   setVerificationRequests,
   setView,
   setWorkerFeedbackForm,
@@ -86,13 +92,38 @@ export function useGawaGoActions({
   workerForm,
   workerProfileForm,
 }) {
+  // Guards handleHouseholdJobSubmit against a double-click. A ref (not a
+  // plain closure variable) is required: this whole hook body re-runs on
+  // every render, and a state update during resolveLocationCoordinates'
+  // multi-second geocode round-trip would otherwise re-render before the
+  // POST resolves, silently resetting a plain variable's guard.
+  const isSubmittingJobRef = useRef(false);
+  const [isSubmittingJob, setIsSubmittingJob] = useState(false);
+  // Same double-click guard for every other request-sending action: a second
+  // click while the first request is in flight is ignored instead of sending
+  // a duplicate that the server rejects with a contradictory message.
+  const actionsInFlightRef = useRef(new Set());
+  const [, setActionsInFlightVersion] = useState(0);
+  function isActionPending(key) {
+    return actionsInFlightRef.current.has(key);
+  }
+  async function runExclusive(key, task) {
+    if (actionsInFlightRef.current.has(key)) {
+      return false;
+    }
+    actionsInFlightRef.current.add(key);
+    setActionsInFlightVersion((version) => version + 1);
+    try {
+      return await task();
+    } finally {
+      actionsInFlightRef.current.delete(key);
+      setActionsInFlightVersion((version) => version + 1);
+    }
+  }
+
   function handleApplyToJob(jobId) {
     if (!currentWorker) {
       window.alert("Please login as a worker first.");
-      return;
-    }
-    if (currentWorker.verification !== "Verified") {
-      window.alert("Please complete verification before applying to jobs.");
       return;
     }
     const job = postedJobs.find((item) => item.id === jobId);
@@ -100,23 +131,16 @@ export function useGawaGoActions({
       window.alert("Job not found.");
       return;
     }
-    if (!isJobOpenForApplications(job)) {
-      window.alert("This job is already closed.");
+    if (!job.canApply) {
+      window.alert("Applications are unavailable for this job right now.");
       return;
     }
-    const alreadyApplied = (job.applications || []).some((application2) => application2.workerId === currentWorker.id);
-    if (alreadyApplied) {
-      window.alert("You already applied for this job.");
-      return;
-    }
-    (async () => {
+    runExclusive(`apply-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/apply/`, {
           method: "POST",
-          auth: false,
+          auth: true,
           body: {
-            worker_username: currentWorker.username,
-            worker_role: "worker",
             note: "",
           },
         });
@@ -150,40 +174,27 @@ export function useGawaGoActions({
         window.alert("Application sent to the household.");
         setView("worker-applications");
       } catch (error) {
-        const appliedAt = new Date().toLocaleString("en-PH");
-        const application = {
-          id: `application-${job.id}-${currentWorker.id}-${Date.now()}`,
-          workerId: currentWorker.id,
-          workerName: getDisplayName(currentWorker.firstName, currentWorker.lastName, currentWorker.username),
-          workerUsername: currentWorker.username,
-          appliedAt,
-          status: "Pending",
-        };
-        setPostedJobs((prev) =>
-          prev.map((item) =>
-            item.id === jobId
-              ? {
-                  ...item,
-                  applications: [...(item.applications || []), application],
-                }
-              : item,
-          ),
-        );
-        window.alert(error.message || "Application sent locally.");
-        setView("worker-applications");
+        await refreshJobsFromBackend();
+        await refreshNotificationsFromBackend();
+        window.alert(error.message || "Unable to apply for this job. Please try again.");
       }
-    })();
+    });
   }
   function handleHireWorker() {
     if (!currentHousehold) {
       window.alert("Please login as a household first.");
       return;
     }
+    if (currentHousehold.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can hire workers.");
+      setView("household-get-verified");
+      return;
+    }
     if (!selectedWorker) {
       window.alert("Worker profile not found.");
       return;
     }
-    if (selectedWorker.verification !== "Verified") {
+    if (String(selectedWorker.verification).toLowerCase() !== "verified") {
       window.alert("This worker must be verified before they can be hired.");
       return;
     }
@@ -200,41 +211,52 @@ export function useGawaGoActions({
       window.alert("This worker is already hired for this job.");
       return;
     }
-    (async () => {
-      const hiredAt = new Date().toLocaleString("en-PH");
-      const applicationRecord = existingApplication
-        ? {
-            ...existingApplication,
-            status: "Hired",
-            hiredAt,
-          }
-        : {
-            id: `application-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
-            workerId: selectedWorker.id,
-            workerName: getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username),
-            workerUsername: selectedWorker.username,
-            appliedAt: hiredAt,
-            hiredAt,
-            status: "Hired",
-          };
-      const applicationStatusTargetId = isNumericIdentifier(existingApplication?.id)
-        ? existingApplication.id
-        : selectedJob.id;
+    if (existingApplication?.status === "Hire Request") {
+      window.alert("A hire request was already sent to this worker.");
+      return;
+    }
+    if (existingApplication && !isNumericIdentifier(existingApplication.id)) {
+      window.alert("This application is not synced with the backend yet. Please refresh jobs and try again.");
+      refreshJobsFromBackend();
+      return;
+    }
+    runExclusive(`hire-${selectedJob.id}-${selectedWorker.id}`, async () => {
+      const requestedAt = new Date().toLocaleString("en-PH");
+      // Applying is itself consent, so accepting an applicant hires them
+      // outright. A worker who never applied was surfaced by matching and has
+      // not agreed to anything yet, so they still get a request to confirm.
+      const isApplicant = existingApplication?.status === "Pending";
+      const applicationRecord = {
+        ...existingApplication,
+        id: existingApplication?.id || `hire-request-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
+        workerId: selectedWorker.id,
+        workerName: getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username),
+        workerUsername: selectedWorker.username,
+        status: isApplicant ? "Hired" : "Hire Request",
+        requestedAt,
+      };
       try {
-        const response = await apiRequest(`jobs/applications/${applicationStatusTargetId}/status/`, {
-          method: "PATCH",
-          auth: false,
-          body: {
-            household_username: currentHousehold.username,
-            status: "hired",
-            job_id: selectedJob.id,
-            worker_username: selectedWorker.username,
-            worker_role: "worker",
-          },
-        });
+        const response = existingApplication
+          ? await apiRequest(`jobs/applications/${existingApplication.id}/status/`, {
+              method: "PATCH",
+              auth: true,
+              body: {
+                status: isApplicant ? "hired" : "hire_requested",
+              },
+            })
+          : await apiRequest(`jobs/${selectedJob.id}/hire-request/`, {
+              method: "POST",
+              auth: true,
+              body: {
+                worker_id: selectedWorker.id,
+                worker_username: selectedWorker.username,
+              },
+            });
         const data = await readResponseData(response);
         if (!response.ok) {
-          throw new Error(getApiErrorMessage(data, "Unable to hire worker."));
+          throw new Error(
+            getApiErrorMessage(data, isApplicant ? "Unable to hire this worker." : "Unable to send hire request."),
+          );
         }
         const normalizedApplication = normalizeBackendApplication(data);
         setPostedJobs((prev) =>
@@ -243,8 +265,18 @@ export function useGawaGoActions({
               return job;
             }
             const nextApplication = normalizedApplication || applicationRecord;
-            const applications = existingApplication
-              ? (job.applications || []).map((application) => {
+            const previousApplications = job.applications || [];
+            const hasExistingApplication = previousApplications.some((application) => {
+              const matchesWorkerId =
+                application.workerId != null && String(application.workerId) === String(selectedWorker.id);
+              const matchesWorkerUsername =
+                application.workerUsername &&
+                selectedWorker.username &&
+                application.workerUsername === selectedWorker.username;
+              return matchesWorkerId || matchesWorkerUsername;
+            });
+            const applications = hasExistingApplication
+              ? previousApplications.map((application) => {
                   const matchesWorkerId =
                     application.workerId != null && String(application.workerId) === String(selectedWorker.id);
                   const matchesWorkerUsername =
@@ -253,34 +285,13 @@ export function useGawaGoActions({
                     application.workerUsername === selectedWorker.username;
                   return matchesWorkerId || matchesWorkerUsername ? nextApplication : application;
                 })
-              : [...(job.applications || []), nextApplication];
+              : [...previousApplications, nextApplication];
             const nextJob = {
               ...job,
               cancellationReason: "",
-              selectedWorkerId: selectedWorker.id,
-              selectedWorkerName: getDisplayName(
-                selectedWorker.firstName,
-                selectedWorker.lastName,
-                selectedWorker.username,
-              ),
-              hiredAt,
               applications,
             };
-            const isFilled = getHiredWorkerCount(nextJob) >= getWorkersNeeded(nextJob);
-            return {
-              ...nextJob,
-              status: isFilled ? "Already found a worker" : "Open",
-              applications: isFilled
-                ? applications.map((application) =>
-                    application.status === "Pending"
-                      ? {
-                          ...application,
-                          status: "Closed",
-                        }
-                      : application,
-                  )
-                : applications,
-            };
+            return nextJob;
           }),
         );
         setRegisteredWorkers((prev) =>
@@ -288,16 +299,17 @@ export function useGawaGoActions({
             worker.id === selectedWorker.id
               ? {
                   ...worker,
-                  status: "Hired",
-                  hiredBy: currentHousehold.username,
-                  hiredJobId: selectedJob.id,
                   applicationNotifications: [
                     ...(worker.applicationNotifications || []),
                     {
-                      id: `hired-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
-                      title: "You were hired",
-                      message: `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} hired you for ${selectedJob.jobTitle || selectedJob.serviceType}.`,
-                      date: hiredAt,
+                      id: `hire-request-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
+                      applicationId: normalizedApplication?.id || applicationRecord.id,
+                      jobId: selectedJob.id,
+                      title: isApplicant ? "Application accepted" : "Hire request",
+                      message: isApplicant
+                        ? `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} accepted your application for ${selectedJob.jobTitle || selectedJob.serviceType}.`
+                        : `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} wants to hire you for ${selectedJob.jobTitle || selectedJob.serviceType}.`,
+                      date: requestedAt,
                       unread: true,
                     },
                   ],
@@ -307,18 +319,125 @@ export function useGawaGoActions({
         );
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
+        const workerLabel = getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username);
         window.alert(
-          `${getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username)} has been hired for ${selectedJob.jobTitle || selectedJob.serviceType}.`,
+          isApplicant
+            ? `${workerLabel} is hired. The job is now in progress.`
+            : `Hire request sent to ${workerLabel}. They can accept or reject it from Notifications.`,
         );
-        setView("household-my-jobs");
+        setView("household-dashboard");
       } catch (error) {
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
-        window.alert(error.message || "Unable to hire worker.");
+        window.alert(error.message || "Unable to complete this action.");
       }
-    })();
+    });
+  }
+  function handleWorkerHireDecision(applicationId, decision) {
+    if (!currentWorker) {
+      window.alert("Please login as a worker first.");
+      return;
+    }
+    if (!isNumericIdentifier(applicationId)) {
+      window.alert("This hire request is not synced with the backend yet. Please refresh and try again.");
+      refreshJobsFromBackend();
+      return;
+    }
+    const normalizedDecision = decision === "accept" ? "accept" : "reject";
+    runExclusive(`hire-decision-${applicationId}`, async () => {
+      try {
+        const response = await apiRequest(`jobs/applications/${applicationId}/decision/`, {
+          method: "PATCH",
+          auth: true,
+          body: {
+            decision: normalizedDecision,
+          },
+        });
+        const data = await readResponseData(response);
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, "Unable to respond to hire request."));
+        }
+        const normalizedApplication = normalizeBackendApplication(data);
+        if (normalizedApplication) {
+          setPostedJobs((prev) =>
+            prev.map((job) => ({
+              ...job,
+              applications: (job.applications || []).map((application) =>
+                String(application.id) === String(applicationId) ? normalizedApplication : application,
+              ),
+            })),
+          );
+        }
+        await refreshJobsFromBackend();
+        await refreshNotificationsFromBackend();
+        window.alert(normalizedDecision === "accept" ? "Hire request accepted." : "Hire request rejected.");
+        setView("worker-applications");
+      } catch (error) {
+        await refreshJobsFromBackend();
+        await refreshNotificationsFromBackend();
+        window.alert(error.message || "Unable to respond to hire request.");
+      }
+    });
+  }
+  function handleWorkerRequestCompletion(jobId, note = "") {
+    if (!currentWorker) {
+      window.alert("Please login as a worker first.");
+      return;
+    }
+    const job = postedJobs.find((item) => String(item.id) === String(jobId));
+    if (!job) {
+      window.alert("Job not found.");
+      return;
+    }
+    const application = (job.applications || []).find(
+      (item) =>
+        item.status === "Hired" &&
+        (String(item.workerId) === String(currentWorker.id) || item.workerUsername === currentWorker.username),
+    );
+    if (!application) {
+      window.alert("Only the hired worker can request completion for this job.");
+      return;
+    }
+    if (!isNumericIdentifier(job.id)) {
+      window.alert("This job is not synced with the backend yet. Please refresh jobs and try again.");
+      refreshJobsFromBackend();
+      return;
+    }
+    runExclusive(`request-completion-${jobId}`, async () => {
+      try {
+        const response = await apiRequest(`jobs/${job.id}/request-completion/`, {
+          method: "POST",
+          auth: true,
+          body: {
+            note: String(note || "").trim(),
+          },
+        });
+        const data = await readResponseData(response);
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, "Unable to request completion."));
+        }
+        const normalizedJob = normalizeBackendJob(data);
+        if (normalizedJob) {
+          setPostedJobs((prev) =>
+            prev.map((item) => (String(item.id) === String(normalizedJob.id) ? normalizedJob : item)),
+          );
+        }
+        await refreshJobsFromBackend();
+        await refreshNotificationsFromBackend();
+        window.alert("Completion request sent to the household.");
+      } catch (error) {
+        await refreshJobsFromBackend();
+        await refreshNotificationsFromBackend();
+        window.alert(error.message || "Unable to request completion. Please try again.");
+      }
+    });
   }
   function handleRejectApplication(workerId = selectedWorker?.id, jobId = selectedJob?.id) {
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can manage job applications.");
+      setView("household-get-verified");
+      return;
+    }
     const job = postedJobs.find((item) => item.id === jobId);
     const worker = registeredWorkers.find((item) => String(item.id) === String(workerId)) || selectedWorker || null;
     if (!job || !worker) {
@@ -334,20 +453,21 @@ export function useGawaGoActions({
       window.alert("This worker is already hired and cannot be rejected from this application.");
       return;
     }
-    (async () => {
+    if (!isNumericIdentifier(existingApplication.id)) {
+      window.alert("This application is not synced with the backend yet. Please refresh jobs and try again.");
+      refreshJobsFromBackend();
+      return;
+    }
+    const applicationStatusTargetId = existingApplication.id;
+    runExclusive(`reject-application-${applicationStatusTargetId}`, async () => {
       const rejectedAt = new Date().toLocaleString("en-PH");
       const message = `Thank you for applying to ${job.jobTitle || job.serviceType}. The household chose another applicant for now, but you can still apply to other open jobs.`;
-      const applicationStatusTargetId = isNumericIdentifier(existingApplication?.id) ? existingApplication.id : job.id;
       try {
         const response = await apiRequest(`jobs/applications/${applicationStatusTargetId}/status/`, {
           method: "PATCH",
-          auth: false,
+          auth: true,
           body: {
-            household_username: currentHousehold?.username || currentUser?.username || "",
             status: "rejected",
-            job_id: job.id,
-            worker_username: worker.username,
-            worker_role: "worker",
           },
         });
         const data = await readResponseData(response);
@@ -400,70 +520,23 @@ export function useGawaGoActions({
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
         window.alert(message);
-        setView("household-my-jobs");
+        setView("household-dashboard");
       } catch (error) {
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to reject application.");
       }
-    })();
+    });
   }
   function handleLoginSubmit(event) {
     event.preventDefault();
     const username = loginForm.username.trim();
-    const demoPassword = loginForm.password.trim();
-    const normalizedUsername = username.toLowerCase();
-    const isSuperAdminLogin =
-      normalizedUsername === SUPER_ADMIN_ACCOUNT.username && demoPassword === SUPER_ADMIN_ACCOUNT.password;
+    setLoginError("");
     if (!username || !loginForm.password) {
-      window.alert("Please enter your username and password.");
+      setLoginError("Please enter your username and password.");
       return;
     }
-    if (isSuperAdminLogin) {
-      clearAuthToken();
-      setCurrentUser({
-        role: "admin",
-        username: SUPER_ADMIN_ACCOUNT.username,
-        displayName: SUPER_ADMIN_ACCOUNT.displayName,
-        isSuperAdmin: true,
-      });
-      setSuperAdminSection("verification");
-      setView("superadmin-dashboard");
-      return;
-    }
-    const localWorker =
-      loginForm.role === "worker"
-        ? registeredWorkers.find((item) => String(item.username || "").toLowerCase() === normalizedUsername)
-        : null;
-    if (localWorker && localWorker.password === loginForm.password) {
-      clearAuthToken();
-      setCurrentUser({
-        id: localWorker.id,
-        role: "worker",
-        username: localWorker.username,
-        email: localWorker.email || "",
-        displayName: getDisplayName(localWorker.firstName, localWorker.lastName, localWorker.username),
-      });
-      setView("worker-dashboard");
-      return;
-    }
-    const localHousehold =
-      loginForm.role === "household"
-        ? registeredHouseholds.find((item) => String(item.username || "").toLowerCase() === normalizedUsername)
-        : null;
-    if (localHousehold && localHousehold.password === loginForm.password) {
-      clearAuthToken();
-      setCurrentUser({
-        id: localHousehold.id,
-        role: "household",
-        username: localHousehold.username,
-        email: localHousehold.email || "",
-        displayName: getDisplayName(localHousehold.firstName, localHousehold.lastName, localHousehold.username),
-      });
-      setView("household-dashboard");
-      return;
-    }
-    (async () => {
+    runExclusive("login-submit", async () => {
       try {
         const response = await apiRequest("accounts/login/", {
           method: "POST",
@@ -479,8 +552,16 @@ export function useGawaGoActions({
           loginError.status = response.status;
           throw loginError;
         }
+        // The account role comes from the login response only -- never from
+        // profile.role, which defaults to "worker" even for admin accounts.
+        const resolvedRole = getUserRole({ role: data?.role, is_staff: data?.is_staff });
+        if (!resolvedRole) {
+          const roleError = new Error("This account type isn't supported here. Please contact support.");
+          roleError.status = 403;
+          throw roleError;
+        }
         setAuthToken(data?.access || "");
-        const resolvedRole = data?.role || loginForm.role || "worker";
+        const isSuperAdmin = resolvedRole === ROLES.SUPERADMIN;
         setCurrentUser({
           id: data?.id || data?.user_id || username,
           role: resolvedRole,
@@ -491,6 +572,7 @@ export function useGawaGoActions({
           displayName: data?.display_name || data?.username || username,
           profile: data?.profile || null,
           is_staff: Boolean(data?.is_staff),
+          isSuperAdmin,
         });
         const backendWorker = normalizeBackendWorkerPayload({
           user: {
@@ -504,80 +586,41 @@ export function useGawaGoActions({
           },
           profile: data?.profile || null,
         });
-        if (backendWorker) {
+        if (backendWorker && !isAdminRole(resolvedRole)) {
           mergeBackendWorkerIntoState(backendWorker);
         }
-        setView(
-          resolvedRole === "superadmin"
-            ? "superadmin-dashboard"
-            : resolvedRole === "admin"
-              ? "admin-dashboard"
-              : resolvedRole === "household"
-                ? "household-dashboard"
-                : "worker-dashboard",
-        );
+        setView(dashboardViewForRole(resolvedRole));
+        // The jobs list is fetched anonymously before login (no per-user
+        // application data), and the background poll that would otherwise
+        // pick up the authenticated view can take several seconds. Refresh
+        // immediately so pages like "My Applications" aren't briefly empty
+        // right after logging in.
+        refreshJobsFromBackend();
+        refreshNotificationsFromBackend();
       } catch (error) {
         if (error.status === 403) {
-          window.alert(error.message || "Account is not verified yet.");
-          return;
-        }
-        if (loginForm.role === "worker") {
-          const worker = registeredWorkers.find((item) => item.username.toLowerCase() === username.toLowerCase());
-          if (!worker || worker.password !== loginForm.password) {
-            window.alert(error.message || "Worker account not found. Please register first.");
-            return;
-          }
-          clearAuthToken();
-          setCurrentUser({
-            role: "worker",
-            username: worker.username,
-            displayName: getDisplayName(worker.firstName, worker.lastName, worker.username),
-          });
-          setView("worker-dashboard");
-          return;
-        }
-        const household = registeredHouseholds.find((item) => item.username.toLowerCase() === username.toLowerCase());
-        if (!household || household.password !== loginForm.password) {
-          window.alert(error.message || "Household account not found. Please register first.");
+          setLoginError(error.message || "Account is not verified yet.");
           return;
         }
         clearAuthToken();
-        setCurrentUser({
-          role: "household",
-          username: household.username,
-          displayName: getDisplayName(household.firstName, household.lastName, household.username),
-        });
-        setView("household-dashboard");
+        setLoginError(error.message || "Login failed. Please check your username and password.");
       }
-    })();
+    });
   }
   function handleWorkerRegisterSubmit(event) {
     event.preventDefault();
-    const requiredFields = [
-      workerForm.firstName,
-      workerForm.lastName,
-      workerForm.username,
-      workerForm.email,
-      workerForm.phone,
-      workerForm.barangay,
-      workerForm.streetAddress,
-      workerForm.password,
-      workerForm.confirmPassword,
-    ];
-    if (requiredFields.some((field) => !String(field || "").trim())) {
-      window.alert("Please complete all required fields.");
+    const formErrors = validateRegistration(workerForm);
+    setRegisterErrors(formErrors);
+    if (Object.keys(formErrors).length > 0) {
+      focusFirstInvalidField(formErrors, event.currentTarget);
       return;
     }
-    if (!isValidGmailAddress(workerForm.email)) {
-      window.alert("Please enter a complete Gmail address, for example example@gmail.com.");
-      return;
-    }
-    if (workerForm.password.length < 8) {
-      window.alert("Password must be at least 8 characters long.");
-      return;
-    }
-    if (workerForm.password !== workerForm.confirmPassword) {
-      window.alert("Worker passwords do not match.");
+    const registrationSkills = new Set([
+      ...(workerForm.skills || []),
+      ...(workerForm.customSkill.trim() ? [workerForm.customSkill.trim()] : []),
+    ]);
+    if (registrationSkills.size > MAX_WORKER_SKILLS) {
+      window.alert(`You can list up to ${MAX_WORKER_SKILLS} skills, including a custom skill.`);
       return;
     }
     const usernameTaken = registeredWorkers.some(
@@ -587,7 +630,7 @@ export function useGawaGoActions({
       window.alert("Username already exists for a worker account.");
       return;
     }
-    (async () => {
+    runExclusive("register", async () => {
       try {
         let resolvedLocation = null;
         try {
@@ -597,8 +640,12 @@ export function useGawaGoActions({
         }
         const normalizedBarangay = normalizeBarangayName(workerForm.barangay);
         const barangayCoordinates = getBarangayCenterCoordinates(normalizedBarangay);
-        const workerLatitude = resolvedLocation?.latitude ?? barangayCoordinates.latitude;
-        const workerLongitude = resolvedLocation?.longitude ?? barangayCoordinates.longitude;
+        const workerLatitude = workerForm.latitude ?? resolvedLocation?.latitude ?? barangayCoordinates.latitude;
+        const workerLongitude = workerForm.longitude ?? resolvedLocation?.longitude ?? barangayCoordinates.longitude;
+        const workerLocationLabel =
+          workerForm.locationLabel ||
+          resolvedLocation?.locationLabel ||
+          formatLocation(workerForm.barangay, workerForm.streetAddress);
         const response = await apiRequest("accounts/register/", {
           method: "POST",
           auth: false,
@@ -620,8 +667,7 @@ export function useGawaGoActions({
             ),
             hourly_rate: workerForm.hourlyRate,
             daily_rate: workerForm.dailyRate,
-            location_label:
-              resolvedLocation?.locationLabel || formatLocation(workerForm.barangay, workerForm.streetAddress),
+            location_label: workerLocationLabel,
             latitude: workerLatitude,
             longitude: workerLongitude,
           },
@@ -635,7 +681,7 @@ export function useGawaGoActions({
           profile: data?.profile,
         });
         const workerAccount = {
-          ...workerForm,
+          ...omitSensitiveAccountFields(workerForm),
           skills: Array.from(
             new Set([
               ...(workerForm.skills || []),
@@ -648,8 +694,10 @@ export function useGawaGoActions({
           rating: "No ratings yet",
           reviewsDone: 0,
           status: "Available",
-          distanceKm: "0.00",
+          distanceKm: null,
           barangay: normalizedBarangay,
+          streetAddress: workerForm.streetAddress,
+          locationLabel: workerLocationLabel,
           latitude: workerLatitude,
           longitude: workerLongitude,
           avatar: (workerForm.firstName || workerForm.username || "W").slice(0, 1).toUpperCase(),
@@ -657,6 +705,7 @@ export function useGawaGoActions({
           givenFeedback: [],
           verificationNotifications: [],
           applicationNotifications: [],
+          emailVerified: true,
         };
         setRegisteredWorkers((prev) => [
           backendWorker
@@ -666,6 +715,7 @@ export function useGawaGoActions({
                 streetAddress: workerForm.streetAddress,
                 latitude: workerLatitude,
                 longitude: workerLongitude,
+                emailVerified: true,
               }
             : workerAccount,
           ...prev.filter((item) => item.username?.toLowerCase() !== workerAccount.username.toLowerCase()),
@@ -681,45 +731,25 @@ export function useGawaGoActions({
       } catch (error) {
         window.alert(error.message || "Unable to create worker account.");
       }
-    })();
+    });
   }
   function handleHouseholdRegisterSubmit(event) {
     event.preventDefault();
-    const requiredFields = [
-      householdForm.firstName,
-      householdForm.lastName,
-      householdForm.username,
-      householdForm.email,
-      householdForm.phone,
-      householdForm.barangay,
-      householdForm.streetAddress,
-      householdForm.password,
-      householdForm.confirmPassword,
-    ];
-    if (requiredFields.some((field) => !String(field || "").trim())) {
-      window.alert("Please complete all required fields.");
+    const formErrors = validateRegistration(householdForm);
+    if (
+      !formErrors.username &&
+      registeredHouseholds.some(
+        (item) => item.username.toLowerCase() === householdForm.username.trim().toLowerCase(),
+      )
+    ) {
+      formErrors.username = "That username is already taken.";
+    }
+    setRegisterErrors(formErrors);
+    if (Object.keys(formErrors).length > 0) {
+      focusFirstInvalidField(formErrors, event.currentTarget);
       return;
     }
-    if (!isValidGmailAddress(householdForm.email)) {
-      window.alert("Please enter a complete Gmail address, for example example@gmail.com.");
-      return;
-    }
-    if (householdForm.password.length < 8) {
-      window.alert("Password must be at least 8 characters long.");
-      return;
-    }
-    if (householdForm.password !== householdForm.confirmPassword) {
-      window.alert("Household passwords do not match.");
-      return;
-    }
-    const usernameTaken = registeredHouseholds.some(
-      (item) => item.username.toLowerCase() === householdForm.username.trim().toLowerCase(),
-    );
-    if (usernameTaken) {
-      window.alert("Username already exists for a household account.");
-      return;
-    }
-    (async () => {
+    runExclusive("register", async () => {
       try {
         const resolvedLocation = await resolveLocationCoordinates(
           householdForm.barangay,
@@ -748,11 +778,12 @@ export function useGawaGoActions({
           throw new Error(getApiErrorMessage(data, "Unable to create household account."));
         }
         const householdAccount = {
-          ...householdForm,
+          ...omitSensitiveAccountFields(householdForm),
           id: Date.now(),
           username: householdForm.username.trim(),
           latitude: resolvedLocation?.latitude ?? null,
           longitude: resolvedLocation?.longitude ?? null,
+          emailVerified: true,
         };
         setRegisteredHouseholds((prev) => [...prev, householdAccount]);
         setHouseholdForm(EMPTY_HOUSEHOLD_FORM);
@@ -766,7 +797,7 @@ export function useGawaGoActions({
       } catch (error) {
         window.alert(error.message || "Unable to create household account.");
       }
-    })();
+    });
   }
   function handleWorkerProfileSave(event) {
     event.preventDefault();
@@ -774,7 +805,7 @@ export function useGawaGoActions({
       window.alert("No worker account is currently logged in.");
       return;
     }
-    (async () => {
+    runExclusive("worker-profile-save", async () => {
       let resolvedLocation = null;
       try {
         resolvedLocation = await resolveLocationCoordinates(
@@ -787,8 +818,12 @@ export function useGawaGoActions({
       }
       const normalizedBarangay = normalizeBarangayName(workerProfileForm.barangay);
       const barangayCoordinates = getBarangayCenterCoordinates(normalizedBarangay);
-      const workerLatitude = resolvedLocation?.latitude ?? barangayCoordinates.latitude;
-      const workerLongitude = resolvedLocation?.longitude ?? barangayCoordinates.longitude;
+      const workerLatitude = workerProfileForm.latitude ?? resolvedLocation?.latitude ?? barangayCoordinates.latitude;
+      const workerLongitude = workerProfileForm.longitude ?? resolvedLocation?.longitude ?? barangayCoordinates.longitude;
+      const workerLocationLabel =
+        workerProfileForm.locationLabel ||
+        resolvedLocation?.locationLabel ||
+        formatLocation(workerProfileForm.barangay, workerProfileForm.streetAddress);
       const nextWorkerPatch = {
         firstName: workerProfileForm.firstName,
         lastName: workerProfileForm.lastName,
@@ -801,11 +836,19 @@ export function useGawaGoActions({
         dailyRate: workerProfileForm.dailyRate,
         yearsExperience: workerProfileForm.yearsExperience,
         skills: workerProfileForm.skills,
+        availabilityWindows: workerProfileForm.availabilityWindows || [],
+        locationLabel: workerLocationLabel,
         latitude: workerLatitude,
         longitude: workerLongitude,
       };
       try {
         if (getAuthToken()) {
+          const availabilityWindows = (workerProfileForm.availabilityWindows || []).filter(
+            (window) => window.date && window.startTime && window.endTime,
+          );
+          if (availabilityWindows.some((window) => window.startTime === window.endTime)) {
+            throw new Error("Availability start and end time must be different.");
+          }
           const profilePayload = {
             first_name: workerProfileForm.firstName,
             last_name: workerProfileForm.lastName,
@@ -813,13 +856,10 @@ export function useGawaGoActions({
             phone: workerProfileForm.phone,
             bio: workerProfileForm.bio,
             years_experience: Number(workerProfileForm.yearsExperience || 0),
-            role: "worker",
             skills: workerProfileForm.skills,
             hourly_rate: workerProfileForm.hourlyRate,
             daily_rate: workerProfileForm.dailyRate,
-            location_label:
-              resolvedLocation?.locationLabel ||
-              formatLocation(workerProfileForm.barangay, workerProfileForm.streetAddress),
+            location_label: workerLocationLabel,
             latitude: nextWorkerPatch.latitude,
             longitude: nextWorkerPatch.longitude,
           };
@@ -839,6 +879,31 @@ export function useGawaGoActions({
           if (!response.ok) {
             throw new Error(getApiErrorMessage(data, "Unable to update worker profile."));
           }
+          const availabilityResponse = await apiRequest("accounts/me/availability/", {
+            method: "PUT",
+            auth: true,
+            body: {
+              availability_windows: availabilityWindows.map((window) => ({
+                date: window.date,
+                start_time: window.startTime,
+                end_time: window.endTime,
+                is_available: window.isAvailable !== false,
+              })),
+            },
+          });
+          const availabilityData = await readResponseData(availabilityResponse);
+          if (!availabilityResponse.ok) {
+            throw new Error(getApiErrorMessage(availabilityData, "Unable to update worker availability."));
+          }
+          nextWorkerPatch.availabilityWindows = Array.isArray(availabilityData)
+            ? availabilityData.map((window) => ({
+                id: window.id,
+                date: window.date || "",
+                startTime: window.start_time || "",
+                endTime: window.end_time || "",
+                isAvailable: window.is_available ?? true,
+              }))
+            : availabilityWindows;
           const backendWorker = normalizeBackendWorkerPayload({
             user: data?.user || {
               username: currentUser.username,
@@ -853,10 +918,13 @@ export function useGawaGoActions({
             mergeBackendWorkerIntoState({
               ...backendWorker,
               barangay: workerProfileForm.barangay,
+              streetAddress: workerProfileForm.streetAddress,
+              locationLabel: workerLocationLabel,
               latitude: nextWorkerPatch.latitude,
               longitude: nextWorkerPatch.longitude,
-              profilePhotoPreview: savedProfilePhoto,
-            });
+                profilePhotoPreview: savedProfilePhoto,
+                availabilityWindows: nextWorkerPatch.availabilityWindows,
+              });
             nextWorkerPatch.profilePhotoPreview = savedProfilePhoto;
           }
         }
@@ -892,9 +960,8 @@ export function useGawaGoActions({
                   skills: workerProfileForm.skills,
                   hourly_rate: workerProfileForm.hourlyRate,
                   daily_rate: workerProfileForm.dailyRate,
-                  location_label:
-                    resolvedLocation?.locationLabel ||
-                    formatLocation(workerProfileForm.barangay, workerProfileForm.streetAddress),
+                  availability_windows: nextWorkerPatch.availabilityWindows,
+                  location_label: workerLocationLabel,
                   latitude: nextWorkerPatch.latitude,
                   longitude: nextWorkerPatch.longitude,
                   profile_photo_url: nextWorkerPatch.profilePhotoPreview || prev.profile.profile_photo_url || "",
@@ -906,32 +973,62 @@ export function useGawaGoActions({
       } catch (error) {
         window.alert(error.message || "Unable to update worker profile.");
       }
-    })();
+    });
   }
   function handleVerificationSubmit(event) {
     event.preventDefault();
-    if (!verificationForm.primaryIdName || !verificationForm.secondaryDocName) {
+    if (
+      !verificationForm.primaryIdName ||
+      !verificationForm.secondaryDocName ||
+      !verificationForm.primaryIdFile ||
+      !verificationForm.secondaryDocFile
+    ) {
       window.alert("Please upload both required verification documents.");
       return;
     }
-    const worker = currentWorker;
-    if (!worker) {
-      window.alert("Please login as a worker first.");
+    if (!verificationForm.primaryIdType) {
+      window.alert("Please choose which government ID you are uploading.");
       return;
     }
-    (async () => {
-      const requestRecord = {
-        worker_username: worker.username,
-        primary_id_name: verificationForm.primaryIdName,
-        secondary_doc_name: verificationForm.secondaryDocName,
-        primary_id_preview: verificationForm.primaryIdPreview,
-        secondary_doc_preview: verificationForm.secondaryDocPreview,
-        notes: verificationForm.notes,
-      };
+    if (verificationForm.primaryIdType === "other" && !(verificationForm.primaryIdOtherName || "").trim()) {
+      window.alert("Please name the government ID you are uploading.");
+      return;
+    }
+    const account = currentUser?.role === "worker" ? currentWorker : registeredHouseholds.find(
+      (item) => item.username === currentUser?.username,
+    );
+    if (!account || !["worker", "household"].includes(currentUser?.role)) {
+      window.alert("Please login with a worker or household account first.");
+      return;
+    }
+    if (
+      account.verification === "Verified" ||
+      (account.verificationSubmission &&
+        ["Pending", "Under Review"].includes(account.verificationSubmission.status))
+    ) {
+      window.alert(
+        account.verification === "Verified"
+          ? "Your account is already verified."
+          : "Your verification request is already under review.",
+      );
+      return;
+    }
+    runExclusive("verification-submit", async () => {
+      const requestRecord = new FormData();
+      requestRecord.append("primary_id_type", verificationForm.primaryIdType || "other");
+      // The backend fills the label from the chosen type; it only reads this
+      // when the type is "other".
+      if ((verificationForm.primaryIdType || "other") === "other") {
+        requestRecord.append("primary_id_name", verificationForm.primaryIdOtherName || "");
+      }
+      requestRecord.append("secondary_doc_name", verificationForm.secondaryDocName);
+      requestRecord.append("primary_id_file", verificationForm.primaryIdFile);
+      requestRecord.append("secondary_doc_file", verificationForm.secondaryDocFile);
+      requestRecord.append("notes", verificationForm.notes || "");
       try {
         const response = await apiRequest("common/verification-requests/", {
           method: "POST",
-          auth: false,
+          auth: true,
           body: requestRecord,
         });
         const data = await readResponseData(response);
@@ -939,17 +1036,19 @@ export function useGawaGoActions({
           throw new Error(getApiErrorMessage(data, "Unable to submit verification request."));
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
-        const backendWorker = normalizeBackendWorkerPayload(data.worker);
+        const backendAccount = data.account || data.worker;
+        const backendWorker =
+          currentUser.role === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => {
           const existingIndex = prev.findIndex(
-            (item) => item.workerUsername === worker.username && item.status !== "Rejected",
+            (item) => item.workerUsername === account.username && item.status !== "Rejected",
           );
           if (existingIndex >= 0) {
             return prev.map((item, index) => (index === existingIndex ? normalizedRequest : item));
           }
           return [normalizedRequest, ...prev];
         });
-        if (backendWorker) {
+        if (currentUser.role === "worker" && backendWorker) {
           mergeBackendWorkerIntoState({
             ...backendWorker,
             verification: "Under Review",
@@ -965,10 +1064,10 @@ export function useGawaGoActions({
               },
             ],
           });
-        } else {
+        } else if (currentUser.role === "worker") {
           setRegisteredWorkers((prev) =>
             prev.map((item) =>
-              item.username === worker.username
+              item.username === account.username
                 ? {
                     ...item,
                     verification: "Under Review",
@@ -987,13 +1086,26 @@ export function useGawaGoActions({
                 : item,
             ),
           );
+        } else {
+          setRegisteredHouseholds((prev) =>
+            prev.map((item) =>
+              item.username === account.username
+                ? {
+                    ...item,
+                    verification: "Under Review",
+                    verificationRequestId: normalizedRequest.id,
+                    verificationSubmission: normalizedRequest,
+                  }
+                : item,
+            ),
+          );
         }
         setCurrentUser((prev) =>
           prev
             ? {
                 ...prev,
                 profile:
-                  data?.worker?.profile ||
+                  backendAccount?.profile ||
                   (prev.profile
                     ? {
                         ...prev.profile,
@@ -1007,9 +1119,12 @@ export function useGawaGoActions({
         await refreshVerificationStateFromBackend();
         window.alert("Verification request submitted. Status is now Under Review.");
       } catch (error) {
-        window.alert(error.message || "Verification documents submitted. Please wait for admin review.");
+        // Must never read as success -- a fallback claiming the documents
+        // were submitted here would tell the worker/household their
+        // verification is under review when the request actually failed.
+        window.alert(error.message || "Unable to submit verification documents. Please try again.");
       }
-    })();
+    });
   }
   function handleHouseholdProfileSave(event) {
     event.preventDefault();
@@ -1017,7 +1132,7 @@ export function useGawaGoActions({
       window.alert("No household account is currently logged in.");
       return;
     }
-    (async () => {
+    runExclusive("household-profile-save", async () => {
       let savedProfilePhoto = householdProfileForm.profilePhotoPreview || "";
       try {
         if (getAuthToken()) {
@@ -1026,7 +1141,6 @@ export function useGawaGoActions({
             last_name: householdProfileForm.lastName,
             email: householdProfileForm.email,
             phone: householdProfileForm.phone,
-            role: "household",
             location_label: formatLocation(householdProfileForm.barangay, householdProfileForm.streetAddress),
           };
           const requestBody = householdProfileForm.profilePhotoFile ? new FormData() : profilePayload;
@@ -1046,6 +1160,7 @@ export function useGawaGoActions({
           savedProfilePhoto =
             data?.profile?.profile_photo_url ||
             data?.profile?.profile_photo ||
+            data?.profile?.profile_photo_preview ||
             householdProfileForm.profilePhotoPreview ||
             "";
         }
@@ -1108,20 +1223,19 @@ export function useGawaGoActions({
       }),
     );
     window.alert("Household profile updated.");
-    })();
+    });
   }
   function handleCancelJob(jobId) {
     const job = postedJobs.find((item) => item.id === jobId);
     if (!job) {
       return;
     }
-    (async () => {
+    runExclusive(`cancel-job-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/`, {
           method: "PATCH",
-          auth: false,
+          auth: true,
           body: {
-            household_username: currentHousehold?.username || currentUser?.username || "",
             status: "cancelled",
           },
         });
@@ -1137,43 +1251,31 @@ export function useGawaGoActions({
         }
         await refreshJobsFromBackend();
       } catch (error) {
-        setPostedJobs((prev) => prev.filter((jobRecord) => String(jobRecord.id) !== String(jobId)));
+        await refreshJobsFromBackend();
+        window.alert(error.message || "Unable to cancel job. Please try again.");
       } finally {
         if (String(selectedJobId) === String(jobId)) {
           setSelectedJobId(null);
         }
       }
-    })();
+    });
   }
   function handleConfirmJobCompleted(jobId = selectedJob?.id) {
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can complete a job.");
+      setView("household-get-verified");
+      return;
+    }
     if (!jobId) {
       window.alert("Select a job first.");
       return;
     }
-    const markCompletedLocally = () => {
-      setPostedJobs((prev) =>
-        prev.map((job) =>
-          String(job.id) === String(jobId)
-            ? {
-                ...job,
-                status: "Completed",
-                completedAt: new Date().toLocaleString("en-PH"),
-                applications: (job.applications || []).map((application) =>
-                  application.status === "Hired" ? { ...application, status: "Completed" } : application,
-                ),
-              }
-            : job,
-        ),
-      );
-    };
-    markCompletedLocally();
-    (async () => {
+    runExclusive(`complete-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/`, {
           method: "PATCH",
-          auth: false,
+          auth: true,
           body: {
-            household_username: currentHousehold?.username || currentUser?.username || "",
             status: "completed",
           },
         });
@@ -1190,89 +1292,69 @@ export function useGawaGoActions({
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
       } catch (error) {
-        window.alert(error.message || "Job marked as completed locally.");
+        await refreshJobsFromBackend();
+        window.alert(error.message || "Unable to complete job. Please try again.");
       }
-    })();
+    });
   }
-  function handleHouseholdReviewSubmit(event) {
+  // Returns whether the review was actually saved, so the modal that hosts
+  // this form only closes on success -- it used to close unconditionally
+  // right after calling this (a fire-and-forget inner IIFE the caller never
+  // awaited), so a rejected review surfaced later as an alert with the
+  // filled-in form already gone.
+  async function handleHouseholdReviewSubmit(event) {
     event.preventDefault();
     if (!currentHousehold || !selectedWorker) {
       window.alert("Select a worker first.");
-      return;
+      return false;
     }
-    const review = normalizeReview({
-      id: `review-${Date.now()}`,
-      authorRole: "household",
-      authorUsername: currentHousehold.username,
-      authorName: getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username),
-      targetUsername: selectedWorker.username || selectedWorker.workerUsername || "",
-      targetName: getDisplayName(selectedWorker.firstName, selectedWorker.lastName, selectedWorker.username),
-      rating: Number(householdReviewForm.rating),
-      feedback: householdReviewForm.feedback.trim(),
-      jobTitle: selectedJob?.jobTitle || selectedJob?.serviceType || "",
-      createdAt: new Date().toLocaleString("en-PH"),
-    });
-    if (!review.rating) {
+    const rating = parseFloat(householdReviewForm.rating);
+    if (!rating) {
       window.alert("Please select a star rating first.");
-      return;
+      return false;
     }
-    let householdReviewAppliedLocally = false;
-    const applyHouseholdReviewLocally = () => {
-      if (householdReviewAppliedLocally) {
-        return;
-      }
-      householdReviewAppliedLocally = true;
-      setRegisteredWorkers((prev) =>
-        prev.map((worker) =>
-          String(worker.id) === String(selectedWorker.id) || worker.username === review.targetUsername
-            ? {
-                ...worker,
-                receivedReviews: [...(worker.receivedReviews || []), review],
-                rating: review.rating || worker.rating,
-                reviewsDone: (worker.reviewsDone || 0) + 1,
-              }
-            : worker,
-        ),
-      );
-      setRegisteredHouseholds((prev) =>
-        prev.map((household) =>
-          household.username === (currentHousehold.username || currentUser.username)
-            ? {
-                ...household,
-                givenFeedback: [...(household.givenFeedback || []), review],
-              }
-            : household,
-        ),
-      );
-    };
-    (async () => {
+    if (!selectedJob?.id) {
+      window.alert("Select a completed job first.");
+      return false;
+    }
+    return runExclusive(`review-${selectedJob.id}-${selectedWorker.id}`, async () => {
       try {
+        const body = {
+          target_username: selectedWorker.username,
+          job_id: selectedJob?.id,
+          job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
+          rating,
+          feedback: householdReviewForm.feedback.trim(),
+        };
+
+        if (householdReviewForm.quality_of_work) body.quality_of_work = parseInt(householdReviewForm.quality_of_work);
+        if (householdReviewForm.punctuality) body.punctuality = parseInt(householdReviewForm.punctuality);
+        if (householdReviewForm.communication) body.communication = parseInt(householdReviewForm.communication);
+        if (householdReviewForm.professionalism) body.professionalism = parseInt(householdReviewForm.professionalism);
+
         const response = await apiRequest("reviews/", {
           method: "POST",
-          auth: false,
-          body: {
-            author_username: currentHousehold.username,
-            target_username: selectedWorker.username,
-            job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
-            rating: Number(householdReviewForm.rating),
-            feedback: householdReviewForm.feedback.trim(),
-          },
+          auth: true,
+          body,
         });
         const data = await readResponseData(response);
         if (!response.ok) {
           throw new Error(getApiErrorMessage(data, "Unable to submit review."));
         }
-        applyHouseholdReviewLocally();
         setHouseholdReviewForm(EMPTY_HOUSEHOLD_REVIEW_FORM);
         await refreshReviewsFromBackend();
+        // Also re-pull jobs: canReview flips off once the review lands, which is
+        // what moves the job out of the dashboard's "Completed" list.
+        await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
         window.alert("Review submitted for the worker.");
+        return true;
       } catch (error) {
-        applyHouseholdReviewLocally();
-        setHouseholdReviewForm(EMPTY_HOUSEHOLD_REVIEW_FORM);
-        window.alert(error.message || "Review submitted locally.");
+        await refreshReviewsFromBackend();
+        window.alert(error.message || "Unable to submit review. Please try again.");
+        return false;
       }
-    })();
+    });
   }
   function handleWorkerFeedbackSubmit(event) {
     event.preventDefault();
@@ -1285,27 +1367,30 @@ export function useGawaGoActions({
       window.alert("Household profile not found.");
       return;
     }
-    const review = normalizeReview({
-      id: `feedback-${Date.now()}`,
-      authorRole: "worker",
-      authorName: getDisplayName(currentWorker.firstName, currentWorker.lastName, currentWorker.username),
-      targetName: getDisplayName(household.firstName, household.lastName, household.username),
-      rating: null,
-      feedback: workerFeedbackForm.feedback.trim(),
-      jobTitle: selectedJob?.jobTitle || selectedJob?.serviceType || "",
-      createdAt: new Date().toLocaleString("en-PH"),
-    });
-    (async () => {
+    const rating = parseFloat(workerFeedbackForm.rating);
+    if (!rating) {
+      window.alert("Please select a household rating first.");
+      return;
+    }
+    runExclusive(`worker-feedback-${selectedJob.id}`, async () => {
       try {
+        const body = {
+          target_username: household.username,
+          job_id: selectedJob?.id,
+          job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
+          rating,
+          feedback: workerFeedbackForm.feedback.trim(),
+        };
+
+        if (workerFeedbackForm.quality_of_work) body.quality_of_work = parseInt(workerFeedbackForm.quality_of_work);
+        if (workerFeedbackForm.punctuality) body.punctuality = parseInt(workerFeedbackForm.punctuality);
+        if (workerFeedbackForm.communication) body.communication = parseInt(workerFeedbackForm.communication);
+        if (workerFeedbackForm.professionalism) body.professionalism = parseInt(workerFeedbackForm.professionalism);
+
         const response = await apiRequest("reviews/", {
           method: "POST",
-          auth: false,
-          body: {
-            author_username: currentWorker.username,
-            target_username: household.username,
-            job_title: selectedJob?.jobTitle || selectedJob?.serviceType || "",
-            feedback: workerFeedbackForm.feedback.trim(),
-          },
+          auth: true,
+          body,
         });
         const data = await readResponseData(response);
         if (!response.ok) {
@@ -1316,32 +1401,12 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert("Feedback submitted for the household.");
       } catch (error) {
-        setRegisteredHouseholds((prev) =>
-          prev.map((item) =>
-            item.username === household.username
-              ? {
-                  ...item,
-                  receivedFeedback: [...(item.receivedFeedback || []), review],
-                }
-              : item,
-          ),
-        );
-        setRegisteredWorkers((prev) =>
-          prev.map((worker) =>
-            worker.id === currentWorker.id
-              ? {
-                  ...worker,
-                  givenFeedback: [...(worker.givenFeedback || []), review],
-                }
-              : worker,
-          ),
-        );
-        setWorkerFeedbackForm(EMPTY_WORKER_FEEDBACK_FORM);
-        window.alert(error.message || "Feedback submitted locally.");
+        await refreshReviewsFromBackend();
+        window.alert(error.message || "Unable to submit feedback. Please try again.");
       }
-    })();
+    });
   }
-  function handleWorkerFeedbackForReviewSubmit(review, feedbackText) {
+  function handleWorkerFeedbackForReviewSubmit(review, feedbackText, ratingValue = "5") {
     if (!currentWorker) {
       window.alert("Please login as a worker first.");
       return;
@@ -1349,6 +1414,11 @@ export function useGawaGoActions({
     const feedback = String(feedbackText || "").trim();
     if (!feedback) {
       window.alert("Please write feedback before sending.");
+      return;
+    }
+    const rating = parseFloat(ratingValue);
+    if (!rating) {
+      window.alert("Please select a household rating first.");
       return;
     }
     const householdUsername = review?.authorUsername || "";
@@ -1361,27 +1431,23 @@ export function useGawaGoActions({
       window.alert("Household profile not found.");
       return;
     }
-    const localReview = normalizeReview({
-      id: `feedback-${Date.now()}`,
-      authorRole: "worker",
-      authorUsername: currentWorker.username,
-      authorName: "Anonymous Worker",
-      targetUsername: household.username,
-      targetName: getDisplayName(household.firstName, household.lastName, household.username),
-      rating: null,
-      feedback,
-      jobTitle: review?.jobTitle || "",
-      createdAt: new Date().toLocaleString("en-PH"),
-    });
-    (async () => {
+    if (!review?.jobId) {
+      // Guessing selectedJob?.id here would risk filing the reply against
+      // whatever job happens to be selected elsewhere in the UI rather than
+      // the one this review is actually about.
+      window.alert("Unable to determine which job this review is for. Please try again.");
+      return;
+    }
+    runExclusive(`worker-feedback-reply-${review.jobId}`, async () => {
       try {
         const response = await apiRequest("reviews/", {
           method: "POST",
-          auth: false,
+          auth: true,
           body: {
-            author_username: currentWorker.username,
             target_username: household.username,
+            job_id: review.jobId,
             job_title: review?.jobTitle || "",
+            rating,
             feedback,
           },
         });
@@ -1393,29 +1459,10 @@ export function useGawaGoActions({
         await refreshNotificationsFromBackend();
         window.alert("Anonymous feedback sent to the household.");
       } catch (error) {
-        setRegisteredHouseholds((prev) =>
-          prev.map((item) =>
-            item.username === household.username
-              ? {
-                  ...item,
-                  receivedFeedback: [...(item.receivedFeedback || []), localReview],
-                }
-              : item,
-          ),
-        );
-        setRegisteredWorkers((prev) =>
-          prev.map((worker) =>
-            worker.username === currentWorker.username
-              ? {
-                  ...worker,
-                  givenFeedback: [...(worker.givenFeedback || []), localReview],
-                }
-              : worker,
-          ),
-        );
-        window.alert(error.message || "Anonymous feedback submitted locally.");
+        await refreshReviewsFromBackend();
+        window.alert(error.message || "Unable to submit anonymous feedback. Please try again.");
       }
-    })();
+    });
   }
   function handleHouseholdJobSubmit(event) {
     event.preventDefault();
@@ -1423,20 +1470,37 @@ export function useGawaGoActions({
       window.alert("Please login as a household account first.");
       return;
     }
-    if (
-      !householdJobForm.serviceType ||
-      !householdJobForm.preferredDate ||
-      !householdJobForm.preferredTime ||
-      getWorkersNeeded(householdJobForm) < 1
-    ) {
-      window.alert("Please complete the service type, preferred date, preferred time, and number of workers needed.");
+    if (currentHousehold?.verification !== "Verified") {
+      window.alert("Your household account must be verified before you can post a job.");
+      setView("household-get-verified");
       return;
     }
+    const serviceType = householdJobForm.serviceType === "Other"
+      ? (householdJobForm.customServiceType || "").trim()
+      : householdJobForm.serviceType;
+    if (
+      !serviceType ||
+      !householdJobForm.jobStartDate ||
+      getWorkersNeeded(householdJobForm) < 1
+    ) {
+      window.alert("Please complete the service type, job start date, and number of workers needed.");
+      return;
+    }
+    if (isSubmittingJobRef.current) {
+      // Ignore a double-click/double-submit rather than posting the job
+      // twice -- resolveLocationCoordinates below is a multi-second geocode
+      // round-trip, leaving a wide window for a second click to land before
+      // the first POST resolves.
+      return;
+    }
+    isSubmittingJobRef.current = true;
+    setIsSubmittingJob(true);
     (async () => {
+     try {
       const resolvedLocation =
         householdJobLocationPreview ||
         (await resolveLocationCoordinates(householdJobForm.barangay, householdJobForm.streetAddress, true));
-      const scheduledLabel = `${formatScheduleLabel(householdJobForm.scheduleType)}${householdJobForm.preferredDate ? ` on ${householdJobForm.preferredDate}` : ""}${householdJobForm.preferredTime ? ` at ${householdJobForm.preferredTime}` : ""}`;
+      const scheduledLabel = `${formatScheduleLabel(householdJobForm.scheduleType)}${householdJobForm.jobStartDate ? ` starting ${householdJobForm.jobStartDate}` : ""}`;
       const resolvedLatitude =
         resolvedLocation?.latitude ??
         householdJobCoordinates?.latitude ??
@@ -1462,22 +1526,35 @@ export function useGawaGoActions({
           longitude: resolvedLongitude,
         });
       }
+      const distanceKmMap = { '1km': 1.0, '2km': 2.0, '5km': 5.0, '10km': 10.0, 'unlimited': 999999 };
+      const geoBoundary = householdJobForm.geographicBoundary || '1km';
       const payload = {
-        household_username: currentHousehold?.username || currentUser.username,
-        title: householdJobForm.jobTitle.trim() || householdJobForm.serviceType,
-        job_type: householdJobForm.serviceType,
-        required_skill: householdJobForm.serviceType,
+        title: householdJobForm.jobTitle.trim() || serviceType,
+        job_type: serviceType,
+        required_skill: serviceType,
         schedule: scheduledLabel,
+        schedule_type: householdJobForm.scheduleType,
         description: householdJobForm.description.trim(),
-        location_label:
-          resolvedLocation?.locationLabel ||
-          formatLocation(householdJobForm.barangay.trim(), householdJobForm.streetAddress.trim()),
+        // The geocoder only supplies coordinates when a barangay was chosen:
+        // its label is often just "Tayabas, QZ, Philippines", which drops the
+        // barangay that workers and the demand-by-barangay analytics rely on.
+        location_label: householdJobForm.barangay.trim()
+          ? formatLocation(householdJobForm.barangay.trim(), householdJobForm.streetAddress.trim())
+          : resolvedLocation?.locationLabel || formatLocation("", householdJobForm.streetAddress.trim()),
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         service_rate: householdJobForm.offeredRate,
+        rate_type: { "Per Hour": "per_hour", "Fixed Rate": "fixed" }[householdJobForm.rateType] || "per_day",
         worker_slots: getWorkersNeeded(householdJobForm),
+        job_start_date: householdJobForm.jobStartDate || null,
+        job_end_date: householdJobForm.jobEndDate || null,
+        estimated_working_days: householdJobForm.estimatedWorkingDays ? parseInt(householdJobForm.estimatedWorkingDays, 10) : null,
+        max_distance_km: distanceKmMap[geoBoundary] || 1.0,
+        geographic_boundary: geoBoundary,
       };
       const imageFiles = Array.isArray(householdJobImages) ? householdJobImages : [];
+      let shouldResetHouseholdJobForm = false;
+      let postedJobForMatching = null;
       try {
         const requestBody = imageFiles.length > 0 ? new FormData() : payload;
         if (requestBody instanceof FormData) {
@@ -1488,7 +1565,7 @@ export function useGawaGoActions({
         }
         const response = await apiRequest("jobs/", {
           method: "POST",
-          auth: false,
+          auth: true,
           body: requestBody,
         });
         const data = await readResponseData(response);
@@ -1499,56 +1576,62 @@ export function useGawaGoActions({
         if (normalizedJob) {
           setPostedJobs((prev) => [normalizedJob, ...prev.filter((job) => job.id !== normalizedJob.id)]);
           setSelectedJobId(normalizedJob.id);
-          await refreshRecommendedWorkers(normalizedJob.id);
+          postedJobForMatching = normalizedJob;
         }
-        await refreshJobsFromBackend();
-        window.alert("Job posted successfully.");
+        shouldResetHouseholdJobForm = true;
       } catch (error) {
-        const newJob = createJobRecord(
-          {
-            ...householdJobForm,
-            latitude: resolvedLatitude,
-            longitude: resolvedLongitude,
-          },
-          currentHousehold,
-          Date.now(),
-        );
-        setPostedJobs((prev) => [newJob, ...prev]);
-        setSelectedJobId(newJob.id);
-        window.alert(error.message || "Job posted locally.");
+        await refreshJobsFromBackend();
+        window.alert(error.message || "Unable to post job. Please review the form and try again.");
+        return;
       } finally {
-        const savedLocation = getSavedHouseholdLocation(currentHousehold, currentUser);
-        setHouseholdJobCoordinates(null);
-        setHouseholdJobLocationPreview(null);
-        setHouseholdJobImages([]);
-        setHouseholdJobForm({
-          jobTitle: "",
-          serviceType: "",
-          scheduleType: "One - Time",
-          preferredDate: "",
-          preferredTime: "",
-          description: "",
-          barangay: savedLocation.barangay,
-          streetAddress: savedLocation.streetAddress,
-          offeredRate: "0.00",
-          rateType: "Per Day",
-          workersNeeded: "1",
-        });
-        setView("household-my-jobs");
+        if (shouldResetHouseholdJobForm) {
+          const savedLocation = getSavedHouseholdLocation(currentHousehold, currentUser);
+          setHouseholdJobCoordinates(null);
+          setHouseholdJobLocationPreview(null);
+          setHouseholdJobImages([]);
+          setHouseholdJobForm({
+            jobTitle: "",
+            serviceType: "",
+            customServiceType: "",
+            scheduleType: "One-Time",
+            description: "",
+            barangay: savedLocation.barangay,
+            streetAddress: savedLocation.streetAddress,
+            offeredRate: "0.00",
+            rateType: "Per Day",
+            workersNeeded: "1",
+            jobStartDate: "",
+            jobEndDate: "",
+            estimatedWorkingDays: "",
+            geographicBoundary: "1km",
+          });
+          if (postedJobForMatching) {
+            refreshRecommendedWorkers(postedJobForMatching.id, "ai");
+          }
+          refreshJobsFromBackend();
+          setView("household-job-matches");
+        }
       }
+     } finally {
+      isSubmittingJobRef.current = false;
+      setIsSubmittingJob(false);
+     }
     })();
   }
   function handleAdminApproveVerification(requestId) {
+    if (!getAuthToken()) {
+      window.alert("Please log in with a backend admin account before approving verification requests.");
+      return;
+    }
     const request = verificationRequests.find((item) => item.id === requestId);
     if (!request) return;
-    (async () => {
+    runExclusive(`verification-review-${requestId}`, async () => {
       try {
         const response = await apiRequest(`common/verification-requests/${requestId}/review/`, {
           method: "POST",
-          auth: false,
+          auth: true,
           body: {
             action: "approve",
-            reviewed_by: currentUser?.displayName || "Super Admin",
           },
         });
         const data = await readResponseData(response);
@@ -1557,15 +1640,19 @@ export function useGawaGoActions({
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
         const reviewedAt = normalizedRequest.reviewedAt || new Date().toLocaleString("en-PH");
-        const backendWorker = normalizeBackendWorkerPayload(data.worker);
+        const backendAccount = data.account || data.worker;
+        const backendWorker =
+          normalizedRequest.accountRole === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => prev.map((item) => (item.id === requestId ? normalizedRequest : item)));
-        if (backendWorker) {
+        if (normalizedRequest.accountRole === "worker" && backendWorker) {
           mergeBackendWorkerIntoState({
             ...backendWorker,
             verification: "Verified",
             verificationReviewedAt: reviewedAt,
             verificationReviewedBy: currentUser?.displayName || "Admin",
-            profilePhotoPreview: normalizedRequest.primaryIdPreview || backendWorker.profilePhotoPreview || "",
+            // Never the government ID image -- it's a private verification
+            // document, not the worker's public profile photo.
+            profilePhotoPreview: backendWorker.profilePhotoPreview || "",
             verificationNotifications: [
               {
                 id: `approved-${normalizedRequest.id}`,
@@ -1576,7 +1663,7 @@ export function useGawaGoActions({
               },
             ],
           });
-        } else {
+        } else if (normalizedRequest.accountRole === "worker") {
           setRegisteredWorkers((prev) =>
             prev.map((worker) =>
               worker.id === normalizedRequest.workerId
@@ -1585,7 +1672,7 @@ export function useGawaGoActions({
                     verification: "Verified",
                     verificationReviewedAt: reviewedAt,
                     verificationReviewedBy: currentUser?.displayName || "Admin",
-                    profilePhotoPreview: normalizedRequest.primaryIdPreview || worker.profilePhotoPreview || "",
+                    profilePhotoPreview: worker.profilePhotoPreview || "",
                     verificationNotifications: [
                       {
                         id: `approved-${normalizedRequest.id}`,
@@ -1599,33 +1686,59 @@ export function useGawaGoActions({
                 : worker,
             ),
           );
+        } else {
+          setRegisteredHouseholds((prev) =>
+            prev.map((household) =>
+              String(household.id) === String(normalizedRequest.workerId) ||
+              household.username === normalizedRequest.workerUsername
+                ? {
+                    ...household,
+                    verification: "Verified",
+                    verificationReviewedAt: reviewedAt,
+                    verificationReviewedBy: currentUser?.displayName || "Admin",
+                    verificationSubmission: normalizedRequest,
+                  }
+                : household,
+            ),
+          );
         }
         await refreshVerificationStateFromBackend();
         await refreshNotificationsFromBackend();
-        window.alert("Verification approved. Worker is now Verified.");
+        window.alert(`Verification approved. ${normalizedRequest.accountRole === "household" ? "Household" : "Worker"} is now Verified.`);
         setSelectedVerificationRequestId(requestId);
         setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
       } catch (error) {
-        window.alert(error.message || `Verified ${request.workerName}.`);
-        setSelectedVerificationRequestId(requestId);
-        setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
+        // Must never read as success: a fallback like "Verified {name}."
+        // here would tell the admin the approval went through when it
+        // didn't, and navigating away regardless hid that nothing changed.
+        window.alert(error.message || "Unable to approve this verification request. Please try again.");
       }
-    })();
+    });
   }
   function handleAdminRejectVerification(requestId) {
+    if (!getAuthToken()) {
+      window.alert("Please log in with a backend admin account before rejecting verification requests.");
+      return;
+    }
     const request = verificationRequests.find((item) => item.id === requestId);
     if (!request) return;
-    const reviewNote =
-      window.prompt("Enter rejection note:", "Please resubmit clearer documents.") || "Rejected by admin.";
-    (async () => {
+    // prompt() returns null when the admin cancels; the old `|| fallback`
+    // turned that into a rejection they never confirmed.
+    const reviewNote = window.prompt("Enter rejection note:", "Please resubmit clearer documents.");
+    if (reviewNote === null) return;
+    const trimmedNote = reviewNote.trim();
+    if (!trimmedNote) {
+      window.alert("Please give a rejection reason so the applicant knows what to fix.");
+      return;
+    }
+    runExclusive(`verification-review-${requestId}`, async () => {
       try {
         const response = await apiRequest(`common/verification-requests/${requestId}/review/`, {
           method: "POST",
-          auth: false,
+          auth: true,
           body: {
             action: "reject",
-            review_note: reviewNote,
-            reviewed_by: currentUser?.displayName || "Super Admin",
+            review_note: trimmedNote,
           },
         });
         const data = await readResponseData(response);
@@ -1634,27 +1747,29 @@ export function useGawaGoActions({
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
         const reviewedAt = normalizedRequest.reviewedAt || new Date().toLocaleString("en-PH");
-        const backendWorker = normalizeBackendWorkerPayload(data.worker);
+        const backendAccount = data.account || data.worker;
+        const backendWorker =
+          normalizedRequest.accountRole === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => prev.map((item) => (item.id === requestId ? normalizedRequest : item)));
-        if (backendWorker) {
+        if (normalizedRequest.accountRole === "worker" && backendWorker) {
           mergeBackendWorkerIntoState({
             ...backendWorker,
             verification: "Rejected",
             verificationReviewedAt: reviewedAt,
             verificationReviewedBy: currentUser?.displayName || "Admin",
-            verificationRejectionNote: reviewNote,
+            verificationRejectionNote: trimmedNote,
             profilePhotoPreview: backendWorker.profilePhotoPreview || "",
             verificationNotifications: [
               {
                 id: `rejected-${normalizedRequest.id}`,
                 title: "Verification Rejected",
-                message: reviewNote,
+                message: trimmedNote,
                 date: reviewedAt,
                 unread: true,
               },
             ],
           });
-        } else {
+        } else if (normalizedRequest.accountRole === "worker") {
           setRegisteredWorkers((prev) =>
             prev.map((worker) =>
               worker.id === normalizedRequest.workerId
@@ -1663,19 +1778,35 @@ export function useGawaGoActions({
                     verification: "Rejected",
                     verificationReviewedAt: reviewedAt,
                     verificationReviewedBy: currentUser?.displayName || "Admin",
-                    verificationRejectionNote: reviewNote,
+                    verificationRejectionNote: trimmedNote,
                     profilePhotoPreview: worker.profilePhotoPreview || "",
                     verificationNotifications: [
                       {
                         id: `rejected-${normalizedRequest.id}`,
                         title: "Verification Rejected",
-                        message: reviewNote,
+                        message: trimmedNote,
                         date: reviewedAt,
                         unread: true,
                       },
                     ],
                   }
                 : worker,
+            ),
+          );
+        } else {
+          setRegisteredHouseholds((prev) =>
+            prev.map((household) =>
+              String(household.id) === String(normalizedRequest.workerId) ||
+              household.username === normalizedRequest.workerUsername
+                ? {
+                    ...household,
+                    verification: "Rejected",
+                    verificationReviewedAt: reviewedAt,
+                    verificationReviewedBy: currentUser?.displayName || "Admin",
+                    verificationRejectionNote: trimmedNote,
+                    verificationSubmission: normalizedRequest,
+                  }
+                : household,
             ),
           );
         }
@@ -1685,15 +1816,17 @@ export function useGawaGoActions({
         setSelectedVerificationRequestId(requestId);
         setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
       } catch (error) {
-        window.alert(error.message || `Rejected ${request.workerName}.`);
-        setSelectedVerificationRequestId(requestId);
-        setView(currentUser?.isSuperAdmin ? "superadmin-dashboard" : "admin-dashboard");
+        // Must never read as success -- see the matching note in
+        // handleAdminApproveVerification above.
+        window.alert(error.message || "Unable to reject this verification request. Please try again.");
       }
-    })();
+    });
   }
   return {
     handleApplyToJob,
     handleHireWorker,
+    handleWorkerRequestCompletion,
+    handleWorkerHireDecision,
     handleRejectApplication,
     handleLoginSubmit,
     handleWorkerRegisterSubmit,
@@ -1709,5 +1842,7 @@ export function useGawaGoActions({
     handleConfirmJobCompleted,
     handleAdminApproveVerification,
     handleAdminRejectVerification,
+    isSubmittingJob,
+    isActionPending,
   };
 }

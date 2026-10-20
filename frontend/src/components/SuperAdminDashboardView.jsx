@@ -11,27 +11,37 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { DashboardSidebar, MetricCard } from "./DashboardLayout";
+import { DashboardSidebar, MetricCard, MobileDashboardTopbar } from "./DashboardLayout";
 import SuperAdminHeatMap from "./SuperAdminHeatMap";
+import AdminPlatformReport from "./AdminPlatformReport";
+import ReportsView from "./ReportsView";
+import AdminComplaintsQueue from "./AdminComplaintsQueue";
+import AdminCredentialsQueue from "./AdminCredentialsQueue";
+import UserManagementView from "./UserManagementView";
 import {
   ANALYTICS_CHART_COLORS,
-  BARANGAYS,
   PHILIPPINES_MAP_CENTER,
-  SKILLS,
 } from "../constants/appConstants";
-import {
-  buildBarangayAnalytics,
-  buildBarangayHeatMapData,
-  buildMonthlyJobRequests,
-  buildRatingDistribution,
-  buildServiceAnalytics,
-  getWorkerRatingValue,
-} from "../utils/analyticsUtils";
-import { formatCurrency, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
+import { formatCurrency, formatTimeAgo, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
+import {
+  createAdminAccount,
+  fetchAdminAccounts,
+  fetchAdminAuditLog,
+  setAdminAccountActive,
+} from "../services/backendDataService";
+
+const EMPTY_ADMIN_FORM = {
+  username: "",
+  email: "",
+  firstName: "",
+  lastName: "",
+  password: "",
+};
 
 export default function SuperAdminDashboardView({
   currentUser,
+  dashboardMetrics,
   handleAdminApproveVerification,
   handleAdminRejectVerification,
   handleLogout,
@@ -40,6 +50,7 @@ export default function SuperAdminDashboardView({
   openVerificationRequest,
   pendingVerificationRequests,
   postedJobs,
+  refreshProfilesFromBackend,
   registeredHouseholds,
   registeredWorkers,
   rejectedVerificationRequests,
@@ -50,8 +61,116 @@ export default function SuperAdminDashboardView({
   verificationRequests,
 }) {
   const [verificationModalRequestId, setVerificationModalRequestId] = React.useState(null);
-  const totalApplications = postedJobs.reduce((sum, job) => sum + (job.applications || []).length, 0);
-  const activeApplications = postedJobs.reduce(
+  // Real audit trail from the backend's AdminActionLog -- fetched only when
+  // the tab is actually open, not kept fabricated from verification
+  // requests plus a permanently-fake "Current session" row.
+  const [auditLogs, setAuditLogs] = React.useState([]);
+  const [auditLoading, setAuditLoading] = React.useState(false);
+  const [auditError, setAuditError] = React.useState("");
+  React.useEffect(() => {
+    if (superAdminSection !== "audit") return;
+    let cancelled = false;
+    setAuditLoading(true);
+    setAuditError("");
+    fetchAdminAuditLog()
+      .then((logs) => {
+        if (cancelled) return;
+        if (logs) {
+          setAuditLogs(logs);
+        } else {
+          setAuditError("Unable to load the audit log right now.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuditLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [superAdminSection]);
+  // Registered admins, also from the backend. This table used to be a single
+  // hardcoded row with buttons that did nothing.
+  const [adminAccounts, setAdminAccounts] = React.useState([]);
+  const [adminsLoading, setAdminsLoading] = React.useState(false);
+  const [adminsError, setAdminsError] = React.useState("");
+  const [adminFormOpen, setAdminFormOpen] = React.useState(false);
+  const [adminForm, setAdminForm] = React.useState(EMPTY_ADMIN_FORM);
+  const [adminFormError, setAdminFormError] = React.useState("");
+  const [adminFormSaving, setAdminFormSaving] = React.useState(false);
+  const [adminNotice, setAdminNotice] = React.useState("");
+  const [adminBusyUsername, setAdminBusyUsername] = React.useState("");
+
+  const loadAdminAccounts = React.useCallback(async () => {
+    setAdminsLoading(true);
+    setAdminsError("");
+    try {
+      const accounts = await fetchAdminAccounts();
+      if (accounts) {
+        setAdminAccounts(accounts);
+      } else {
+        setAdminsError("Unable to load the admin list right now.");
+      }
+    } finally {
+      setAdminsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (superAdminSection !== "adminmgmt") return;
+    loadAdminAccounts();
+  }, [superAdminSection, loadAdminAccounts]);
+
+  async function handleCreateAdmin(event) {
+    event.preventDefault();
+    if (adminFormSaving) return;
+    setAdminFormSaving(true);
+    setAdminFormError("");
+    setAdminNotice("");
+    try {
+      const created = await createAdminAccount(adminForm);
+      setAdminForm(EMPTY_ADMIN_FORM);
+      setAdminFormOpen(false);
+      setAdminNotice(`Admin account "${created.username}" created.`);
+      await loadAdminAccounts();
+    } catch (error) {
+      setAdminFormError(error.message);
+    } finally {
+      setAdminFormSaving(false);
+    }
+  }
+
+  async function handleToggleAdminActive(admin) {
+    if (adminBusyUsername) return;
+    const nextActive = !admin.isActive;
+    if (
+      !nextActive &&
+      !window.confirm(
+        `Deactivate "${admin.username}"? They will be signed out immediately and won't be able to log in.`,
+      )
+    ) {
+      return;
+    }
+    setAdminBusyUsername(admin.username);
+    setAdminsError("");
+    setAdminNotice("");
+    try {
+      await setAdminAccountActive(admin.username, nextActive);
+      setAdminNotice(`"${admin.username}" ${nextActive ? "reactivated" : "deactivated"}.`);
+      await loadAdminAccounts();
+    } catch (error) {
+      setAdminsError(error.message);
+    } finally {
+      setAdminBusyUsername("");
+    }
+  }
+  const analytics = dashboardMetrics?.analytics || {};
+  const analyticsSummary = analytics.summary || {};
+  const totalUsers = analyticsSummary.totalUsers ?? registeredWorkers.length + registeredHouseholds.length;
+  const totalWorkers = analyticsSummary.totalWorkers ?? registeredWorkers.length;
+  const householdCount = analyticsSummary.households ?? registeredHouseholds.length;
+  const totalJobPostings = analyticsSummary.totalJobPostings ?? postedJobs.length;
+  const activeJobs = analyticsSummary.activeJobs ?? postedJobs.filter((job) => job.status === "Open").length;
+  const activeApplications = analyticsSummary.activeApplications ?? postedJobs.reduce(
     (sum, job) =>
       sum +
       (job.applications || []).filter(
@@ -59,47 +178,28 @@ export default function SuperAdminDashboardView({
       ).length,
     0,
   );
-  const ongoingMatches = postedJobs.filter((job) =>
+  const completedServices = analyticsSummary.completedServices ?? postedJobs.filter((job) => job.status === "Completed").length;
+  const cancelledRequests = analyticsSummary.cancelledRequests ?? postedJobs.filter((job) => job.status === "Cancelled").length;
+  const ongoingMatches = analyticsSummary.ongoingMatches ?? postedJobs.filter((job) =>
     (job.applications || []).some((application) => application.status === "Hired"),
   ).length;
-  const cancelledRequests = postedJobs.filter((job) => job.status === "Cancelled").length;
-  const completedServices = postedJobs.filter((job) => job.status === "Completed").length;
-  const verifiedWorkers = registeredWorkers.filter((worker) => worker.verification === "Verified").length;
-  const totalUsers = registeredWorkers.length + registeredHouseholds.length;
-  const verifiedPercent = registeredWorkers.length ? Math.round((verifiedWorkers / registeredWorkers.length) * 100) : 0;
-  const barangayDemand = BARANGAYS.map((barangay) => ({
-    barangay,
-    jobs: postedJobs.filter((job) => job.barangay === barangay).length,
-    workers: registeredWorkers.filter((worker) => worker.barangay === barangay).length,
-  }))
-    .filter((item) => item.jobs || item.workers)
-    .sort((a, b) => b.jobs - a.jobs)
-    .slice(0, 6);
-  const jobCategories = SKILLS.map((skill) => {
-    const categoryJobs = postedJobs.filter((job) => job.serviceType === skill);
-    const averageRate = categoryJobs.length
-      ? categoryJobs.reduce((sum, job) => sum + Number(job.offeredRate || 0), 0) / categoryJobs.length
-      : 0;
-    return {
-      skill,
-      count: categoryJobs.length,
-      averageRate,
-    };
-  })
-    .filter((item) => item.count)
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-  const activeJobs = postedJobs.filter((job) => job.status === "Open").length;
-  const monthlyJobRequests = buildMonthlyJobRequests(postedJobs);
-  const serviceAnalytics = buildServiceAnalytics(postedJobs);
-  const barangayJobAnalytics = buildBarangayAnalytics(postedJobs, (job) => job.barangay, "jobs");
-  const barangayWorkerAnalytics = buildBarangayAnalytics(registeredWorkers, (worker) => worker.barangay, "workers");
-  const workerRatingValues = registeredWorkers.map(getWorkerRatingValue).filter((rating) => rating != null);
-  const averageWorkerRating = workerRatingValues.length
-    ? (workerRatingValues.reduce((sum, rating) => sum + rating, 0) / workerRatingValues.length).toFixed(2)
-    : "No ratings yet";
-  const ratingDistribution = buildRatingDistribution(registeredWorkers);
-  const rejectedWorkerVerifications = registeredWorkers.filter((worker) => worker.verification === "Rejected").length;
+  const verifiedUsers = analyticsSummary.verifiedUsers ?? analyticsSummary.verifiedWorkers ?? registeredWorkers.filter((worker) => worker.verification === "Verified").length;
+  const verifiedWorkers = analyticsSummary.verifiedWorkers ?? registeredWorkers.filter((worker) => worker.verification === "Verified").length;
+  const verifiedPercent = analyticsSummary.verifiedPercent ?? (registeredWorkers.length ? Math.round((verifiedWorkers / registeredWorkers.length) * 100) : 0);
+  const pendingVerificationCount = analyticsSummary.pendingVerifications ?? pendingVerificationRequests.length;
+  const rejectedVerificationCount = analyticsSummary.rejectedVerifications ?? rejectedVerificationRequests.length;
+  const rejectedWorkerVerifications = analyticsSummary.rejectedWorkers ?? registeredWorkers.filter((worker) => worker.verification === "Rejected").length;
+  const monthlyJobRequests = analytics.monthlyJobRequests || [];
+  const serviceAnalytics = analytics.serviceAnalytics || [];
+  const geographicAnalytics = analytics.geographicAnalytics || {};
+  const barangayJobAnalytics = geographicAnalytics.barangayDemand || analytics.barangayJobAnalytics || [];
+  const barangayWorkerAnalytics = geographicAnalytics.workerAvailability || analytics.barangayWorkerAnalytics || [];
+  const ratingDistribution = analytics.ratingDistribution || [];
+  const rateTransparency = analytics.rateTransparency || {};
+  const jobCategories = rateTransparency.averageRatesByCategory || analytics.serviceRateSummary || [];
+  const pricingTrends = rateTransparency.pricingTrends || [];
+  const averageWorkerRating = analyticsSummary.averageWorkerRating || "No ratings yet";
+  const ratedWorkerCount = analyticsSummary.ratedWorkerCount ?? 0;
   const heatMapOptions = [
     {
       id: "jobs",
@@ -119,38 +219,78 @@ export default function SuperAdminDashboardView({
     },
   ];
   const selectedHeatMapOption = heatMapOptions.find((option) => option.id === heatMapMetric) || heatMapOptions[0];
-  const heatMapData = buildBarangayHeatMapData(
-    postedJobs,
-    registeredWorkers,
-    verificationRequests,
-    selectedHeatMapOption.id,
-  );
-  const recentAuditLogs = [
-    ...verificationRequests.slice(0, 6).map((request) => ({
-      id: `verification-${request.id}`,
-      timestamp: request.reviewedAt || request.submittedAt || "Recently",
-      admin: request.reviewedBy || currentUser?.displayName || "Super Admin",
-      action: `${request.status} verification`,
-      target: request.workerName || request.workerUsername,
-      status: request.status,
-    })),
+  const heatMapData = (analytics.heatMapData || []).map((item) => ({
+    ...item,
+    value:
+      selectedHeatMapOption.id === "workers"
+        ? item.workers
+        : selectedHeatMapOption.id === "completed"
+          ? item.completed
+          : selectedHeatMapOption.id === "verification"
+            ? item.pendingVerifications
+            : item.jobs,
+  }));
+  const analyticsOverviewGroups = [
     {
-      id: "system-login",
-      timestamp: "Current session",
-      admin: currentUser?.displayName || "Super Admin",
-      action: "superadmin_login",
-      target: "GawaGo frontend",
-      status: "Success",
+      title: "Account Overview",
+      note: "Registered users by role",
+      items: [
+        { label: "Total Users", value: totalUsers },
+        { label: "Workers", value: totalWorkers },
+        { label: "Households", value: householdCount },
+      ],
+    },
+    {
+      title: "Employment Activity",
+      note: "Posting, application, and service status",
+      items: [
+        { label: "Total Postings", value: totalJobPostings },
+        { label: "Active Jobs", value: activeJobs },
+        { label: "Active Applications", value: activeApplications },
+        { label: "Ongoing Matches", value: ongoingMatches },
+        { label: "Completed Services", value: completedServices },
+        { label: "Cancelled Requests", value: cancelledRequests },
+      ],
+    },
+    {
+      title: "Trust and Verification",
+      note: "Worker verification and reputation",
+      items: [
+        { label: "Verified Users", value: verifiedUsers },
+        { label: "Pending", value: pendingVerificationCount, tone: pendingVerificationCount > 0 ? "warning" : "neutral" },
+        { label: "Rejected", value: rejectedVerificationCount, tone: rejectedVerificationCount > 0 ? "danger" : "neutral" },
+        { label: "Average Rating", value: averageWorkerRating, wide: true },
+      ],
     },
   ];
   const tabs = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+    },
     {
       id: "verification",
       label: "Verification Queue",
     },
     {
+      id: "credentials",
+      label: "Worker Credentials",
+    },
+    {
+      id: "users",
+      label: "User Management",
+    },
+    {
       id: "analytics",
       label: "Analytics",
+    },
+    {
+      id: "reports",
+      label: "Reports",
+    },
+    {
+      id: "complaints",
+      label: "Reported Issues",
     },
     {
       id: "adminmgmt",
@@ -181,6 +321,31 @@ export default function SuperAdminDashboardView({
         worker.username === verificationModalRequest.workerUsername ||
         getDisplayName(worker.firstName, worker.lastName, worker.username) === verificationModalRequest.workerName,
     );
+  const verificationModalWorkerDetails = verificationModalRequest
+    ? {
+        id: verificationModalWorker?.id || verificationModalRequest.workerId,
+        username: verificationModalWorker?.username || verificationModalRequest.workerUsername,
+        firstName: verificationModalWorker?.firstName || "",
+        lastName: verificationModalWorker?.lastName || "",
+        displayName:
+          verificationModalWorker?.displayName ||
+          (verificationModalWorker
+            ? getDisplayName(
+                verificationModalWorker.firstName,
+                verificationModalWorker.lastName,
+                verificationModalWorker.username,
+              )
+            : verificationModalRequest.workerName || verificationModalRequest.workerUsername || "Worker"),
+        phone: verificationModalWorker?.phone || verificationModalRequest.workerPhone || "",
+        email: verificationModalWorker?.email || verificationModalRequest.workerEmail || "",
+        barangay: verificationModalWorker?.barangay || verificationModalRequest.workerBarangay || "",
+        streetAddress: verificationModalWorker?.streetAddress || verificationModalRequest.workerStreetAddress || "",
+        skills: verificationModalWorker?.skills?.length ? verificationModalWorker.skills : verificationModalRequest.workerSkills || [],
+        dailyRate: verificationModalWorker?.dailyRate ?? verificationModalRequest.workerDailyRate,
+        yearsExperience:
+          verificationModalWorker?.yearsExperience ?? verificationModalRequest.workerYearsExperience ?? 0,
+      }
+    : null;
   const openVerificationModal = (request) => {
     openVerificationRequest(request.id);
     setVerificationModalRequestId(request.id);
@@ -198,6 +363,9 @@ export default function SuperAdminDashboardView({
   };
   return (
     <div className="app-shell">
+      {/* Below 768px the sidebar slides off-screen; without this burger every
+          section after the first, and Log Out, were unreachable on a phone. */}
+      <MobileDashboardTopbar resetKey={superAdminSection} />
       <main>
         <section className="worker-dashboard superadmin-dashboard">
           <div className="worker-layout">
@@ -214,54 +382,191 @@ export default function SuperAdminDashboardView({
               }}
             />
             <div className="worker-content">
-              <div className="row g-3 mt-1">
-                <div className="col-md-6 col-xl">
-                  <MetricCard
-                    label="Pending Verifications"
-                    value={pendingVerificationRequests.length}
-                    note="Queue needing admin review"
-                    className="superadmin-stat-danger"
-                  />
-                </div>
-                <div className="col-md-6 col-xl">
-                  <MetricCard
-                    label="Verified Workers"
-                    value={verifiedWorkers}
-                    note={`${verifiedPercent}% of worker accounts`}
-                    className="superadmin-stat-success"
-                  />
-                </div>
-                <div className="col-md-6 col-xl">
-                  <MetricCard
-                    label="Rejected Workers"
-                    value={Math.max(rejectedVerificationRequests.length, rejectedWorkerVerifications)}
-                    note="Verification requests rejected"
-                    className="superadmin-stat-danger"
-                  />
-                </div>
-                <div className="col-md-6 col-xl">
-                  <MetricCard
-                    label="Total Users"
-                    value={totalUsers}
-                    note={`${registeredHouseholds.length} households, ${registeredWorkers.length} workers`}
-                    className="superadmin-stat-warning"
-                  />
-                </div>
-              </div>
+              {superAdminSection === "dashboard" && (
+                <>
+                  <div className="superadmin-analytics mt-3">
+                    <section className="analytics-overview" aria-label="Platform overview">
+                      <div className="analytics-overview-head">
+                        <div>
+                          <span>Employment Activity</span>
+                          <h2>Operational snapshot</h2>
+                        </div>
+                        <p>
+                          Live counts across accounts, employment activity, verification status, and worker
+                          reputation.
+                        </p>
+                      </div>
 
-              <div className="superadmin-tabs mt-3">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`superadmin-tab ${superAdminSection === tab.id ? "active" : ""}`}
-                    onClick={() => setSuperAdminSection(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+                      <div className="analytics-overview-grid">
+                        {analyticsOverviewGroups.map((group) => (
+                          <article className="analytics-overview-panel" key={group.title}>
+                            <div className="analytics-overview-panel-head">
+                              <h3>{group.title}</h3>
+                              <p>{group.note}</p>
+                            </div>
+                            <div className="analytics-overview-metrics">
+                              {group.items.map((item) => (
+                                <div
+                                  className={`analytics-overview-metric ${
+                                    item.wide ? "wide" : ""
+                                  } ${item.tone ? `tone-${item.tone}` : ""}`}
+                                  key={`${group.title}-${item.label}`}
+                                >
+                                  <span>{item.label}</span>
+                                  <strong>{item.value}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
 
+                <div className="profile-card mt-3">
+                  <div className="profile-card-head">Hiring Performance</div>
+                  <div className="p-4">
+                    {/* Metric Cards */}
+                    <div className="row g-3 mb-4">
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-success text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Hiring Success Rate</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.hiringSuccessRate || 0}%</h2>
+                            <small>Applications → Hires</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-info text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Job Match Rate</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.jobMatchRate || 0}%</h2>
+                            <small>Jobs Successfully Matched</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-warning text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Hired Workers</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.workerHiringStats?.hiredWorkers || 0}</h2>
+                            <small>{dashboardMetrics.analytics?.enhancedAnalytics?.workerHiringStats?.hirePercentage || 0}% of total workers</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-3">
+                        <div className="card border-0 shadow-sm bg-primary text-white">
+                          <div className="card-body">
+                            <h6 className="card-title text-white-50">Repeat Hires</h6>
+                            <h2 className="mb-0">{dashboardMetrics.analytics?.enhancedAnalytics?.workerHiringStats?.repeatHires || 0}</h2>
+                            <small>Workers Hired Multiple Times</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Application Trends Chart */}
+                    <div className="row g-3">
+                      <div className="col-12">
+                        <div className="card border-0 shadow-sm">
+                          <div className="card-header bg-light fw-bold">Application Trends (Last 6 Months)</div>
+                          <div className="card-body">
+                            {(dashboardMetrics.analytics?.enhancedAnalytics?.applicationTrends || []).length > 0 ? (
+                              <ResponsiveContainer width="100%" height={300}>
+                                <LineChart data={dashboardMetrics.analytics.enhancedAnalytics.applicationTrends}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="month" />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Line type="monotone" dataKey="applications" stroke="#5c7a34" strokeWidth={2} />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <p className="text-muted">No application data available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Service Type Breakdown */}
+                    <div className="row g-3 mt-3">
+                      <div className="col-lg-6">
+                        <div className="card border-0 shadow-sm">
+                          <div className="card-header bg-light fw-bold">Service Type Distribution</div>
+                          <div className="card-body">
+                            {(dashboardMetrics.analytics?.serviceAnalytics || []).length > 0 ? (
+                              <ResponsiveContainer width="100%" height={300}>
+                                <BarChart data={dashboardMetrics.analytics.serviceAnalytics}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="service" angle={-45} textAnchor="end" height={100} />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Bar dataKey="requests" fill="#9ebf5e" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <p className="text-muted">No service data available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Monthly Job Requests */}
+                      <div className="col-lg-6">
+                        <div className="card border-0 shadow-sm">
+                          <div className="card-header bg-light fw-bold">Monthly Job Postings</div>
+                          <div className="card-body">
+                            {(dashboardMetrics.analytics?.monthlyJobRequests || []).length > 0 ? (
+                              <ResponsiveContainer width="100%" height={300}>
+                                <BarChart data={dashboardMetrics.analytics.monthlyJobRequests}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="month" />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Bar dataKey="requests" fill="#9ebf5e" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <p className="text-muted">No monthly data available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                </>
+              )}
+              {superAdminSection === "reports" && (
+                <>
+                  <AdminPlatformReport />
+                  <ReportsView
+                    postedJobs={postedJobs}
+                    registeredHouseholds={registeredHouseholds}
+                    registeredWorkers={registeredWorkers}
+                  />
+                </>
+              )}
+              {superAdminSection === "complaints" && (
+                <AdminComplaintsQueue
+                  currentUser={currentUser}
+                  postedJobs={postedJobs}
+                  registeredHouseholds={registeredHouseholds}
+                  registeredWorkers={registeredWorkers}
+                />
+              )}
+              {superAdminSection === "credentials" && <AdminCredentialsQueue />}
+              {superAdminSection === "users" && (
+                <UserManagementView
+                  currentUser={currentUser}
+                  postedJobs={postedJobs}
+                  refreshProfilesFromBackend={refreshProfilesFromBackend}
+                  registeredHouseholds={registeredHouseholds}
+                  registeredWorkers={registeredWorkers}
+                />
+              )}
               {superAdminSection === "verification" && (
                 <div className="profile-card mt-3">
                   <div className="profile-card-head d-flex justify-content-between align-items-center gap-3 flex-wrap">
@@ -328,8 +633,8 @@ export default function SuperAdminDashboardView({
                         role="dialog"
                         onClick={(event) => event.stopPropagation()}
                       >
-                        <div className="superadmin-verification-modal-body">
-                          <div className="superadmin-verification-worker-profile">
+                        <header className="superadmin-verification-modal-header">
+                          <div className="superadmin-verification-identity">
                             <div className="superadmin-verification-avatar">
                               {String(verificationModalRequest.workerName || verificationModalRequest.workerUsername || "W")
                                 .slice(0, 2)
@@ -342,54 +647,57 @@ export default function SuperAdminDashboardView({
                               </div>
                               <p>@{verificationModalRequest.workerUsername || "worker"}</p>
                             </div>
+                          </div>
+                          <p className="superadmin-verification-submitted">
+                            <span>Submitted:</span> {verificationModalRequest.submittedAt || "Recently"}
+                          </p>
+                        </header>
+                        <div className="superadmin-verification-modal-body">
+                          <div className="superadmin-verification-worker-profile">
+                            <h4>Worker Details</h4>
                             <div className="superadmin-verification-profile-facts">
-                              <div>
-                                <strong>Submitted Date</strong>
-                                <span>{verificationModalRequest.submittedAt || "Recently"}</span>
-                              </div>
                               <div>
                                 <strong>Full Name</strong>
                                 <span>
-                                  {verificationModalWorker
-                                    ? getDisplayName(
-                                        verificationModalWorker.firstName,
-                                        verificationModalWorker.lastName,
-                                        verificationModalWorker.username,
-                                      )
-                                    : verificationModalRequest.workerName || "Not available"}
+                                  {verificationModalWorkerDetails?.displayName || "Not available"}
                                 </span>
                               </div>
                               <div>
                                 <strong>Phone</strong>
-                                <span>{verificationModalWorker?.phone || "Not set"}</span>
+                                <span>{verificationModalWorkerDetails?.phone || "Not set"}</span>
                               </div>
                               <div>
                                 <strong>Email</strong>
-                                <span>{verificationModalWorker?.email || "Not set"}</span>
+                                <span>{verificationModalWorkerDetails?.email || "Not set"}</span>
                               </div>
                               <div>
                                 <strong>Barangay</strong>
-                                <span>{verificationModalWorker?.barangay || "Not set"}</span>
+                                <span>{verificationModalWorkerDetails?.barangay || "Not set"}</span>
                               </div>
                               <div>
                                 <strong>Address</strong>
-                                <span>{verificationModalWorker?.streetAddress || "Not set"}</span>
+                                <span>{verificationModalWorkerDetails?.streetAddress || "Not set"}</span>
                               </div>
                               <div>
                                 <strong>Skills</strong>
-                                <span>{(verificationModalWorker?.skills || []).join(", ") || "No skills listed"}</span>
+                                <span>{(verificationModalWorkerDetails?.skills || []).join(", ") || "No skills listed"}</span>
                               </div>
                               <div>
                                 <strong>Rate</strong>
                                 <span>
-                                  {verificationModalWorker
-                                    ? `${formatCurrency(verificationModalWorker.dailyRate)}/day`
+                                  {verificationModalWorkerDetails?.dailyRate
+                                    ? `${formatCurrency(verificationModalWorkerDetails.dailyRate)}/day`
                                     : "Not set"}
                                 </span>
                               </div>
                               <div>
                                 <strong>Experience</strong>
-                                <span>{verificationModalWorker?.yearsExperience || 0} yr(s)</span>
+                                        <span>
+                                          {Number(verificationModalWorkerDetails?.yearsExperience || 0)}{" "}
+                                          {Number(verificationModalWorkerDetails?.yearsExperience || 0) === 1
+                                            ? "year"
+                                            : "years"}
+                                        </span>
                               </div>
                               <div>
                                 <strong>Worker Notes</strong>
@@ -401,8 +709,8 @@ export default function SuperAdminDashboardView({
                               </div>
                             </div>
                           </div>
-                          <div className="verification-document-card superadmin-verification-documents h-100">
-                            <h3>Submitted Documents</h3>
+                          <div className="superadmin-verification-documents h-100">
+                            <h4>Submitted Documents</h4>
                             {[
                               {
                                 label: "Primary ID",
@@ -430,7 +738,7 @@ export default function SuperAdminDashboardView({
                                   ) : (
                                     <button
                                       type="button"
-                                      className="btn btn-outline-primary btn-sm"
+                                      className="btn btn-outline-secondary btn-sm superadmin-document-open"
                                       onClick={() => openFilePreview(documentItem.preview)}
                                     >
                                       Open Document
@@ -447,21 +755,24 @@ export default function SuperAdminDashboardView({
                         </div>
 
                         <div className="superadmin-verification-modal-actions">
+                          <p className="superadmin-verification-review-note">
+                            Review the submitted documents before approving.
+                          </p>
                           {!["Approved", "Rejected"].includes(verificationModalRequest.status) ? (
                             <>
-                              <button
-                                className="btn btn-success"
-                                type="button"
-                                onClick={() => approveVerificationRequest(verificationModalRequest.id)}
-                              >
-                                Approve
-                              </button>
                               <button
                                 className="btn btn-outline-danger"
                                 type="button"
                                 onClick={() => rejectVerificationRequest(verificationModalRequest.id)}
                               >
                                 Reject
+                              </button>
+                              <button
+                                className="btn btn-success"
+                                type="button"
+                                onClick={() => approveVerificationRequest(verificationModalRequest.id)}
+                              >
+                                Approve
                               </button>
                             </>
                           ) : (
@@ -479,43 +790,6 @@ export default function SuperAdminDashboardView({
               {superAdminSection === "analytics" && (
                 <>
                   <div className="superadmin-analytics mt-3">
-                    <div className="row g-3 mt-1">
-                      <div className="col-md-6 col-xl-2">
-                        <MetricCard label="Total Users" value={totalUsers} className="analytics-summary-card" />
-                      </div>
-                      <div className="col-md-6 col-xl-2">
-                        <MetricCard
-                          label="Total Workers"
-                          value={registeredWorkers.length}
-                          className="analytics-summary-card"
-                        />
-                      </div>
-                      <div className="col-md-6 col-xl-2">
-                        <MetricCard
-                          label="Households"
-                          value={registeredHouseholds.length}
-                          className="analytics-summary-card"
-                        />
-                      </div>
-                      <div className="col-md-6 col-xl-2">
-                        <MetricCard label="Active Jobs" value={activeJobs} className="analytics-summary-card" />
-                      </div>
-                      <div className="col-md-6 col-xl-2">
-                        <MetricCard
-                          label="Completed Jobs"
-                          value={completedServices}
-                          className="analytics-summary-card"
-                        />
-                      </div>
-                      <div className="col-md-6 col-xl-2">
-                        <MetricCard
-                          label="Pending Verifications"
-                          value={pendingVerificationRequests.length}
-                          className="analytics-summary-card"
-                        />
-                      </div>
-                    </div>
-
                     <div className="profile-card analytics-card">
                       <div className="profile-card-head analytics-heatmap-head">
                         <span>Barangay Heat Map</span>
@@ -559,18 +833,18 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                                 <XAxis
                                   dataKey="month"
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
@@ -578,7 +852,7 @@ export default function SuperAdminDashboardView({
                                 <Line
                                   type="monotone"
                                   dataKey="requests"
-                                  stroke="#667eea"
+                                  stroke="#5c7a34"
                                   strokeWidth={3}
                                   dot={{
                                     r: 4,
@@ -606,18 +880,18 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                                 <XAxis
                                   dataKey="service"
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
@@ -637,9 +911,11 @@ export default function SuperAdminDashboardView({
                       </div>
                     </div>
 
-                    <div className="row g-3 mt-1">
+                    <div className="profile-card analytics-card analytics-geographic-card mt-3">
+                      <div className="profile-card-head analytics-section-title">Geographic Analytics</div>
+                      <div className="row g-3">
                       <div className="col-xl-6">
-                        <div className="profile-card analytics-card h-100">
+                        <div className="analytics-subcard h-100">
                           <div className="profile-card-head">Barangays with High Job Demand</div>
                           <div className="table-responsive">
                             <table className="table align-middle mb-0 analytics-table">
@@ -680,7 +956,7 @@ export default function SuperAdminDashboardView({
                         </div>
                       </div>
                       <div className="col-xl-6">
-                        <div className="profile-card analytics-card h-100">
+                        <div className="analytics-subcard h-100">
                           <div className="profile-card-head">Barangays with Worker Availability</div>
                           <div className="table-responsive">
                             <table className="table align-middle mb-0 analytics-table">
@@ -720,6 +996,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
+                      </div>
                     </div>
 
                     <div className="row g-3 mt-1">
@@ -728,7 +1005,7 @@ export default function SuperAdminDashboardView({
                           <div className="profile-card-head">Average Worker Rating</div>
                           <div className="analytics-rating-summary">
                             <p className="analytics-rating-value mb-1">{averageWorkerRating}</p>
-                            <p className="small text-muted mb-0">{workerRatingValues.length} rated worker profile(s)</p>
+                            <p className="small text-muted mb-0">{ratedWorkerCount} rated worker profile(s)</p>
                           </div>
                         </div>
                       </div>
@@ -746,23 +1023,23 @@ export default function SuperAdminDashboardView({
                                   bottom: 4,
                                 }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ff" />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
                                 <XAxis
                                   dataKey="stars"
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <YAxis
                                   allowDecimals={false}
                                   tick={{
-                                    fill: "#5f6b7b",
+                                    fill: "#6b7460",
                                     fontSize: 12,
                                   }}
                                 />
                                 <Tooltip />
-                                <Bar dataKey="count" fill="#ffc107" radius={[8, 8, 0, 0]} />
+                                <Bar dataKey="count" fill="#9ebf5e" radius={[8, 8, 0, 0]} />
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
@@ -770,7 +1047,7 @@ export default function SuperAdminDashboardView({
                       </div>
                       <div className="col-xl-4">
                         <div className="profile-card analytics-card h-100">
-                          <div className="profile-card-head">Service Rate Transparency</div>
+                          <div className="profile-card-head">Average Rates by Category</div>
                           <div className="table-responsive">
                             <table className="table align-middle mb-0 analytics-table">
                               <thead>
@@ -802,6 +1079,57 @@ export default function SuperAdminDashboardView({
                         </div>
                       </div>
                     </div>
+
+                    <div className="profile-card analytics-card analytics-pricing-card mt-3">
+                      <div className="profile-card-head">Pricing Trends</div>
+                      <div className="analytics-chart-wrap">
+                        <ResponsiveContainer width="100%" height={260}>
+                          <LineChart
+                            data={pricingTrends}
+                            margin={{
+                              top: 16,
+                              right: 18,
+                              left: 0,
+                              bottom: 4,
+                            }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
+                            <XAxis
+                              dataKey="month"
+                              tick={{
+                                fill: "#6b7460",
+                                fontSize: 12,
+                              }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "#6b7460",
+                                fontSize: 12,
+                              }}
+                              tickFormatter={(value) => formatCurrency(value)}
+                            />
+                            <Tooltip
+                              formatter={(value, name) => [
+                                name === "averageRate" ? formatCurrency(value) : value,
+                                name === "averageRate" ? "Average Rate" : "Postings",
+                              ]}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="averageRate"
+                              stroke="#5c7a34"
+                              strokeWidth={3}
+                              dot={{
+                                r: 4,
+                              }}
+                              activeDot={{
+                                r: 6,
+                              }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
                   </div>
                 </>
               )}
@@ -810,70 +1138,216 @@ export default function SuperAdminDashboardView({
                 <div className="profile-card mt-3">
                   <div className="profile-card-head d-flex justify-content-between align-items-center gap-3 flex-wrap">
                     <span>Registered Admins</span>
-                    <button className="btn btn-primary btn-sm" type="button">
-                      Add Admin
+                    <button
+                      className="btn btn-primary btn-sm"
+                      type="button"
+                      onClick={() => {
+                        setAdminFormOpen((open) => !open);
+                        setAdminFormError("");
+                        setAdminNotice("");
+                      }}
+                    >
+                      {adminFormOpen ? "Cancel" : "Add Admin"}
                     </button>
                   </div>
-                  <div className="table-responsive">
-                    <table className="table align-middle mb-0">
-                      <thead>
-                        <tr>
-                          <th>Admin Name</th>
-                          <th>Username</th>
-                          <th>Role</th>
-                          <th>Status</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td>
-                            <strong>Super Admin</strong>
-                          </td>
-                          <td>superadmin</td>
-                          <td>Full System Control</td>
-                          <td>
-                            <span className="badge text-bg-dark">Owner</span>
-                          </td>
-                          <td>
-                            <button className="btn btn-outline-secondary btn-sm" type="button">
-                              Manage
-                            </button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+
+                  {adminFormOpen && (
+                    <form className="p-3 border-bottom" onSubmit={handleCreateAdmin}>
+                      <div className="row g-3">
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-username">
+                            Username
+                          </label>
+                          <input
+                            id="new-admin-username"
+                            className="form-control"
+                            required
+                            value={adminForm.username}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, username: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-email">
+                            Email
+                          </label>
+                          <input
+                            id="new-admin-email"
+                            type="email"
+                            className="form-control"
+                            required
+                            value={adminForm.email}
+                            onChange={(event) => setAdminForm((form) => ({ ...form, email: event.target.value }))}
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-first-name">
+                            First name
+                          </label>
+                          <input
+                            id="new-admin-first-name"
+                            className="form-control"
+                            value={adminForm.firstName}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, firstName: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-last-name">
+                            Last name
+                          </label>
+                          <input
+                            id="new-admin-last-name"
+                            className="form-control"
+                            value={adminForm.lastName}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, lastName: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="new-admin-password">
+                            Temporary password
+                          </label>
+                          <input
+                            id="new-admin-password"
+                            type="password"
+                            className="form-control"
+                            required
+                            minLength={8}
+                            autoComplete="new-password"
+                            value={adminForm.password}
+                            onChange={(event) =>
+                              setAdminForm((form) => ({ ...form, password: event.target.value }))
+                            }
+                          />
+                          <div className="form-text">
+                            At least 8 characters. The new admin should change it after signing in.
+                          </div>
+                        </div>
+                      </div>
+                      {adminFormError && <p className="text-danger mb-0 mt-3">{adminFormError}</p>}
+                      <div className="mt-3">
+                        <button className="btn btn-primary" type="submit" disabled={adminFormSaving}>
+                          {adminFormSaving ? "Creating..." : "Create admin"}
+                        </button>
+                      </div>
+                      <p className="form-text mb-0 mt-2">
+                        New accounts are standard admins. Full system control can't be granted from here.
+                      </p>
+                    </form>
+                  )}
+
+                  {adminNotice && <p className="text-success p-3 mb-0">{adminNotice}</p>}
+                  {adminsLoading && <p className="text-muted p-3 mb-0">Loading admins...</p>}
+                  {!adminsLoading && adminsError && <p className="text-danger p-3 mb-0">{adminsError}</p>}
+                  {!adminsLoading && !adminsError && adminAccounts.length === 0 && (
+                    <p className="text-muted p-3 mb-0">No admin accounts found.</p>
+                  )}
+                  {!adminsLoading && !adminsError && adminAccounts.length > 0 && (
+                    <div className="table-responsive">
+                      <table className="table align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th>Admin Name</th>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Last sign-in</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminAccounts.map((admin) => {
+                            const isSelf = admin.username === currentUser?.username;
+                            return (
+                              <tr key={admin.id}>
+                                <td>
+                                  <strong>{admin.displayName}</strong>
+                                  {admin.email && <div className="text-muted small">{admin.email}</div>}
+                                </td>
+                                <td>{admin.username}</td>
+                                <td>{admin.roleLabel}</td>
+                                <td>
+                                  {admin.isOwner ? (
+                                    <span className="badge text-bg-dark">Owner</span>
+                                  ) : (
+                                    <span className={`badge ${admin.isActive ? "text-bg-success" : "text-bg-secondary"}`}>
+                                      {admin.isActive ? "Active" : "Deactivated"}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="text-muted small">
+                                  {admin.lastLogin ? formatTimeAgo(admin.lastLogin) || admin.lastLogin : "Never"}
+                                </td>
+                                <td>
+                                  {admin.isOwner || isSelf ? (
+                                    <span className="text-muted small">
+                                      {isSelf ? "This is you" : "Protected"}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      className={`btn btn-sm ${
+                                        admin.isActive ? "btn-outline-danger" : "btn-outline-success"
+                                      }`}
+                                      type="button"
+                                      disabled={adminBusyUsername === admin.username}
+                                      onClick={() => handleToggleAdminActive(admin)}
+                                    >
+                                      {adminBusyUsername === admin.username
+                                        ? "Saving..."
+                                        : admin.isActive
+                                          ? "Deactivate"
+                                          : "Reactivate"}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
 
               {superAdminSection === "audit" && (
                 <div className="profile-card mt-3">
                   <div className="profile-card-head">Audit Logs</div>
-                  <div className="table-responsive">
-                    <table className="table align-middle mb-0">
-                      <thead>
-                        <tr>
-                          <th>Timestamp</th>
-                          <th>Admin</th>
-                          <th>Action</th>
-                          <th>Target</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recentAuditLogs.map((log) => (
-                          <tr key={log.id}>
-                            <td>{log.timestamp}</td>
-                            <td>{log.admin}</td>
-                            <td>{log.action}</td>
-                            <td>{log.target}</td>
-                            <td>{renderStatusBadge(log.status)}</td>
+                  {auditLoading && <p className="text-muted p-3 mb-0">Loading audit log...</p>}
+                  {!auditLoading && auditError && <p className="text-danger p-3 mb-0">{auditError}</p>}
+                  {!auditLoading && !auditError && auditLogs.length === 0 && (
+                    <p className="text-muted p-3 mb-0">No admin actions recorded yet.</p>
+                  )}
+                  {!auditLoading && !auditError && auditLogs.length > 0 && (
+                    <div className="table-responsive">
+                      <table className="table align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th>When</th>
+                            <th>Admin</th>
+                            <th>Action</th>
+                            <th>Target</th>
+                            <th>Detail</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {auditLogs.map((log) => (
+                            <tr key={log.id}>
+                              <td>{formatTimeAgo(log.timestamp) || log.timestamp}</td>
+                              <td>{log.admin}</td>
+                              <td>{log.action}</td>
+                              <td>{log.target}</td>
+                              <td className="text-muted small">{log.detail}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

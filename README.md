@@ -14,3 +14,5 @@ Monorepo for the GawaGo platform:
 - `docs/` Architecture and API documentation
 - `scripts/` Utility scripts
 - `tests/` Cross-project test plans
+
+API URL setup for web, mobile, and ngrok APK builds is documented in `docs/setup/api-configuration.md`.
