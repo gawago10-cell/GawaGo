@@ -82,6 +82,7 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -268,6 +269,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Where `collectstatic` gathers files for WhiteNoise to serve in production.
+STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 # Uploads that must never be reachable by URL (e.g. complaint evidence).

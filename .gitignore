@@ -15,6 +15,9 @@ build/
 media/
 private_media/
 
+# Django collectstatic output
+staticfiles/
+
 # Env
 .env
 *.env

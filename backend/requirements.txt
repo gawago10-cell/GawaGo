@@ -15,6 +15,9 @@ cloudinary>=1.46
 # Production web server; scripts/render_start.sh runs it. Without it a fresh
 # host installs cleanly and then fails at startup.
 gunicorn>=22.0
+# Serves Django's own static files (the /admin/ CSS and icons) from
+# gunicorn; without it production renders /admin/ unstyled.
+whitenoise>=6.7
 
 # MySQL is a supported alternative to PostgreSQL (DJANGO_DB_ENGINE=mysql) but
 # its driver is not installed by default: mysqlclient builds against MySQL
