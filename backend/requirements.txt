@@ -12,6 +12,9 @@ django-q2>=1.11,<2
 # its last release (0.3.0, 2020) configures itself through DEFAULT_FILE_STORAGE,
 # which Django removed in 5.1.
 cloudinary>=1.46
+# Production web server; scripts/render_start.sh runs it. Without it a fresh
+# host installs cleanly and then fails at startup.
+gunicorn>=22.0
 
 # MySQL is a supported alternative to PostgreSQL (DJANGO_DB_ENGINE=mysql) but
 # its driver is not installed by default: mysqlclient builds against MySQL
