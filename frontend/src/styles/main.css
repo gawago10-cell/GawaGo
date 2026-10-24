@@ -3011,9 +3011,10 @@ body {
 
 .household-metric-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.3rem 1rem;
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--gg-tayabas-border);
 }
@@ -3029,6 +3030,7 @@ body {
 
 .household-metric-stars {
   display: flex;
+  flex-shrink: 0;
   gap: 0.2rem;
   border: 0;
   background: transparent;
@@ -9196,14 +9198,23 @@ a,
     max-width: 190px !important;
   }
 
+  /* nowrap + no shrinking: an older mobile rule sets flex-wrap: wrap, and on
+     a short screen the items that didn't fit wrapped into a second column
+     off to the side -- Notifications (and in landscape, My Jobs onward)
+     couldn't be reached. Now the nav just scrolls. */
   .worker-nav {
     display: flex !important;
     flex: 1 1 auto !important;
     flex-direction: column !important;
+    flex-wrap: nowrap !important;
     gap: 0 !important;
     padding: 12px 0 !important;
     margin: 0 !important;
     overflow-y: auto !important;
+  }
+
+  .worker-nav > * {
+    flex-shrink: 0 !important;
   }
 
   .worker-nav-item,
@@ -10543,6 +10554,41 @@ a,
   overflow-y: auto;
 }
 
+/* The body scrolls; its children must not shrink to fit instead. Cards hide
+   their overflow, so on a short screen shrinking them cut off everything
+   below the fold -- the applicant card's Decline / View Profile / Accept. */
+.gg-modal-body > * {
+  flex-shrink: 0;
+}
+
+/* On a phone the header and applicant strip alone can fill most of an 88vh
+   panel, leaving the body a sliver to scroll in. Scroll the whole panel
+   instead, and give it more of the screen. */
+@media (max-width: 576px) {
+  .gg-modal-backdrop {
+    padding: 0.75rem;
+  }
+
+  .gg-modal-panel {
+    max-height: 94vh;
+    overflow-y: auto;
+  }
+
+  .gg-modal-panel .gg-modal-body {
+    flex: none;
+    overflow: visible;
+    padding: 1.1rem 1rem;
+  }
+
+  .gg-modal-head {
+    padding: 1.2rem 1.1rem;
+  }
+
+  .gg-modal-panel .gg-rate-main {
+    padding: 1.4rem 1.1rem;
+  }
+}
+
 .gg-modal-foot {
   border-top: 1px solid var(--gg-tayabas-border);
   padding: 1rem 1.8rem;
@@ -11307,12 +11353,23 @@ a,
 }
 
 @media (max-width: 860px) {
+  /* Stacked, the whole panel scrolls as one. With the aside and form each
+     scrolling inside a height-capped panel, the aside took all of it on a
+     phone and the form (stars, Submit) got no height at all. */
   .gg-modal-panel.rate {
     flex-direction: column;
+    overflow-y: auto;
   }
 
   .gg-rate-aside {
     width: 100%;
+    flex: none;
+    overflow: visible;
+  }
+
+  .gg-rate-main {
+    flex: none;
+    overflow: visible;
   }
 }
 
