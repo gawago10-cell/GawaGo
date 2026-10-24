@@ -15463,3 +15463,69 @@ a,
   }
 }
 
+
+/* ---------- Brand intro (components/IntroSplash.jsx) ---------- */
+.gg-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: var(--gg-sidebar-bg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: opacity 0.55s ease, visibility 0.55s ease;
+}
+.gg-intro.leave { opacity: 0; visibility: hidden; pointer-events: none; }
+.gg-intro canvas { position: absolute; inset: 0; display: block; z-index: 1; }
+.gg-intro-center {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  pointer-events: none; width: 100%; padding: 0 16px;
+}
+.gg-intro-house { width: min(220px, 52vw); aspect-ratio: 1 / 1; }
+.gg-intro-house svg { width: 100%; height: 100%; overflow: visible; }
+.gg-intro .draw { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.gg-intro .house { stroke: #f5f1e6; stroke-width: 3.4; }
+.gg-intro .ground { stroke: rgba(245, 241, 230, 0.35); stroke-width: 2; }
+.gg-intro.house-on .roof { animation: ggIntroDraw 0.45s cubic-bezier(0.6, 0.1, 0.2, 1) 0.05s forwards; }
+.gg-intro.house-on .body { animation: ggIntroDraw 0.5s cubic-bezier(0.6, 0.1, 0.2, 1) 0.2s forwards; }
+.gg-intro.house-on .ground { animation: ggIntroDraw 0.4s ease forwards; }
+.gg-intro.house-on .doorf { animation: ggIntroDraw 0.3s ease 0.4s forwards; }
+.gg-intro .door-fill { fill: var(--gg-leaf); opacity: 0; transform-box: fill-box; transform-origin: bottom center; transform: scaleY(0.15); }
+.gg-intro.door-on .door-fill { animation: ggIntroDoor 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2) forwards; }
+.gg-intro .glow { opacity: 0; filter: blur(16px); fill: var(--gg-leaf); }
+.gg-intro.door-on .glow { animation: ggIntroGlow 1s ease forwards; }
+.gg-intro .window { fill: var(--gg-leaf); opacity: 0; }
+.gg-intro.door-on .window { animation: ggIntroWindow 0.35s ease 0.25s forwards; }
+.gg-intro-wordmark {
+  margin-top: 6px; display: flex; align-items: flex-end;
+  font-family: var(--gg-font-heading); font-weight: 800; font-size: clamp(46px, 9vw, 84px);
+  letter-spacing: -0.02em; line-height: 1; color: #f5f1e6;
+}
+.gg-intro-wordmark .ch { display: inline-block; opacity: 0; transform: translateY(30%) scale(0.85); filter: blur(8px); }
+.gg-intro-wordmark .go { color: var(--gg-leaf); }
+.gg-intro.reveal .gg-intro-wordmark .ch { animation: ggIntroLetter 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.1) forwards; animation-delay: calc(var(--d) * 80ms); }
+.gg-intro-tagline {
+  margin-top: 18px; font-family: var(--gg-font-body); font-size: clamp(14px, 2.2vw, 18px);
+  color: #c2cbaf; letter-spacing: 0.02em; opacity: 0; transform: translateY(8px);
+}
+.gg-intro-tagline b { color: var(--gg-leaf); font-weight: 600; }
+.gg-intro.reveal .gg-intro-tagline { animation: ggIntroFadeUp 0.6s ease 0.45s forwards; }
+.gg-intro-legend {
+  position: absolute; z-index: 2; top: 26px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 20px; font-family: var(--gg-font-body); font-size: 12px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: rgba(194, 203, 175, 0.75); opacity: 0; transition: opacity 0.5s ease; white-space: nowrap;
+}
+.gg-intro-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+.gg-intro.show-legend .gg-intro-legend { opacity: 1; }
+.gg-intro.house-on .gg-intro-legend { opacity: 0; }
+.gg-intro-skip {
+  position: absolute; z-index: 2; bottom: 26px; left: 50%; transform: translateX(-50%);
+  font-family: var(--gg-font-body); font-size: 12.5px; color: rgba(194, 203, 175, 0.6);
+  letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+}
+@keyframes ggIntroDraw { to { stroke-dashoffset: 0; } }
+@keyframes ggIntroDoor { to { opacity: 1; transform: scaleY(1); } }
+@keyframes ggIntroGlow { 0% { opacity: 0; } 40% { opacity: 0.55; } 100% { opacity: 0.25; } }
+@keyframes ggIntroWindow { to { opacity: 0.85; } }
+@keyframes ggIntroLetter { to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+@keyframes ggIntroFadeUp { to { opacity: 1; transform: translateY(0); } }

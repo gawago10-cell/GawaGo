@@ -11,6 +11,7 @@ import '../core/theme/gawago_colors.dart';
 import '../shared/constants/gawago_options.dart';
 import '../shared/utils/map_tile_guard.dart';
 import '../shared/widgets/authenticated_shell.dart' show gawagoTextTheme;
+import '../shared/widgets/intro_splash.dart';
 import '../shared/widgets/otp_code_field.dart';
 import '../features/worker/presentation/worker_home_screen.dart';
 import '../features/household/presentation/household_home_screen.dart';
@@ -97,6 +98,9 @@ class _SessionGate extends StatefulWidget {
 
 class _SessionGateState extends State<_SessionGate> {
   late final Future<AuthSession?> _session = SessionStorage.restore();
+  // The brand intro plays once per launch, over the landing page, and only
+  // for someone signed out -- a signed-in user goes straight to their home.
+  bool _introDone = false;
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +118,19 @@ class _SessionGateState extends State<_SessionGate> {
 
         final session = snapshot.data;
         if (session == null || !session.isAuthenticated) {
-          return const LandingPage();
+          // Kept in one Stack either way so removing the intro doesn't
+          // rebuild the landing page (and refetch its live counts).
+          return Stack(
+            children: [
+              const LandingPage(),
+              if (!_introDone)
+                Positioned.fill(
+                  child: IntroSplash(
+                    onDone: () => setState(() => _introDone = true),
+                  ),
+                ),
+            ],
+          );
         }
         void onLogout() {
           Navigator.of(context).pushAndRemoveUntil(
