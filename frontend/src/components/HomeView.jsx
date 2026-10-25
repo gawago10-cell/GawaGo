@@ -14,10 +14,46 @@ export default function HomeView({
 }) {
   const [showLogin, setShowLogin] = React.useState(initialShowLogin);
   const [authMode, setAuthMode] = React.useState("login");
+  // Set when opening the panel added a history entry, so Back (ours or the
+  // phone's) can return to the landing page instead of leaving the site.
+  const pushedAuthEntryRef = React.useRef(false);
 
   React.useEffect(() => {
     setShowLogin(initialShowLogin);
   }, [initialShowLogin]);
+
+  React.useEffect(() => {
+    function handlePopState(event) {
+      if (pushedAuthEntryRef.current && !event.state?.ggAuthPanel) {
+        pushedAuthEntryRef.current = false;
+        setShowLogin(false);
+      }
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  // On a phone the form stacks under the hero, so opening it used to look
+  // like nothing happened -- the form was below the fold. The hero is hidden
+  // while it's open (CSS, phones only) and the page returns to the top.
+  const openAuthPanel = (mode) => {
+    setAuthMode(mode);
+    if (!showLogin && !pushedAuthEntryRef.current) {
+      window.history.pushState({ ggAuthPanel: true }, "");
+      pushedAuthEntryRef.current = true;
+    }
+    setShowLogin(true);
+    window.scrollTo(0, 0);
+  };
+
+  const closeAuthPanel = () => {
+    if (pushedAuthEntryRef.current) {
+      window.history.back();
+    } else {
+      setShowLogin(false);
+    }
+    window.scrollTo(0, 0);
+  };
 
   React.useEffect(() => {
     if (isAdminPortal) {
@@ -116,26 +152,20 @@ export default function HomeView({
           <button
             className="btn btn-outline-light home-landing-signin"
             type="button"
-            onClick={() => {
-              setAuthMode("login");
-              setShowLogin(true);
-            }}
+            onClick={() => openAuthPanel("login")}
           >
             Login
           </button>
           <button
             className="btn btn-outline-light home-landing-signup"
             type="button"
-            onClick={() => {
-              setAuthMode("signup");
-              setShowLogin(true);
-            }}
+            onClick={() => openAuthPanel("signup")}
           >
             Sign Up
           </button>
         </div>
       </header>
-      <section className="hero-section hero-dark hero-fullscreen">
+      <section className={`hero-section hero-dark hero-fullscreen${showLogin ? " auth-open" : ""}`}>
         <div className="container py-5 py-lg-6 position-relative hero-inner">
           <div className={`home-landing-grid ${showLogin ? "with-login" : ""}`}>
             <div className="hero-copy">
@@ -200,6 +230,17 @@ export default function HomeView({
             )}
             {showLogin && (
               <aside className="home-login-card" aria-label="Authentication panel">
+                <button className="home-login-back" type="button" onClick={closeAuthPanel}>
+                  <span aria-hidden="true">&larr;</span> Back
+                </button>
+                {authMode === "signup" && (
+                  <div className="home-login-form-head home-signup-head">
+                    <div>
+                      <h2>Create your account</h2>
+                      <p>Choose how you&rsquo;ll use GawaGo.</p>
+                    </div>
+                  </div>
+                )}
                 {authMode === "signup" && (
                   <div className="home-role-card-grid home-role-choice-grid">
                     <button
