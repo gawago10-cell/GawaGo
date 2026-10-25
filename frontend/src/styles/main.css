@@ -3891,6 +3891,14 @@ body {
   min-height: 360px;
 }
 
+/* Leaflet stacks its tiles, markers and controls at z-index 400-1000. With no
+   stacking context of its own, a map floated over the phone's sticky top bar
+   (z 80) when scrolled under it, and over the open sidebar drawer (z 90).
+   Isolating each map keeps those numbers inside the map. */
+.leaflet-container {
+  isolation: isolate;
+}
+
 .household-job-map-canvas {
   width: 100%;
   min-height: 360px;
