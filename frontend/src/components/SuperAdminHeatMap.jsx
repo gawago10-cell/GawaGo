@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { applyTwoFingerPan } from "../utils/mapGestures";
+import { frameMapToTayabas } from "../utils/tayabasMapFrame";
 
 function getHeatMapColor(value, maxValue) {
   if (!value) {
@@ -66,6 +67,7 @@ export default function SuperAdminHeatMap({ data, metricLabel, mapCenter, loadLe
         map.dragging.enable();
         map.touchZoom.enable();
         applyTwoFingerPan(map);
+        const frame = frameMapToTayabas(map, L);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "&copy; OpenStreetMap contributors",
         }).addTo(map);
@@ -93,6 +95,8 @@ export default function SuperAdminHeatMap({ data, metricLabel, mapCenter, loadLe
         });
         if (!mapViewRef.current.touched && heatPoints.length > 0) {
           map.fitBounds(L.latLngBounds(heatPoints).pad(0.28));
+        } else if (!mapViewRef.current.touched) {
+          frame.showWholeCity();
         }
         map.on("moveend zoomend", () => {
           const center = map.getCenter();

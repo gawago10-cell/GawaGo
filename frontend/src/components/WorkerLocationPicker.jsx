@@ -3,6 +3,9 @@ import { TAYABAS_CITY_CENTER } from "../constants/appConstants";
 import { buildCoordinateLocation, getCurrentCoordinates, reverseGeocodeCoordinates } from "../utils/locationServices";
 import { getBarangayCenter } from "../utils/locationUtils";
 import { applyTwoFingerPan } from "../utils/mapGestures";
+import { frameMapToTayabas, isInsideTayabasCity } from "../utils/tayabasMapFrame";
+
+const OUTSIDE_TAYABAS_MESSAGE = "GawaGo serves Tayabas City only. Please pin a spot inside the red boundary.";
 
 export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets, compact = false }) {
   const mapNodeRef = useRef(null);
@@ -80,28 +83,49 @@ export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets,
       }).setView(center, hasCoordinates ? 15 : 12);
       mapRef.current = map;
       applyTwoFingerPan(map);
+      const frame = frameMapToTayabas(map, L);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
       }).addTo(map);
-      if (hasCoordinates) {
-        markerRef.current = L.marker(center, { draggable: true }).addTo(map);
-        markerRef.current.on("dragend", async () => {
-          const point = markerRef.current.getLatLng();
-          await resolvePoint(point.lat, point.lng, "manual");
+      // A pin dragged out of the city goes back to where the drag started.
+      const placeDraggableMarker = (point) => {
+        const marker = L.marker(point, { draggable: true }).addTo(map);
+        let dragStartPoint = null;
+        marker.on("dragstart", () => {
+          dragStartPoint = marker.getLatLng();
         });
+        marker.on("dragend", async () => {
+          const dropped = marker.getLatLng();
+          if (!isInsideTayabasCity(dropped.lat, dropped.lng)) {
+            if (dragStartPoint) {
+              marker.setLatLng(dragStartPoint);
+            }
+            setWarning(OUTSIDE_TAYABAS_MESSAGE);
+            return;
+          }
+          setWarning("");
+          await resolvePoint(dropped.lat, dropped.lng, "manual");
+        });
+        return marker;
+      };
+      if (hasCoordinates) {
+        // An older saved pin may sit outside the city; keep it in view.
+        frame.includePoints([center]);
+        markerRef.current = placeDraggableMarker(center);
       }
       map.on("click", async (event) => {
         if (!manualMode) {
           return;
         }
+        if (!isInsideTayabasCity(event.latlng.lat, event.latlng.lng)) {
+          setWarning(OUTSIDE_TAYABAS_MESSAGE);
+          return;
+        }
+        setWarning("");
         if (markerRef.current) {
           markerRef.current.remove();
         }
-        markerRef.current = L.marker([event.latlng.lat, event.latlng.lng], { draggable: true }).addTo(map);
-        markerRef.current.on("dragend", async () => {
-          const point = markerRef.current.getLatLng();
-          await resolvePoint(point.lat, point.lng, "manual");
-        });
+        markerRef.current = placeDraggableMarker([event.latlng.lat, event.latlng.lng]);
         await resolvePoint(event.latlng.lat, event.latlng.lng, "manual");
       });
     }

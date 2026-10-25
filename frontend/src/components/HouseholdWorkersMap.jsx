@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { formatCurrency, getDisplayName, getHouseholdInitials } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
 import { applyTwoFingerPan } from "../utils/mapGestures";
+import { frameMapToTayabas } from "../utils/tayabasMapFrame";
 
 const TAYABAS_CENTER = [14.0269, 121.5926];
 const DEFAULT_ZOOM = 13;
@@ -73,6 +74,7 @@ export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHir
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
+  const frameRef = useRef(null);
   const markersRef = useRef(new Map());
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState("");
@@ -99,6 +101,7 @@ export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHir
         container.focus = (options) => HTMLElement.prototype.focus.call(container, { ...options, preventScroll: true });
         const map = L.map(container, { zoomControl: true, scrollWheelZoom: true });
         applyTwoFingerPan(map);
+        frameRef.current = frameMapToTayabas(map, L);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
           attribution: "&copy; OpenStreetMap contributors",
@@ -188,6 +191,7 @@ export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHir
     if (points.length === 0) {
       return;
     }
+    frameRef.current?.includePoints(points);
     map.fitBounds(L.latLngBounds(points), { padding: [48, 48], maxZoom: 15 });
   };
 

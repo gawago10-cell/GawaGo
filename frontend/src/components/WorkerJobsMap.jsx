@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { formatCurrency, getHouseholdInitials } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
 import { applyTwoFingerPan } from "../utils/mapGestures";
+import { frameMapToTayabas } from "../utils/tayabasMapFrame";
 
 const TAYABAS_CENTER = [14.0269, 121.5926];
 const DEFAULT_ZOOM = 13;
@@ -71,6 +72,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
+  const frameRef = useRef(null);
   const markersRef = useRef(new Map());
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState("");
@@ -119,6 +121,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
         container.focus = (options) => HTMLElement.prototype.focus.call(container, { ...options, preventScroll: true });
         const map = L.map(container, { zoomControl: true, scrollWheelZoom: true });
         applyTwoFingerPan(map);
+        frameRef.current = frameMapToTayabas(map, L);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
           attribution: "&copy; OpenStreetMap contributors",
@@ -155,6 +158,8 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
     }
     layer.clearLayers();
     markersRef.current = new Map();
+    // A pin outside the city (an old address) must stay reachable.
+    frameRef.current?.includePoints([...groups.map((group) => group.point), workerPoint]);
     if (workerPoint) {
       L.marker(workerPoint, { icon: workerPinIcon(L), interactive: false, keyboard: false }).addTo(layer);
     }
@@ -208,6 +213,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
     if (points.length === 0) {
       return;
     }
+    frameRef.current?.includePoints(points);
     map.fitBounds(L.latLngBounds(points), { padding: [48, 48], maxZoom: 15 });
   };
 

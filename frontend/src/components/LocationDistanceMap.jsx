@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { applyTwoFingerPan } from "../utils/mapGestures";
+import { frameMapToTayabas } from "../utils/tayabasMapFrame";
 
 let leafletAssetsPromise = null;
 
@@ -202,6 +203,7 @@ export default function LocationDistanceMap({
         const map = L.map(mapNodeRef.current, { zoomControl: true, scrollWheelZoom: true });
         mapInstanceRef.current = map;
         applyTwoFingerPan(map);
+        const frame = frameMapToTayabas(map, L);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "&copy; OpenStreetMap contributors",
         }).addTo(map);
@@ -237,6 +239,8 @@ export default function LocationDistanceMap({
             opacity: 0.95,
           }).addTo(map);
         }
+        // The route or either end can leave the city; widen the frame to show them.
+        frame.includePoints([...boundsPoints, userPoint, targetPoint]);
         map.fitBounds(L.latLngBounds(boundsPoints).pad(0.28));
         window.setTimeout(() => {
           if (!cancelled && mapInstanceRef.current === map) {

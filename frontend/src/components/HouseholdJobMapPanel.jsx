@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { applyTwoFingerPan } from "../utils/mapGestures";
+import { frameMapToTayabas, isInsideTayabasCity } from "../utils/tayabasMapFrame";
+
+const OUTSIDE_TAYABAS_MESSAGE = "GawaGo serves Tayabas City only. Please pin a spot inside the red boundary.";
 
 export default function HouseholdJobMapPanel({
   captureHouseholdJobLocation,
@@ -22,12 +25,12 @@ export default function HouseholdJobMapPanel({
         ? "Address-based Preview"
         : householdJobLocationPreview?.source === "manual"
           ? "Manual Pin Preview"
-          : "Philippines Map Preview";
+          : "Tayabas City Map";
   const title = householdJobLocationPreview?.mapUrl
     ? "Check the saved job pin before posting"
     : householdJobMapMode === "manual"
       ? "Manual pin mode is active"
-      : "The map opens on the Philippines, then drops a pin after location capture";
+      : "The map shows Tayabas City, then drops a pin after location capture";
   const hasCoordinates = householdJobCoordinates?.latitude != null && householdJobCoordinates?.longitude != null;
   const warning = mapWarning || householdJobLocationPreview?.warning || "";
 
@@ -64,6 +67,7 @@ export default function HouseholdJobMapPanel({
         mapInstance.dragging.enable();
         mapInstance.touchZoom.enable();
         applyTwoFingerPan(mapInstance);
+        const frame = frameMapToTayabas(mapInstance, L);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "&copy; OpenStreetMap contributors",
         }).addTo(mapInstance);
@@ -75,8 +79,19 @@ export default function HouseholdJobMapPanel({
           }
           marker = L.marker([latitude, longitude], { draggable: true }).addTo(mapInstance);
           marker.dragging?.enable();
+          let dragStartPoint = null;
+          marker.on("dragstart", () => {
+            dragStartPoint = marker.getLatLng();
+          });
           marker.on("dragend", async () => {
             const draggedPoint = marker.getLatLng();
+            if (!isInsideTayabasCity(draggedPoint.lat, draggedPoint.lng)) {
+              if (dragStartPoint) {
+                marker.setLatLng(dragStartPoint);
+              }
+              window.alert(OUTSIDE_TAYABAS_MESSAGE);
+              return;
+            }
             try {
               const nextLocation = await placeHouseholdJobPinRef.current(draggedPoint.lat, draggedPoint.lng, "manual", false);
               if (nextLocation?.latitude != null && nextLocation?.longitude != null) {
@@ -94,9 +109,12 @@ export default function HouseholdJobMapPanel({
           } else {
             mapInstance.setView([householdJobLocationPreview.latitude, householdJobLocationPreview.longitude], 15);
           }
+          frame.includePoints([[householdJobLocationPreview.latitude, householdJobLocationPreview.longitude]]);
           await syncMarker(householdJobLocationPreview.latitude, householdJobLocationPreview.longitude);
-        } else {
+        } else if (householdJobMapViewRef.current.touched) {
           mapInstance.setView(householdJobMapViewRef.current.center, householdJobMapViewRef.current.zoom);
+        } else {
+          frame.showWholeCity();
         }
 
         mapInstance.on("moveend zoomend", () => {
@@ -109,6 +127,10 @@ export default function HouseholdJobMapPanel({
         });
         mapInstance.on("click", async (event) => {
           if (householdJobMapMode !== "manual") {
+            return;
+          }
+          if (!isInsideTayabasCity(event.latlng.lat, event.latlng.lng)) {
+            window.alert(OUTSIDE_TAYABAS_MESSAGE);
             return;
           }
           try {
@@ -161,8 +183,8 @@ export default function HouseholdJobMapPanel({
           {householdJobLocationPreview?.accuracy
             ? `Reported device accuracy: about ${Math.round(householdJobLocationPreview.accuracy)} meters`
             : householdJobMapMode === "manual"
-              ? "Click or drag anywhere in the Philippines map to set the exact job location, then review the auto-filled address fields."
-              : "Map opens at the Philippines by default and adds a pin after you confirm location."}
+              ? "Click or drag anywhere inside the red Tayabas City boundary to set the exact job location, then review the auto-filled address fields."
+              : "Map opens on Tayabas City and adds a pin after you confirm location."}
         </p>
         <div className="household-job-map-frame">
           <div
