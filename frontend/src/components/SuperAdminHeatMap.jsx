@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { applyTwoFingerPan } from "../utils/mapGestures";
 
 function getHeatMapColor(value, maxValue) {
   if (!value) {
@@ -64,6 +65,7 @@ export default function SuperAdminHeatMap({ data, metricLabel, mapCenter, loadLe
         mapInstanceRef.current = map;
         map.dragging.enable();
         map.touchZoom.enable();
+        applyTwoFingerPan(map);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "&copy; OpenStreetMap contributors",
         }).addTo(map);

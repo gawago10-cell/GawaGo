@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { TAYABAS_CITY_CENTER } from "../constants/appConstants";
 import { buildCoordinateLocation, getCurrentCoordinates, reverseGeocodeCoordinates } from "../utils/locationServices";
 import { getBarangayCenter } from "../utils/locationUtils";
+import { applyTwoFingerPan } from "../utils/mapGestures";
 
 export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets, compact = false }) {
   const mapNodeRef = useRef(null);
@@ -78,6 +79,7 @@ export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets,
         tap: false,
       }).setView(center, hasCoordinates ? 15 : 12);
       mapRef.current = map;
+      applyTwoFingerPan(map);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
       }).addTo(map);

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatCurrency, getDisplayName, getHouseholdInitials } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
+import { applyTwoFingerPan } from "../utils/mapGestures";
 
 const TAYABAS_CENTER = [14.0269, 121.5926];
 const DEFAULT_ZOOM = 13;
@@ -97,6 +98,7 @@ export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHir
         const container = mapNodeRef.current;
         container.focus = (options) => HTMLElement.prototype.focus.call(container, { ...options, preventScroll: true });
         const map = L.map(container, { zoomControl: true, scrollWheelZoom: true });
+        applyTwoFingerPan(map);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
           attribution: "&copy; OpenStreetMap contributors",

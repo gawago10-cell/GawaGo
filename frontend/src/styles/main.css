@@ -3899,6 +3899,41 @@ body {
   isolation: isolate;
 }
 
+/* Phones (utils/mapGestures.js): one finger scrolls the page, so the browser
+   may pan; pinches stay with the map. A pin being dragged must not hand its
+   gesture to the page, or the drag is cancelled mid-move. Both override the
+   older per-map `touch-action: none`. */
+.leaflet-container.gg-map-two-finger {
+  touch-action: pan-x pan-y !important;
+}
+
+.leaflet-container.gg-map-two-finger .leaflet-marker-draggable {
+  touch-action: none;
+}
+
+.gg-map-gesture-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(26, 36, 21, 0.55);
+  color: #f5f1e6;
+  font-family: var(--gg-font-body);
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.gg-map-gesture-hint.visible {
+  opacity: 1;
+}
+
 .household-job-map-canvas {
   width: 100%;
   min-height: 360px;

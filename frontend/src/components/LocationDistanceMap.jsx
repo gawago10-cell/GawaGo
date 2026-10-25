@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { applyTwoFingerPan } from "../utils/mapGestures";
 
 let leafletAssetsPromise = null;
 
@@ -200,6 +201,7 @@ export default function LocationDistanceMap({
         }
         const map = L.map(mapNodeRef.current, { zoomControl: true, scrollWheelZoom: true });
         mapInstanceRef.current = map;
+        applyTwoFingerPan(map);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "&copy; OpenStreetMap contributors",
         }).addTo(map);

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { applyTwoFingerPan } from "../utils/mapGestures";
 
 export default function HouseholdJobMapPanel({
   captureHouseholdJobLocation,
@@ -62,6 +63,7 @@ export default function HouseholdJobMapPanel({
         householdJobMapRef.current = mapInstance;
         mapInstance.dragging.enable();
         mapInstance.touchZoom.enable();
+        applyTwoFingerPan(mapInstance);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "&copy; OpenStreetMap contributors",
         }).addTo(mapInstance);
