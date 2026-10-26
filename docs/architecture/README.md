@@ -8,9 +8,9 @@ Open these in draw.io (desktop or app.diagrams.net). Each diagram is its own fil
 
 | File | Diagram |
 |---|---|
-| `GawaGo_Context_Diagram.drawio` | Context Diagram: GawaGo as one process with its seven external entities and the data flowing between them |
-| `GawaGo_DFD_Level_2.drawio` | DFD Level 2: all 38 sub-processes on one page, grouped in labelled boxes by parent process (1.0-10.0), with the data stores D1-D17 and a data-store index |
-| `GawaGo_ERD_Chen.drawio` | ERD in Chen notation: all 23 entities, 36 relationships with cardinality, and every attribute (keys underlined, derived dashed, multivalued double) |
+| `GawaGo_Context_Diagram.drawio` | Context Diagram: the platform as one system box, its five user roles, OpenRouteService (OSRM fallback), the email service and the PostgreSQL database, with one labelled line per data flow |
+| `GawaGo_DFD_Level_2.drawio` | DFD Level 2: all 38 sub-processes on one page, grouped in labelled boxes by parent process (1.0-10.0), with open-ended data stores (`D1 \| User Accounts`) and a data-store index |
+| `GawaGo_ERD_Chen.drawio` | ERD in Chen notation, laid out in rows: every entity with its attribute ovals stacked on both sides (keys underlined, derived dashed, multivalued double), all 36 relationships as diamonds between the rows, with cardinality |
 | `GawaGo_Database_Schema.drawio` | dbdiagram-style schema: every table, column, type, PK/FK, with crow's-foot relationship lines |
 | `GawaGo_Current_Database_Schema.dbml` | The same schema for dbdiagram.io (paste it in), plus the Django framework tables |
 
