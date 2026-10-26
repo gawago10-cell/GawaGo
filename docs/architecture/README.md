@@ -9,7 +9,7 @@ Open these in draw.io (desktop or app.diagrams.net). Each diagram is its own fil
 | File | Diagram |
 |---|---|
 | `GawaGo_Context_Diagram.drawio` | Context Diagram: the platform as one system box, its five user roles, OpenRouteService (OSRM fallback), the email service and the PostgreSQL database, with one labelled line per data flow |
-| `GawaGo_DFD_Level_1.drawio` | DFD Level 1: the ten main processes (1.0-10.0) as rounded boxes, Household and Worker drawn once (bars along the top and bottom) and wired to every process they use, each process's data stores and other users or services beside it |
+| `GawaGo_DFD_Level_1.drawio` | DFD Level 1: the ten main processes (1.0-10.0) as rounded boxes, with every user and outside service (Household, Worker, Visitor, Administrator, Superadmin, email, routing) drawn once; data stores sit beside the process that uses them and repeat where two processes share one |
 | `GawaGo_DFD_Level_2.drawio` | DFD Level 2: all 38 sub-processes on one page, grouped in labelled boxes by parent process (1.0-10.0), coloured like the context diagram, with open-ended data stores (`D1 \| User Accounts`) and a data-store index. Thick blue arrows carry the data each sub-process hands to the next, so the page reads as one connected flow from sign-up to reports |
 | `GawaGo_ERD_Chen.drawio` | ERD in Chen notation, laid out in rows: every entity with its attribute ovals stacked on both sides (keys underlined, derived dashed, multivalued double), all 36 relationships as diamonds between the rows, with cardinality |
 | `GawaGo_Database_Schema.drawio` | dbdiagram-style schema: every table, column, type, PK/FK, with crow's-foot relationship lines |
