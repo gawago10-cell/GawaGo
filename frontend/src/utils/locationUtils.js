@@ -19,9 +19,13 @@ export function findTayabasBarangayFromText(value) {
   }) || "";
 }
 
+/** The Tayabas barangay named in `value`, or "" when it names none. This
+ * used to answer "Poblacion", which is not one of the city's barangays, so
+ * an unmatched place was filed under a name no form offers and sat on the
+ * town-centre coordinates. */
 export function getFallbackBarangay(value = "") {
   const matchedBarangay = findTayabasBarangayFromText(value) || BARANGAYS.find((barangay) => barangay.toLowerCase() === String(value || "").trim().replace(/^barangay\s+/i, "").toLowerCase());
-  return matchedBarangay || "Poblacion";
+  return matchedBarangay || "";
 }
 
 export function getBarangayCenter(barangay) {

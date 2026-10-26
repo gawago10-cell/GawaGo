@@ -1,18 +1,17 @@
 import { useRef, useState } from "react";
 
-import { BARANGAY_CENTERS, MAX_WORKER_SKILLS } from "../constants/appConstants";
-import { getBarangayCenter, normalizeBarangayName } from "../utils/locationUtils";
+import { normalizeBarangayName } from "../utils/locationUtils";
 import { dashboardViewForRole, getUserRole, isAdminRole, ROLES } from "../utils/roles";
-import { focusFirstInvalidField, validateRegistration } from "../utils/registrationValidation";
-
-function getBarangayCenterCoordinates(barangay) {
-  const normalizedBarangay = normalizeBarangayName(barangay);
-  const center = BARANGAY_CENTERS[normalizedBarangay] || getBarangayCenter(normalizedBarangay);
-  return {
-    latitude: center?.latitude ?? null,
-    longitude: center?.longitude ?? null,
-  };
-}
+import {
+  focusFirstInvalidField,
+  validateRegistration,
+  validateWorkerRegistration,
+  WORKER_PIN_REQUIRED_MESSAGE,
+  WORKER_REGISTRATION_FIELD_ORDER,
+} from "../utils/registrationValidation";
+import { resolveWorkerSkills, validateWorkerSkills } from "../utils/skillUtils";
+import { getReviewMetricAverage } from "../utils/reviewUtils";
+import { isConfirmedJobPin } from "./useHouseholdJobLocation";
 
 function omitSensitiveAccountFields(account) {
   const { password, confirmPassword, ...safeAccount } = account;
@@ -46,7 +45,7 @@ export function useGawaGoActions({
   householdProfileForm,
   householdReviewForm,
   isNumericIdentifier,
-  isValidGmailAddress,
+  isValidEmailAddress,
   loginForm,
   mergeBackendWorkerIntoState,
   normalizeBackendApplication,
@@ -59,6 +58,7 @@ export function useGawaGoActions({
   refreshNotificationsFromBackend,
   refreshRecommendedWorkers,
   refreshReviewsFromBackend,
+  refreshProfilesFromBackend,
   refreshVerificationStateFromBackend,
   registeredHouseholds,
   registeredWorkers,
@@ -94,9 +94,9 @@ export function useGawaGoActions({
 }) {
   // Guards handleHouseholdJobSubmit against a double-click. A ref (not a
   // plain closure variable) is required: this whole hook body re-runs on
-  // every render, and a state update during resolveLocationCoordinates'
-  // multi-second geocode round-trip would otherwise re-render before the
-  // POST resolves, silently resetting a plain variable's guard.
+  // every render, and a state update during the POST (an image upload can
+  // take seconds) would otherwise re-render before it resolves, silently
+  // resetting a plain variable's guard.
   const isSubmittingJobRef = useRef(false);
   const [isSubmittingJob, setIsSubmittingJob] = useState(false);
   // Same double-click guard for every other request-sending action: a second
@@ -609,20 +609,13 @@ export function useGawaGoActions({
   }
   function handleWorkerRegisterSubmit(event) {
     event.preventDefault();
-    const formErrors = validateRegistration(workerForm);
+    const formErrors = validateWorkerRegistration(workerForm);
     setRegisterErrors(formErrors);
     if (Object.keys(formErrors).length > 0) {
-      focusFirstInvalidField(formErrors, event.currentTarget);
+      focusFirstInvalidField(formErrors, event.currentTarget, WORKER_REGISTRATION_FIELD_ORDER);
       return;
     }
-    const registrationSkills = new Set([
-      ...(workerForm.skills || []),
-      ...(workerForm.customSkill.trim() ? [workerForm.customSkill.trim()] : []),
-    ]);
-    if (registrationSkills.size > MAX_WORKER_SKILLS) {
-      window.alert(`You can list up to ${MAX_WORKER_SKILLS} skills, including a custom skill.`);
-      return;
-    }
+    const registrationSkills = resolveWorkerSkills(workerForm.skills, workerForm.customSkill);
     const usernameTaken = registeredWorkers.some(
       (item) => item.username.toLowerCase() === workerForm.username.trim().toLowerCase(),
     );
@@ -632,20 +625,14 @@ export function useGawaGoActions({
     }
     runExclusive("register", async () => {
       try {
-        let resolvedLocation = null;
-        try {
-          resolvedLocation = await resolveLocationCoordinates(workerForm.barangay, workerForm.streetAddress, false);
-        } catch {
-          resolvedLocation = null;
-        }
+        // The pin is required (validateWorkerRegistration): matching measures
+        // road distance from it, and the geocoded guesses this used to fall
+        // back on put workers up to 13 km from home. The label is built from
+        // the form so it always names the barangay.
         const normalizedBarangay = normalizeBarangayName(workerForm.barangay);
-        const barangayCoordinates = getBarangayCenterCoordinates(normalizedBarangay);
-        const workerLatitude = workerForm.latitude ?? resolvedLocation?.latitude ?? barangayCoordinates.latitude;
-        const workerLongitude = workerForm.longitude ?? resolvedLocation?.longitude ?? barangayCoordinates.longitude;
-        const workerLocationLabel =
-          workerForm.locationLabel ||
-          resolvedLocation?.locationLabel ||
-          formatLocation(workerForm.barangay, workerForm.streetAddress);
+        const workerLatitude = workerForm.latitude;
+        const workerLongitude = workerForm.longitude;
+        const workerLocationLabel = formatLocation(normalizedBarangay, workerForm.streetAddress.trim());
         const response = await apiRequest("accounts/register/", {
           method: "POST",
           auth: false,
@@ -659,12 +646,7 @@ export function useGawaGoActions({
             phone: workerForm.phone.trim(),
             bio: workerForm.bio.trim(),
             years_experience: Number(workerForm.yearsExperience || 0),
-            skills: Array.from(
-              new Set([
-                ...(workerForm.skills || []),
-                ...(workerForm.customSkill.trim() ? [workerForm.customSkill.trim()] : []),
-              ]),
-            ),
+            skills: registrationSkills,
             hourly_rate: workerForm.hourlyRate,
             daily_rate: workerForm.dailyRate,
             location_label: workerLocationLabel,
@@ -682,12 +664,7 @@ export function useGawaGoActions({
         });
         const workerAccount = {
           ...omitSensitiveAccountFields(workerForm),
-          skills: Array.from(
-            new Set([
-              ...(workerForm.skills || []),
-              ...(workerForm.customSkill.trim() ? [workerForm.customSkill.trim()] : []),
-            ]),
-          ),
+          skills: registrationSkills,
           id: Date.now(),
           username: workerForm.username.trim(),
           verification: "Not Yet Verified",
@@ -751,11 +728,9 @@ export function useGawaGoActions({
     }
     runExclusive("register", async () => {
       try {
-        const resolvedLocation = await resolveLocationCoordinates(
-          householdForm.barangay,
-          householdForm.streetAddress,
-          false,
-        );
+        // No map on this form: a street the geocoder places precisely, or
+        // else the barangay's centre -- never the town centre.
+        const resolvedLocation = await resolveLocationCoordinates(householdForm.barangay, householdForm.streetAddress);
         const response = await apiRequest("accounts/register/", {
           method: "POST",
           auth: false,
@@ -805,25 +780,22 @@ export function useGawaGoActions({
       window.alert("No worker account is currently logged in.");
       return;
     }
+    // Changing the barangay clears the pin; the worker pins the new spot
+    // rather than being moved to a geocoded guess.
+    if (workerProfileForm.latitude == null || workerProfileForm.longitude == null) {
+      window.alert(WORKER_PIN_REQUIRED_MESSAGE);
+      return;
+    }
+    const skillErrors = validateWorkerSkills(workerProfileForm.skills, "");
+    if (skillErrors.skills) {
+      window.alert(skillErrors.skills);
+      return;
+    }
     runExclusive("worker-profile-save", async () => {
-      let resolvedLocation = null;
-      try {
-        resolvedLocation = await resolveLocationCoordinates(
-          workerProfileForm.barangay,
-          workerProfileForm.streetAddress,
-          false,
-        );
-      } catch {
-        resolvedLocation = null;
-      }
       const normalizedBarangay = normalizeBarangayName(workerProfileForm.barangay);
-      const barangayCoordinates = getBarangayCenterCoordinates(normalizedBarangay);
-      const workerLatitude = workerProfileForm.latitude ?? resolvedLocation?.latitude ?? barangayCoordinates.latitude;
-      const workerLongitude = workerProfileForm.longitude ?? resolvedLocation?.longitude ?? barangayCoordinates.longitude;
-      const workerLocationLabel =
-        workerProfileForm.locationLabel ||
-        resolvedLocation?.locationLabel ||
-        formatLocation(workerProfileForm.barangay, workerProfileForm.streetAddress);
+      const workerLatitude = workerProfileForm.latitude;
+      const workerLongitude = workerProfileForm.longitude;
+      const workerLocationLabel = formatLocation(normalizedBarangay, String(workerProfileForm.streetAddress || "").trim());
       const nextWorkerPatch = {
         firstName: workerProfileForm.firstName,
         lastName: workerProfileForm.lastName,
@@ -1308,7 +1280,9 @@ export function useGawaGoActions({
       window.alert("Select a worker first.");
       return false;
     }
-    const rating = parseFloat(householdReviewForm.rating);
+    // With metrics rated, the overall rating is their average (AGENTS.md
+    // II.A), not the star picker's default 5.
+    const rating = getReviewMetricAverage(householdReviewForm) ?? parseFloat(householdReviewForm.rating);
     if (!rating) {
       window.alert("Please select a star rating first.");
       return false;
@@ -1344,8 +1318,11 @@ export function useGawaGoActions({
         setHouseholdReviewForm(EMPTY_HOUSEHOLD_REVIEW_FORM);
         await refreshReviewsFromBackend();
         // Also re-pull jobs: canReview flips off once the review lands, which is
-        // what moves the job out of the dashboard's "Completed" list.
+        // what moves the job out of the dashboard's "Completed" list. The
+        // worker's rating and review count live on their profile, which
+        // otherwise kept showing "New · 0 reviews" until a reload.
         await refreshJobsFromBackend();
+        await refreshProfilesFromBackend?.();
         await refreshNotificationsFromBackend();
         window.alert("Review submitted for the worker.");
         return true;
@@ -1464,6 +1441,96 @@ export function useGawaGoActions({
       }
     });
   }
+  // Saves an open job's edited details. Only fields that changed are sent:
+  // an unchanged start date already in the past would otherwise be refused
+  // as a past date. Throws with the server's message so the dialog can show
+  // it.
+  async function handleUpdateJob(job, form) {
+    const rateTypeValue = (label) => ({ "Per Hour": "per_hour", "Fixed Rate": "fixed" })[label] || "per_day";
+    const changes = {};
+    const setIfChanged = (key, next, previous) => {
+      if (String(next ?? "") !== String(previous ?? "")) {
+        changes[key] = next;
+      }
+    };
+    setIfChanged("title", form.jobTitle.trim(), job.jobTitle);
+    setIfChanged("description", form.description.trim(), job.description);
+    if (Number(form.offeredRate) !== Number(job.offeredRate)) {
+      changes.service_rate = form.offeredRate;
+    }
+    setIfChanged("rate_type", rateTypeValue(form.rateType), rateTypeValue(job.rateType));
+    if (Number(form.workersNeeded) !== Number(job.workersNeeded)) {
+      changes.worker_slots = Number(form.workersNeeded);
+    }
+    setIfChanged("job_start_date", form.jobStartDate, job.jobStartDate);
+    setIfChanged("job_end_date", form.jobEndDate || null, job.jobEndDate || null);
+    setIfChanged(
+      "estimated_working_days",
+      form.estimatedWorkingDays ? parseInt(form.estimatedWorkingDays, 10) : null,
+      job.estimatedWorkingDays ?? null,
+    );
+    setIfChanged("geographic_boundary", form.geographicBoundary, job.geographicBoundary || "1km");
+    // The backend moves the date in the "One-Time starting ..." schedule line
+    // itself when the start date changes.
+    if (Object.keys(changes).length === 0) {
+      return job;
+    }
+    const response = await apiRequest(`jobs/${job.id}/`, { method: "PATCH", auth: true, body: changes });
+    const data = await readResponseData(response);
+    if (!response.ok) {
+      throw new Error(getApiErrorMessage(data, "Unable to save this job."));
+    }
+    const updatedJob = normalizeBackendJob(data);
+    if (updatedJob) {
+      setPostedJobs((prev) => prev.map((item) => (item.id === updatedJob.id ? updatedJob : item)));
+    }
+    if ("geographic_boundary" in changes) {
+      // A wider or narrower radius changes who matches.
+      refreshRecommendedWorkers(job.id, "ai");
+    }
+    window.alert("Job updated.");
+    return updatedJob;
+  }
+  // AGENTS.md II.A: workers rate households too. The web form for this sat in
+  // a panel nothing opened, and only appeared once the household had
+  // reviewed first; this is reached from the completed job itself.
+  function handleWorkerRateHousehold(job, ratingValue, feedbackText = "") {
+    const rating = parseFloat(ratingValue);
+    if (!currentWorker || !job?.id || !job.householdUsername) {
+      window.alert("Unable to tell which household this job was for. Please refresh and try again.");
+      return Promise.resolve(false);
+    }
+    if (!(rating >= 1 && rating <= 5)) {
+      window.alert("Please choose a rating from 1 to 5 stars.");
+      return Promise.resolve(false);
+    }
+    return runExclusive(`worker-rate-household-${job.id}`, async () => {
+      try {
+        const response = await apiRequest("reviews/", {
+          method: "POST",
+          auth: true,
+          body: {
+            target_username: job.householdUsername,
+            job_id: job.id,
+            rating,
+            feedback: String(feedbackText || "").trim(),
+          },
+        });
+        const data = await readResponseData(response);
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, "Unable to rate the household."));
+        }
+        await refreshReviewsFromBackend();
+        await refreshNotificationsFromBackend();
+        window.alert("Thanks. Your rating was sent to the household anonymously.");
+        return true;
+      } catch (error) {
+        await refreshReviewsFromBackend();
+        window.alert(error.message || "Unable to rate the household. Please try again.");
+        return false;
+      }
+    });
+  }
   function handleHouseholdJobSubmit(event) {
     event.preventDefault();
     if (!currentUser || currentUser.role !== "household") {
@@ -1486,46 +1553,29 @@ export function useGawaGoActions({
       window.alert("Please complete the service type, job start date, and number of workers needed.");
       return;
     }
+    // The job site is a pin the household confirmed (a device fix, or a
+    // spot pinned or dragged to on the map). Falling back to a geocoded
+    // address or the profile's point used to post jobs up to 13 km from the
+    // real site, with a 1 km default matching radius.
+    if (!isConfirmedJobPin(householdJobLocationPreview)) {
+      window.alert(
+        "Pin the job site before posting: use your current location, drag the pin on the map, or pin it manually.",
+      );
+      return;
+    }
     if (isSubmittingJobRef.current) {
       // Ignore a double-click/double-submit rather than posting the job
-      // twice -- resolveLocationCoordinates below is a multi-second geocode
-      // round-trip, leaving a wide window for a second click to land before
-      // the first POST resolves.
+      // twice while the first POST is still in flight.
       return;
     }
     isSubmittingJobRef.current = true;
     setIsSubmittingJob(true);
     (async () => {
      try {
-      const resolvedLocation =
-        householdJobLocationPreview ||
-        (await resolveLocationCoordinates(householdJobForm.barangay, householdJobForm.streetAddress, true));
+      const resolvedLocation = householdJobLocationPreview;
       const scheduledLabel = `${formatScheduleLabel(householdJobForm.scheduleType)}${householdJobForm.jobStartDate ? ` starting ${householdJobForm.jobStartDate}` : ""}`;
-      const resolvedLatitude =
-        resolvedLocation?.latitude ??
-        householdJobCoordinates?.latitude ??
-        currentUser?.profile?.latitude ??
-        currentHousehold?.latitude ??
-        null;
-      const resolvedLongitude =
-        resolvedLocation?.longitude ??
-        householdJobCoordinates?.longitude ??
-        currentUser?.profile?.longitude ??
-        currentHousehold?.longitude ??
-        null;
-      if (resolvedLatitude == null || resolvedLongitude == null) {
-        window.alert(
-          "Location is required before posting a job. Click 'Use My Current Location' or complete the barangay and street fields so we can estimate the map location first.",
-        );
-        return;
-      }
-      if (resolvedLocation) {
-        setHouseholdJobLocationPreview(resolvedLocation);
-        setHouseholdJobCoordinates({
-          latitude: resolvedLatitude,
-          longitude: resolvedLongitude,
-        });
-      }
+      const resolvedLatitude = resolvedLocation.latitude;
+      const resolvedLongitude = resolvedLocation.longitude;
       const distanceKmMap = { '1km': 1.0, '2km': 2.0, '5km': 5.0, '10km': 10.0, 'unlimited': 999999 };
       const geoBoundary = householdJobForm.geographicBoundary || '1km';
       const payload = {
@@ -1535,12 +1585,13 @@ export function useGawaGoActions({
         schedule: scheduledLabel,
         schedule_type: householdJobForm.scheduleType,
         description: householdJobForm.description.trim(),
-        // The geocoder only supplies coordinates when a barangay was chosen:
-        // its label is often just "Tayabas, QZ, Philippines", which drops the
-        // barangay that workers and the demand-by-barangay analytics rely on.
-        location_label: householdJobForm.barangay.trim()
-          ? formatLocation(householdJobForm.barangay.trim(), householdJobForm.streetAddress.trim())
-          : resolvedLocation?.locationLabel || formatLocation("", householdJobForm.streetAddress.trim()),
+        // Built from the form, which the pin keeps in step, so it always
+        // names the barangay that workers and the demand-by-barangay
+        // analytics rely on.
+        location_label: formatLocation(
+          householdJobForm.barangay.trim() || resolvedLocation.barangay || "",
+          householdJobForm.streetAddress.trim(),
+        ),
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         service_rate: householdJobForm.offeredRate,
@@ -1838,6 +1889,8 @@ export function useGawaGoActions({
     handleHouseholdReviewSubmit,
     handleWorkerFeedbackSubmit,
     handleWorkerFeedbackForReviewSubmit,
+    handleWorkerRateHousehold,
+    handleUpdateJob,
     handleHouseholdJobSubmit,
     handleConfirmJobCompleted,
     handleAdminApproveVerification,

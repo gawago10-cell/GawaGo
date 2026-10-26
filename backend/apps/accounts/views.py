@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 
 from django.contrib.auth import authenticate
@@ -5,7 +6,6 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.core.mail import BadHeaderError
 from django.db import IntegrityError, transaction, models
 from django.http import FileResponse, Http404
 from django.utils import timezone
@@ -69,6 +69,8 @@ from apps.accounts.services import (
 from apps.common.authentication import create_jwt_token, decode_jwt_token, revoke_token
 from apps.common.permissions import IsPlatformAdmin, IsPlatformSuperAdmin, is_platform_admin, is_platform_superadmin
 from apps.reviews.services import assign_due_default_worker_ratings_on_read
+
+logger = logging.getLogger(__name__)
 
 
 def get_account_role(user, profile=None):
@@ -427,9 +429,17 @@ class ForgotPasswordRequestView(APIView):
         reset_request, token = create_password_reset_request(user)
         try:
             send_password_reset_email(user, token)
-        except (BadHeaderError, OSError, ValueError) as exc:
+        except Exception:
+            # Any backend failure (SMTP refusal, Brevo rejecting the key, no
+            # credentials at all) is the same to the user: the code did not
+            # go out. The Brevo backend raises RuntimeError, which used to
+            # escape as a 500, and the SMTP error text was shown verbatim.
+            logger.exception("Password reset email to user %s could not be sent.", user.pk)
             reset_request.delete()
-            return Response({"detail": f"Unable to send reset code: {exc}"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": "We couldn't send the reset code right now. Try again later or contact support."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return sent
 
 

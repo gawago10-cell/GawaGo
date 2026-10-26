@@ -8,6 +8,16 @@ export function formatCurrency(amount) {
   return `PHP ${value.toFixed(2)}`;
 }
 
+/** A worker's disclosed rate, or "Not disclosed": an unset rate used to
+ * show as "PHP 0.00", which reads as a free service (AGENTS.md II.B). */
+export function formatWorkerRate(amount, suffix = "") {
+  const value = Number(amount);
+  if (amount === null || amount === undefined || amount === "" || !Number.isFinite(value) || value <= 0) {
+    return "Not disclosed";
+  }
+  return `${formatCurrency(value)}${suffix}`;
+}
+
 export function formatRate(amount, rateType) {
   return `${formatCurrency(amount)} / ${rateType || "Per Day"}`;
 }
@@ -40,6 +50,15 @@ export function formatScheduleLabel(scheduleType) {
     return "";
   }
   return scheduleType.replace(/\s*-\s*/g, "-");
+}
+
+/** A backend timestamp ("2026-10-26T02:10:09.887+08:00") in the app's
+ * date style; anything that is not one (e.g. "Recently") is shown as is. */
+export function formatTimestamp(value, fallback = "") {
+  if (!value) {
+    return fallback;
+  }
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(value)) ? formatDateTime(value) : String(value);
 }
 
 export function formatDateTime(dateValue, timeValue) {

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { applyTwoFingerPan } from "../utils/mapGestures";
 import { frameMapToTayabas, isInsideTayabasCity } from "../utils/tayabasMapFrame";
+import { isConfirmedJobPin } from "../hooks/useHouseholdJobLocation";
 
 const OUTSIDE_TAYABAS_MESSAGE = "GawaGo serves Tayabas City only. Please pin a spot inside the red boundary.";
 
@@ -18,19 +19,22 @@ export default function HouseholdJobMapPanel({
   const mapContainerRef = useRef(null);
   const placeHouseholdJobPinRef = useRef(placeHouseholdJobPin);
   const [mapWarning, setMapWarning] = useState("");
+  const pinConfirmed = isConfirmedJobPin(householdJobLocationPreview);
   const heading =
     householdJobLocationPreview?.source === "device"
-      ? "Current Location Preview"
-      : householdJobLocationPreview?.source === "address"
-        ? "Address-based Preview"
-        : householdJobLocationPreview?.source === "manual"
-          ? "Manual Pin Preview"
+      ? "Current Location"
+      : householdJobLocationPreview?.source === "manual"
+        ? "Pinned Job Site"
+        : householdJobLocationPreview?.source === "barangay"
+          ? "Barangay Centre (not the job site yet)"
           : "Tayabas City Map";
-  const title = householdJobLocationPreview?.mapUrl
-    ? "Check the saved job pin before posting"
+  const title = pinConfirmed
+    ? "Check the job pin before posting"
     : householdJobMapMode === "manual"
-      ? "Manual pin mode is active"
-      : "The map shows Tayabas City, then drops a pin after location capture";
+      ? "Click the map where the job is"
+      : householdJobLocationPreview
+        ? "Move the pin to the job site"
+        : "Pin the job site on the map";
   const hasCoordinates = householdJobCoordinates?.latitude != null && householdJobCoordinates?.longitude != null;
   const warning = mapWarning || householdJobLocationPreview?.warning || "";
 
@@ -172,10 +176,10 @@ export default function HouseholdJobMapPanel({
         <h3 className="household-job-map-title mb-2">{title}</h3>
         <p className="small text-muted mb-2">
           {householdJobLocationPreview?.locationLabel ||
-            "Use your current location or complete the address fields to place the job on the map."}
+            "Choose the barangay, then pin the job site on the map or use your current location."}
         </p>
         <p className="small mb-2 household-job-map-coords">
-          {householdJobLocationPreview?.latitude != null && householdJobLocationPreview?.longitude != null
+          {pinConfirmed
             ? `Latitude: ${householdJobLocationPreview.latitude}, Longitude: ${householdJobLocationPreview.longitude}`
             : "No confirmed map pin yet."}
         </p>
@@ -184,7 +188,7 @@ export default function HouseholdJobMapPanel({
             ? `Reported device accuracy: about ${Math.round(householdJobLocationPreview.accuracy)} meters`
             : householdJobMapMode === "manual"
               ? "Click or drag anywhere inside the red Tayabas City boundary to set the exact job location, then review the auto-filled address fields."
-              : "Map opens on Tayabas City and adds a pin after you confirm location."}
+              : "Drag the pin, or turn on manual pinning and click the map, to set the exact job site."}
         </p>
         <div className="household-job-map-frame">
           <div
@@ -207,15 +211,15 @@ export default function HouseholdJobMapPanel({
           </div>
           <p className="form-text mb-0 household-location-helper">
             {householdJobMapMode === "manual"
-              ? "Manual pin mode is active. Click on the map to place the exact job location and auto-fill the address."
+              ? "Manual pin mode is active. Click on the map to place the exact job location."
               : hasCoordinates
                 ? `Current coordinates saved for this job: ${householdJobCoordinates.latitude}, ${householdJobCoordinates.longitude}`
-                : "Capture your current browser location or pin the exact job location on the map."}
+                : "A job needs a confirmed pin: use your current location, drag the pin, or pin it on the map."}
           </p>
         </div>
         {warning && <p className="small mb-2 household-job-map-warning">{warning}</p>}
         <p className="small text-muted mt-2 mb-0">
-          Geocoding uses OpenRouteService, while the visual map preview is rendered with OpenStreetMap.
+          Street names come from OpenRouteService; the map is OpenStreetMap.
         </p>
       </div>
     </div>

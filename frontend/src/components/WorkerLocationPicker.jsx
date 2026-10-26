@@ -1,58 +1,80 @@
 import React, { useEffect, useRef, useState } from "react";
 import { TAYABAS_CITY_CENTER } from "../constants/appConstants";
-import { buildCoordinateLocation, getCurrentCoordinates, reverseGeocodeCoordinates } from "../utils/locationServices";
+import {
+  describeGpsAccuracy,
+  isAutoFilledStreetAddress,
+  OUTSIDE_TAYABAS_GPS_MESSAGE,
+  requestCurrentCoordinates,
+  reverseGeocodeCoordinates,
+} from "../utils/locationServices";
 import { getBarangayCenter } from "../utils/locationUtils";
 import { applyTwoFingerPan } from "../utils/mapGestures";
 import { frameMapToTayabas, isInsideTayabasCity } from "../utils/tayabasMapFrame";
 
 const OUTSIDE_TAYABAS_MESSAGE = "GawaGo serves Tayabas City only. Please pin a spot inside the red boundary.";
 
-export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets, compact = false }) {
+export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets, compact = false, error = "" }) {
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const [manualMode, setManualMode] = useState(false);
   const [warning, setWarning] = useState("");
+  const [locating, setLocating] = useState(false);
   const hasCoordinates = form?.latitude != null && form?.longitude != null;
 
-  const updateFormFromLocation = (location, source = "manual") => {
-    if (!location?.latitude || !location?.longitude) {
-      return;
-    }
-    setForm((prev) => ({
-      ...prev,
-      barangay: location.barangay || prev.barangay,
-      streetAddress: location.streetAddress || prev.streetAddress,
-      latitude: location.latitude,
-      longitude: location.longitude,
-      locationLabel: location.locationLabel || "",
-      locationSource: source,
-      locationWarning: location.warning || "",
-      locationAccuracy: location.accuracy || "",
-    }));
-  };
-
-  const resolvePoint = async (latitude, longitude, source = "manual") => {
+  // The point the worker chose is kept exactly; the lookup only names it. A
+  // street the worker typed stays, and the barangay follows the pin, with a
+  // note when that changes what they had picked.
+  const resolvePoint = async (latitude, longitude, source = "manual", accuracy = null) => {
     let location = null;
     try {
       location = await reverseGeocodeCoordinates(latitude, longitude, form.barangay, form.streetAddress);
     } catch {
       location = null;
     }
-    updateFormFromLocation(
-      location || buildCoordinateLocation(latitude, longitude, form.barangay, form.streetAddress, source),
-      source,
-    );
+    const notes = [];
+    if (location?.barangay && form.barangay && location.barangay !== form.barangay) {
+      notes.push(`The pin is in ${location.barangay}, so your barangay was changed from ${form.barangay}.`);
+    }
+    if (source === "device") {
+      const accuracyNote = describeGpsAccuracy(accuracy);
+      if (accuracyNote) notes.push(accuracyNote);
+    }
+    setForm((prev) => {
+      const keepTypedStreet = !isAutoFilledStreetAddress(prev.streetAddress);
+      const barangay = location?.barangay || prev.barangay;
+      const streetAddress = keepTypedStreet ? prev.streetAddress : location?.streetAddress || prev.streetAddress;
+      return {
+        ...prev,
+        barangay,
+        streetAddress,
+        latitude: Number(Number(latitude).toFixed(7)),
+        longitude: Number(Number(longitude).toFixed(7)),
+        locationLabel: [barangay, String(streetAddress || "").trim()].filter(Boolean).join(", "),
+        locationSource: source,
+        locationWarning: notes.join(" "),
+        locationAccuracy: source === "device" && accuracy ? accuracy : "",
+      };
+    });
   };
 
   const useCurrentLocation = async () => {
-    const coordinates = await getCurrentCoordinates();
-    if (!coordinates) {
-      setWarning("Browser location is unavailable. Pin your location manually on the map.");
-      return;
+    setLocating(true);
+    try {
+      const { coordinates, message } = await requestCurrentCoordinates();
+      if (!coordinates) {
+        setWarning(message);
+        return;
+      }
+      if (!isInsideTayabasCity(coordinates.latitude, coordinates.longitude)) {
+        setWarning(OUTSIDE_TAYABAS_GPS_MESSAGE);
+        return;
+      }
+      setWarning("");
+      await resolvePoint(coordinates.latitude, coordinates.longitude, "device", coordinates.accuracy);
+    } finally {
+      setLocating(false);
     }
-    await resolvePoint(coordinates.latitude, coordinates.longitude, "device");
-    setWarning("");
   };
 
   useEffect(() => {
@@ -80,7 +102,7 @@ export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets,
         dragging: true,
         touchZoom: true,
         tap: false,
-      }).setView(center, hasCoordinates ? 15 : 12);
+      }).setView(center, hasCoordinates ? 15 : form?.barangay ? 14 : 12);
       mapRef.current = map;
       applyTwoFingerPan(map);
       const frame = frameMapToTayabas(map, L);
@@ -139,16 +161,23 @@ export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets,
     };
   }, [form?.barangay, form?.latitude, form?.longitude, hasCoordinates, loadLeafletAssets, manualMode]);
 
+  const note = warning || form?.locationWarning;
   return (
-    <div className={`worker-location-picker ${compact ? "compact" : ""}`}>
+    <div
+      className={`worker-location-picker ${compact ? "compact" : ""}${error ? " is-invalid" : ""}`}
+      data-field="location"
+      tabIndex={-1}
+      aria-invalid={error ? "true" : undefined}
+      aria-describedby={error ? "register-error-location" : undefined}
+    >
       <div className="worker-location-picker-head">
-        <strong>Exact Worker Location</strong>
-        <span>{hasCoordinates ? "Location ready" : "Pin required for accurate distance"}</span>
+        <strong>Exact Worker Location <span className="required-mark" aria-hidden="true">*</span></strong>
+        <span>{hasCoordinates ? "Location pinned" : "Pin required"}</span>
       </div>
       <div className="worker-location-picker-map" ref={mapNodeRef} />
       <div className="worker-location-picker-actions">
-        <button className="btn btn-primary btn-sm" type="button" onClick={useCurrentLocation}>
-          Use My Current Location
+        <button className="btn btn-primary btn-sm" type="button" onClick={useCurrentLocation} disabled={locating}>
+          {locating ? "Finding your location..." : "Use My Current Location"}
         </button>
         <button
           className={`btn btn-outline-secondary btn-sm ${manualMode ? "active" : ""}`}
@@ -160,12 +189,13 @@ export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets,
       </div>
       <p className="worker-location-picker-note">
         {hasCoordinates
-          ? `Saved coordinates: ${form.latitude}, ${form.longitude}`
-          : "Use browser location or click the map so households see accurate distance and routes."}
+          ? `Pinned at ${form.latitude}, ${form.longitude}. Drag the pin to adjust it.`
+          : "Use your current location or pin the map. Households see your distance from this point."}
       </p>
-      {(warning || form?.locationWarning) && (
-        <p className="worker-location-picker-warning">{warning || form.locationWarning}</p>
+      {error && (
+        <div className="invalid-feedback d-block" id="register-error-location">{error}</div>
       )}
+      {note && <p className="worker-location-picker-warning">{note}</p>}
     </div>
   );
 }

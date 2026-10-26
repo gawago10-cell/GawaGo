@@ -22,7 +22,7 @@ import {
   ANALYTICS_CHART_COLORS,
   PHILIPPINES_MAP_CENTER,
 } from "../constants/appConstants";
-import { formatCurrency, formatTimeAgo, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
+import { formatCurrency, formatTimeAgo, formatTimestamp, formatWorkerRate, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
 import {
   createAdminAccount,
@@ -553,6 +553,7 @@ export default function SuperAdminDashboardView({
                 <AdminComplaintsQueue
                   currentUser={currentUser}
                   postedJobs={postedJobs}
+                  refreshProfilesFromBackend={refreshProfilesFromBackend}
                   registeredHouseholds={registeredHouseholds}
                   registeredWorkers={registeredWorkers}
                 />
@@ -605,7 +606,7 @@ export default function SuperAdminDashboardView({
                                 <br />
                                 <span className="small text-muted">@{request.workerUsername}</span>
                               </td>
-                              <td>{request.submittedAt || "Recently"}</td>
+                              <td>{formatTimestamp(request.submittedAt, "Recently")}</td>
                               <td>
                                 {[request.primaryIdName || "Primary ID", request.secondaryDocName || "Supporting Doc"]
                                   .filter(Boolean)
@@ -649,7 +650,7 @@ export default function SuperAdminDashboardView({
                             </div>
                           </div>
                           <p className="superadmin-verification-submitted">
-                            <span>Submitted:</span> {verificationModalRequest.submittedAt || "Recently"}
+                            <span>Submitted:</span> {formatTimestamp(verificationModalRequest.submittedAt, "Recently")}
                           </p>
                         </header>
                         <div className="superadmin-verification-modal-body">
@@ -685,9 +686,7 @@ export default function SuperAdminDashboardView({
                               <div>
                                 <strong>Rate</strong>
                                 <span>
-                                  {verificationModalWorkerDetails?.dailyRate
-                                    ? `${formatCurrency(verificationModalWorkerDetails.dailyRate)}/day`
-                                    : "Not set"}
+                                  {formatWorkerRate(verificationModalWorkerDetails?.dailyRate, "/day")}
                                 </span>
                               </div>
                               <div>

@@ -10,6 +10,7 @@ export function useGawaGoDomEffects({
   selectedVerificationRequestId,
   setCurrentUser,
   setHouseholdJobForm,
+  setLoginError,
   setLoginForm,
   setSelectedJobId,
   setSelectedVerificationRequestId,
@@ -80,6 +81,9 @@ export function useGawaGoDomEffects({
         });
         setView("login");
         if (message) {
+          // Also kept on the login form: a toast alone could vanish before a
+          // suspended user read why they were signed out.
+          setLoginError?.(message);
           window.alert(message);
         }
       };

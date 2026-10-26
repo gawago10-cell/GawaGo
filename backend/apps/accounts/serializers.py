@@ -10,6 +10,8 @@ from rest_framework import serializers
 
 from apps.common.fields import RoundedCoordinateField
 from apps.common.sanitize import sanitize_text
+from apps.common.skills import is_other_placeholder
+from apps.common.tayabas_boundary import is_inside_tayabas
 from apps.common.uploads import (
     DOCUMENT_EXTENSIONS,
     MAX_DOCUMENT_BYTES as MAX_DOCUMENT_UPLOAD_BYTES,
@@ -38,14 +40,12 @@ ALLOWED_DOCUMENT_EXTENSIONS = DOCUMENT_EXTENSIONS
 MAX_DOCUMENT_BYTES = MAX_DOCUMENT_UPLOAD_BYTES
 
 
-# Tayabas City sits at roughly 13.93-14.12 N, 121.50-121.75 E. The box is
-# padded well past the city limits so a pin dropped just outside a barangay
-# boundary still saves, while coordinates from another province -- or the
-# 0,0 and 999,999 that a malformed client sends -- are refused. The platform
-# serves one city (AGENTS.md V), so a job in New York is bad data, not an
-# edge case.
-TAYABAS_LATITUDE_RANGE = (13.80, 14.25)
-TAYABAS_LONGITUDE_RANGE = (121.35, 121.90)
+# The platform serves one city (AGENTS.md V). Locations used to be checked
+# against a box padded well past the city, which also took in Lucena,
+# Lucban, Sariaya and Pagbilao; the check is now the city's own boundary, the
+# same outline the web map draws (apps.common.tayabas_boundary). Coordinates
+# from another town -- or the 0,0 and 999,999 a malformed client sends -- are
+# refused.
 
 
 def validate_tayabas_coordinates(attrs):
@@ -57,11 +57,7 @@ def validate_tayabas_coordinates(attrs):
         )
     if latitude is None or longitude is None:
         return attrs
-    latitude = float(latitude)
-    longitude = float(longitude)
-    within_latitude = TAYABAS_LATITUDE_RANGE[0] <= latitude <= TAYABAS_LATITUDE_RANGE[1]
-    within_longitude = TAYABAS_LONGITUDE_RANGE[0] <= longitude <= TAYABAS_LONGITUDE_RANGE[1]
-    if not (within_latitude and within_longitude):
+    if not is_inside_tayabas(latitude, longitude):
         raise serializers.ValidationError(
             {"location": "Pick a location inside Tayabas City and its barangays."}
         )
@@ -88,17 +84,25 @@ def validate_worker_profile_requirements(attrs, *, role, profile=None):
         return attrs
 
     skills = attrs.get("skills")
+    if skills is None and profile is None:
+        # Registration: a worker with no skills can never be matched, and the
+        # check below only ran when the field was sent, so leaving it out
+        # created exactly that worker.
+        raise serializers.ValidationError({"skills": "List at least one skill."})
     if skills is not None:
         # "Cooking", "cooking" and "COOKING" are one skill, and a worker with
         # none cannot be matched to anything, so an empty list is not a valid
         # saved state.
         # Same notion of "one skill" as the portfolio sync (skill_key):
         # case and repeated spaces don't make a different skill.
+        # "Other" is the clients' choice for typing a skill outside the
+        # catalog, not a skill: saved as one, it took a slot and lowered the
+        # worker's match score on every job.
         deduplicated = []
         seen = set()
         for skill in skills:
             name = " ".join(str(skill).split())
-            if not name or name.casefold() in seen:
+            if not name or is_other_placeholder(name) or name.casefold() in seen:
                 continue
             seen.add(name.casefold())
             deduplicated.append(name)
@@ -509,6 +513,13 @@ class WorkerSkillSerializer(serializers.ModelSerializer):
         model = WorkerSkill
         fields = ["id", "skill_name", "proficiency", "average_rating", "rating_count", "created_at"]
         read_only_fields = ["id", "average_rating", "rating_count", "created_at"]
+
+    def validate_skill_name(self, value):
+        # Same rule as the profile skill list: "Other" stands for a typed
+        # skill and is never a skill itself.
+        if is_other_placeholder(value):
+            raise serializers.ValidationError("Type the skill's name instead of \"Other\".")
+        return value
 
 
 class WorkerCertificationSerializer(serializers.ModelSerializer):

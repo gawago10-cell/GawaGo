@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { formatCurrency, getDisplayName, getHouseholdInitials } from "../utils/formatters";
+import { formatWorkerRate, getDisplayName, getHouseholdInitials } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
 import { applyTwoFingerPan } from "../utils/mapGestures";
 import { frameMapToTayabas } from "../utils/tayabasMapFrame";
@@ -245,7 +245,7 @@ export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHir
                   <div className="worker-jobs-map-job-title-row">
                     <h3>{(worker.skills || []).slice(0, 2).join(", ") || "No skills listed"}</h3>
                     <p>
-                      <strong>{formatCurrency(worker.dailyRate)}</strong>
+                      <strong>{formatWorkerRate(worker.dailyRate)}</strong>
                       <span>/day</span>
                     </p>
                   </div>

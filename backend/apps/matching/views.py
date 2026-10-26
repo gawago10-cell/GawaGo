@@ -55,9 +55,13 @@ class RecommendedWorkersView(APIView):
     road distance) and the content-based AI score with the same
     explainability breakdown the worker-facing recommendations expose.
 
-    `rank` selects the ordering only: the default "smart" preserves the
+    `rank` selects the ordering: the default "smart" preserves the
     documented Smart Matching priority order, and "ai" re-ranks by ai_score
-    for the post-a-job recommendation screen.
+    for the post-a-job recommendation screen. The AI view leaves out
+    workers with no skill fit at all: AGENTS.md I.C weights skill over
+    distance, and an electrician listed as an "AI match" for a cleaning job
+    because he lives nearby read as a recommendation. They stay in the
+    Smart Matching list, which ranks everyone inside the radius.
     """
 
     permission_classes = [IsAuthenticated]
@@ -100,14 +104,20 @@ class RecommendedWorkersView(APIView):
             .not_suspended()
         )
         match_results = build_match_results(job, workers)
+        # Both scores on every result (AGENTS.md I.C), whichever order was
+        # asked for. The Smart order used to carry placeholder zeros to skip
+        # this pass, which read as "0% match"; the routes it needs are the
+        # ones build_match_results just resolved, so it is now cheap.
+        results = _merge_ai_scores(job, workers, match_results)
         if rank == RANK_AI:
-            # Only Smart Matching's "AI Matched Workers" view reads the score
-            # breakdown, so the (expensive, content-based) scoring pass only
-            # runs when that view actually asked for it.
-            results = _merge_ai_scores(job, workers, match_results)
+            # Drop only real skill mismatches. A worker whose skill matches
+            # but who can't be scored (no saved location) stays, at 0 and
+            # last, so the household still sees them.
+            results = [
+                result for result in results
+                if result["skill_similarity"] > 0 or result["matches_skill"]
+            ]
             results.sort(key=lambda result: result["_ai_sort"], reverse=True)
-        else:
-            results = _default_ai_fields(match_results)
         return Response(
             {
                 "job_id": job.id,
@@ -117,20 +127,6 @@ class RecommendedWorkersView(APIView):
                 "results": MatchResultSerializer(results, many=True, context={"request": request}).data,
             }
         )
-
-
-def _default_ai_fields(match_results):
-    """The zero-score defaults _merge_ai_scores() gives an unrankable worker,
-    applied to every result -- for rank=smart, where nothing reads the AI
-    breakdown, so there's no reason to pay for the scoring pass at all.
-    """
-    for result in match_results:
-        result["ai_score"] = 0.0
-        result["skill_similarity"] = 0.0
-        result["skill_contribution"] = 0.0
-        result["proximity_contribution"] = 0.0
-        result["exact_skill_match"] = False
-    return match_results
 
 
 def _merge_ai_scores(job, worker_profiles, match_results):
@@ -151,15 +147,19 @@ def _merge_ai_scores(job, worker_profiles, match_results):
     # is 0.3 / (1 + distance_km), so at 4 decimals it -- or ai_score minus
     # skill_contribution -- gives back the worker's distance to within a few
     # metres, undoing the rounding of distance_km.
-    # The displayed ai_score is the sum of the two rounded terms so the
-    # breakdown still adds up; the unrounded score is kept (unserialized)
-    # so rounding never reorders candidates.
+    # ai_score is the whole score rounded once, exactly as the applicant
+    # card and "Find Jobs for Me" round it. It used to be the sum of the two
+    # rounded parts (0.41 + 0.20 = 0.61 for a 0.6012 pair), so one pair read
+    # 61% here and 60% elsewhere. The proximity part takes the remainder so
+    # the breakdown still adds up. The unrounded score is kept
+    # (unserialized) so rounding never reorders candidates.
     for result in match_results:
         scored = ai_by_worker.get(result["worker_id"])
+        ai_score = round(scored["ai_score"], 2) if scored else 0.0
         skill_contribution = round(scored["skill_contribution"], 2) if scored else 0.0
-        proximity_contribution = round(scored["proximity_contribution"], 2) if scored else 0.0
+        proximity_contribution = round(ai_score - skill_contribution, 2) if scored else 0.0
         result["_ai_sort"] = scored["ai_score"] if scored else 0.0
-        result["ai_score"] = round(skill_contribution + proximity_contribution, 2)
+        result["ai_score"] = ai_score
         result["skill_similarity"] = round(scored["skill_similarity"], 2) if scored else 0.0
         result["skill_contribution"] = skill_contribution
         result["proximity_contribution"] = proximity_contribution

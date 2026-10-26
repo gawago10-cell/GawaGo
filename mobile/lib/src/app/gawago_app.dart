@@ -880,12 +880,15 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
   final _phoneController = TextEditingController();
   final _streetController = TextEditingController();
   final _bioController = TextEditingController();
-  final _hourlyRateController = TextEditingController(text: '0.00');
-  final _dailyRateController = TextEditingController(text: '0.00');
+  // Empty, with "0.00" only as the hint: a pre-filled "0.00" turned a typed
+  // 700 into "0.00700", and an untouched rate was saved as a free service.
+  final _hourlyRateController = TextEditingController();
+  final _dailyRateController = TextEditingController();
   final _yearsController = TextEditingController(text: '0');
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final Set<String> _selectedSkills = {};
+  final _customSkillController = TextEditingController();
 
   String? _barangay;
   LatLng? _selectedLocation;
@@ -907,11 +910,15 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
     _yearsController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _customSkillController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (_isSubmitting) return;
+    final skillsProblem = isWorker
+        ? workerSkillsProblem(_selectedSkills, _customSkillController.text)
+        : null;
     final missing = [
       if (_firstNameController.text.trim().isEmpty) 'first name',
       if (_lastNameController.text.trim().isEmpty) 'last name',
@@ -920,7 +927,7 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
       if (_phoneController.text.trim().isEmpty) 'phone number',
       if (_barangay == null) 'barangay',
       if (_selectedLocation == null) 'map location',
-      if (isWorker && _selectedSkills.isEmpty) 'at least one skill',
+      if (skillsProblem == 'Choose at least one skill.') 'at least one skill',
       if (isWorker &&
           (double.tryParse(_hourlyRateController.text) ?? 0) <= 0 &&
           (double.tryParse(_dailyRateController.text) ?? 0) <= 0)
@@ -929,6 +936,10 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
     ];
     if (missing.isNotEmpty) {
       _showMessage('Please complete: ${missing.join(', ')}.');
+      return;
+    }
+    if (skillsProblem != null) {
+      _showMessage(skillsProblem);
       return;
     }
     if (_passwordController.text != _confirmPasswordController.text) {
@@ -956,7 +967,9 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
         hourlyRate: _hourlyRateController.text,
         dailyRate: _dailyRateController.text,
         yearsExperience: int.tryParse(_yearsController.text.trim()) ?? 0,
-        skills: _selectedSkills.toList(),
+        skills: isWorker
+            ? resolveWorkerSkills(_selectedSkills, _customSkillController.text)
+            : const [],
         latitude: _selectedLocation?.latitude,
         longitude: _selectedLocation?.longitude,
       );
@@ -1098,7 +1111,12 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                   value: _barangay,
                   hint: '--- Select Barangay ---',
                   items: gawagoBarangays,
-                  onChanged: (value) => setState(() => _barangay = value),
+                  // A new barangay moves the map there and drops a pin from
+                  // the old one, so the saved point matches the barangay.
+                  onChanged: (value) => setState(() {
+                    if (value != _barangay) _selectedLocation = null;
+                    _barangay = value;
+                  }),
                 ),
                 const SizedBox(height: 8),
                 const Text(
@@ -1115,6 +1133,7 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                       ? 'Exact Worker Location'
                       : 'Exact Household Location',
                   value: _selectedLocation,
+                  focus: barangayCenter(_barangay),
                   onChanged: (value) =>
                       setState(() => _selectedLocation = value),
                 ),
@@ -1155,6 +1174,7 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                   const SizedBox(height: 18),
                   _SkillsBox(
                     selectedSkills: _selectedSkills,
+                    customSkillController: _customSkillController,
                     onChanged: (skills) => setState(
                       () => _selectedSkills
                         ..clear()
@@ -1428,11 +1448,15 @@ class _WorkerLocationPreview extends StatefulWidget {
     required this.label,
     required this.value,
     required this.onChanged,
+    this.focus,
   });
 
   final String label;
   final LatLng? value;
   final ValueChanged<LatLng> onChanged;
+
+  /// Where the map should look when there is no pin: the chosen barangay.
+  final LatLng? focus;
 
   static const _tayabasCenter = LatLng(14.0253, 121.5929);
 
@@ -1443,6 +1467,15 @@ class _WorkerLocationPreview extends StatefulWidget {
 class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
   final MapController _controller = MapController();
   bool _locating = false;
+
+  @override
+  void didUpdateWidget(covariant _WorkerLocationPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final focus = widget.focus;
+    if (widget.value == null && focus != null && focus != oldWidget.focus) {
+      _controller.move(focus, 15);
+    }
+  }
 
   Future<void> _useCurrentLocation() async {
     setState(() => _locating = true);
@@ -1518,7 +1551,9 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
                 mapController: _controller,
                 options: MapOptions(
                   initialCenter:
-                      widget.value ?? _WorkerLocationPreview._tayabasCenter,
+                      widget.value ??
+                      widget.focus ??
+                      _WorkerLocationPreview._tayabasCenter,
                   initialZoom: 14,
                   onTap: (_, point) => widget.onChanged(point),
                   interactionOptions: const InteractionOptions(
@@ -1692,9 +1727,15 @@ class _MultiLineInput extends StatelessWidget {
 }
 
 class _SkillsBox extends StatefulWidget {
-  const _SkillsBox({required this.selectedSkills, required this.onChanged});
+  const _SkillsBox({
+    required this.selectedSkills,
+    required this.customSkillController,
+    required this.onChanged,
+  });
 
   final Set<String> selectedSkills;
+  // Filled in when "Other" is ticked; the word "Other" is never saved.
+  final TextEditingController customSkillController;
   final ValueChanged<Set<String>> onChanged;
 
   @override
@@ -1778,6 +1819,19 @@ class _SkillsBoxState extends State<_SkillsBox> {
                 .toList(),
           ),
         ),
+        if (widget.selectedSkills.contains(gawagoOtherSkill)) ...[
+          const SizedBox(height: 12),
+          // Same label and field as the rest of the form.
+          const _FormLabel('Your other skill'),
+          const SizedBox(height: 8),
+          KeyedSubtree(
+            key: const ValueKey('register-custom-skill'),
+            child: _TextInput(
+              hint: 'e.g. Masonry',
+              controller: widget.customSkillController,
+            ),
+          ),
+        ],
       ],
     );
   }

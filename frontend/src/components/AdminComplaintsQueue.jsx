@@ -8,6 +8,7 @@ import {
 import { parseLocationLabel } from "../utils/locationUtils";
 import AdminUserHistorySection from "./AdminUserHistorySection";
 import AuthImage from "./AuthImage";
+import SuspendAccountDialog from "./SuspendAccountDialog";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
@@ -34,6 +35,19 @@ const STATUS_META = {
 };
 
 const STATUS_ORDER = ["submitted", "under_review", "resolved", "closed"];
+
+// Mirrors ALLOWED_COMPLAINT_TRANSITIONS in backend/apps/complaints/views.py:
+// forward only, and nothing is settled before it has been under review.
+const NEXT_STATUSES = {
+  submitted: ["under_review"],
+  under_review: ["resolved", "closed"],
+  resolved: ["closed"],
+  closed: [],
+};
+
+function canMoveTo(complaint, nextStatus) {
+  return (NEXT_STATUSES[complaint?.status] || []).includes(nextStatus);
+}
 
 const ROLE_LABELS = {
   household: "Household",
@@ -141,12 +155,18 @@ export default function AdminComplaintsQueue({
   postedJobs = [],
   registeredHouseholds = [],
   registeredWorkers = [],
+  refreshProfilesFromBackend,
 }) {
   const [complaints, setComplaints] = useState(null);
   const [status, setStatus] = useState("loading");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedId, setSelectedId] = useState(null);
-  const [notesDraft, setNotesDraft] = useState("");
+  // Two different audiences: staff notes stay with superadmins, the
+  // resolution is what the person who filed the report reads. One "Notes"
+  // box labelled internal used to be sent as the resolution.
+  const [staffNotesDraft, setStaffNotesDraft] = useState("");
+  const [resolutionDraft, setResolutionDraft] = useState("");
+  const [suspendRequest, setSuspendRequest] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [profileTarget, setProfileTarget] = useState(null);
 
@@ -168,7 +188,8 @@ export default function AdminComplaintsQueue({
 
   function openDetail(complaint) {
     setSelectedId(complaint.id);
-    setNotesDraft(complaint.adminNotes || complaint.resolution || "");
+    setStaffNotesDraft(complaint.adminNotes || "");
+    setResolutionDraft(complaint.resolution || "");
   }
 
   function openUserProfile(username, detail, roleHint) {
@@ -196,25 +217,25 @@ export default function AdminComplaintsQueue({
     }
   }
 
-  async function suspendRespondent(complaint, durationDays) {
-    const durationLabel = durationDays ? `for ${durationDays} days` : "permanently";
-    const confirmed = window.confirm(
-      `Suspend ${complaint.respondentUsername} ${durationLabel}? They will be signed out immediately and cannot log back in until restored.`,
-    );
-    if (!confirmed) return;
-    const reason = window.prompt("Reason for suspending (shown to the user):", "");
-    if (reason === null) return;
+  function suspendRespondent(complaint, durationDays) {
+    setSuspendRequest({ complaint, durationDays });
+  }
 
+  // Throws on failure so the dialog stays open with the server's message.
+  // User Management reads the same accounts, so it is refreshed too rather
+  // than showing the person as Active until a reload.
+  async function confirmSuspend(reason) {
+    const { complaint, durationDays } = suspendRequest;
     setSavingId(complaint.id);
     try {
       const updated = await setComplaintRespondentBlocked(complaint.id, {
         blocked: true,
-        reason: reason || "",
+        reason,
         durationDays,
       });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
-    } catch (error) {
-      window.alert(error.message || "Unable to update this account.");
+      setSuspendRequest(null);
+      refreshProfilesFromBackend?.();
     } finally {
       setSavingId(null);
     }
@@ -225,6 +246,7 @@ export default function AdminComplaintsQueue({
     try {
       const updated = await setComplaintRespondentBlocked(complaint.id, { blocked: false });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
+      refreshProfilesFromBackend?.();
     } catch (error) {
       window.alert(error.message || "Unable to update this account.");
     } finally {
@@ -235,7 +257,7 @@ export default function AdminComplaintsQueue({
   async function saveNotes(complaint) {
     setSavingId(complaint.id);
     try {
-      const updated = await updateComplaintAdmin(complaint.id, { adminNotes: notesDraft.trim() });
+      const updated = await updateComplaintAdmin(complaint.id, { adminNotes: staffNotesDraft.trim() });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
     } catch (error) {
       window.alert(error.message || "Unable to save notes.");
@@ -244,12 +266,22 @@ export default function AdminComplaintsQueue({
     }
   }
 
+  // Resolving or closing answers the filer, so it needs a resolution they
+  // can read; the backend refuses an empty one too.
+  function resolutionMissing() {
+    if (resolutionDraft.trim()) return false;
+    window.alert("Write the resolution the reporter will see first.");
+    return true;
+  }
+
   async function markResolved(complaint) {
+    if (resolutionMissing()) return;
     setSavingId(complaint.id);
     try {
       const updated = await updateComplaintAdmin(complaint.id, {
         status: "resolved",
-        resolution: notesDraft.trim(),
+        resolution: resolutionDraft.trim(),
+        adminNotes: staffNotesDraft.trim(),
       });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
     } catch (error) {
@@ -260,11 +292,13 @@ export default function AdminComplaintsQueue({
   }
 
   async function closeReport(complaint) {
+    if (resolutionMissing()) return;
     setSavingId(complaint.id);
     try {
       const updated = await updateComplaintAdmin(complaint.id, {
         status: "closed",
-        adminNotes: notesDraft.trim(),
+        resolution: resolutionDraft.trim(),
+        adminNotes: staffNotesDraft.trim(),
       });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
     } catch (error) {
@@ -292,7 +326,9 @@ export default function AdminComplaintsQueue({
               ))}
             </select>
           </label>
-          <span className="admin-reports-count-badge">{complaints?.length ?? 0} reports</span>
+          <span className="admin-reports-count-badge">
+            {complaints?.length ?? 0} {(complaints?.length ?? 0) === 1 ? "report" : "reports"}
+          </span>
         </div>
       </div>
 
@@ -394,8 +430,13 @@ export default function AdminComplaintsQueue({
                         className={`admin-report-status-btn ${STATUS_META[option].tone} ${
                           selected.status === option ? "active" : ""
                         }`}
-                        disabled={savingId === selected.id}
-                        onClick={() => applyStatus(selected, option)}
+                        disabled={savingId === selected.id || !canMoveTo(selected, option)}
+                        aria-pressed={selected.status === option}
+                        onClick={() => {
+                          if (option === "resolved") markResolved(selected);
+                          else if (option === "closed") closeReport(selected);
+                          else applyStatus(selected, option);
+                        }}
                       >
                         <i aria-hidden="true" />
                         {STATUS_META[option].label}
@@ -499,12 +540,34 @@ export default function AdminComplaintsQueue({
               </div>
 
               <div className="admin-report-info-card">
-                <p className="admin-report-info-kicker">Notes</p>
+                <label className="admin-report-info-kicker d-block" htmlFor="admin-report-resolution">
+                  Resolution &mdash; the reporter will see this
+                </label>
                 <textarea
+                  id="admin-report-resolution"
                   className="form-control"
                   rows={3}
-                  value={notesDraft}
-                  onChange={(event) => setNotesDraft(event.target.value)}
+                  value={resolutionDraft}
+                  onChange={(event) => setResolutionDraft(event.target.value)}
+                  placeholder="What was decided, in words the reporter can read..."
+                />
+                {selected.status === "submitted" && (
+                  <p className="small text-muted mt-2 mb-0">
+                    Mark the report Under Review before resolving or closing it.
+                  </p>
+                )}
+              </div>
+
+              <div className="admin-report-info-card">
+                <label className="admin-report-info-kicker d-block" htmlFor="admin-report-staff-notes">
+                  Staff notes &mdash; only superadmins see these
+                </label>
+                <textarea
+                  id="admin-report-staff-notes"
+                  className="form-control"
+                  rows={3}
+                  value={staffNotesDraft}
+                  onChange={(event) => setStaffNotesDraft(event.target.value)}
                   placeholder="Internal notes about what action was taken..."
                 />
               </div>
@@ -521,12 +584,12 @@ export default function AdminComplaintsQueue({
                   disabled={savingId === selected.id}
                   onClick={() => saveNotes(selected)}
                 >
-                  Save Notes
+                  Save Staff Notes
                 </button>
                 <button
                   type="button"
                   className="btn admin-report-resolve-btn"
-                  disabled={savingId === selected.id}
+                  disabled={savingId === selected.id || !canMoveTo(selected, "resolved")}
                   onClick={() => markResolved(selected)}
                 >
                   Mark Resolved
@@ -534,7 +597,7 @@ export default function AdminComplaintsQueue({
                 <button
                   type="button"
                   className="btn admin-report-close-btn"
-                  disabled={savingId === selected.id}
+                  disabled={savingId === selected.id || !canMoveTo(selected, "closed")}
                   onClick={() => closeReport(selected)}
                 >
                   Close Report
@@ -647,6 +710,15 @@ export default function AdminComplaintsQueue({
             </div>
           </div>
         </div>
+      )}
+
+      {suspendRequest && (
+        <SuspendAccountDialog
+          username={suspendRequest.complaint.respondentUsername || "this user"}
+          durationDays={suspendRequest.durationDays}
+          onConfirm={confirmSuspend}
+          onCancel={() => setSuspendRequest(null)}
+        />
       )}
     </div>
   );

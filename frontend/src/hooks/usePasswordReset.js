@@ -1,5 +1,5 @@
 import { requestPasswordReset, resetPassword, verifyPasswordResetToken } from "../services/backendDataService";
-import { isValidGmailAddress } from "../utils/locationServices";
+import { isValidEmailAddress } from "../utils/locationServices";
 
 export function usePasswordReset({
   forgotPasswordForm,
@@ -20,8 +20,8 @@ export function usePasswordReset({
   async function handleForgotPasswordEmailSubmit(event) {
     event.preventDefault();
     const email = forgotPasswordForm.email.trim();
-    if (!isValidGmailAddress(email)) {
-      setForgotPasswordError("Please enter a valid Gmail address.");
+    if (!isValidEmailAddress(email)) {
+      setForgotPasswordError("Please enter a valid email address.");
       return;
     }
     setForgotPasswordLoading(true);

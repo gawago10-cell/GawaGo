@@ -7,6 +7,7 @@ from apps.accounts.models import SkillRating
 from apps.accounts.serializers import validate_tayabas_coordinates
 from apps.common.fields import RoundedCoordinateField
 from apps.common.sanitize import sanitize_text
+from apps.common.skills import is_other_placeholder
 from apps.jobs.models import JobApplication, JobImage, JobPosting
 from apps.jobs.privacy import (
     approximate_coordinate,
@@ -18,6 +19,7 @@ from apps.jobs.privacy import (
 )
 from apps.matching.recommendations import score_pair_with_distance
 from apps.matching.services import get_cached_road_route, get_road_route_for_match, smart_match_sort_key
+from apps.jobs.services import job_not_started_message
 from apps.jobs.statuses import get_application_stage, get_job_stage, get_stage_label
 
 
@@ -354,7 +356,13 @@ class JobApplicationSerializer(serializers.ModelSerializer):
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated or obj.worker_id != user.id:
             return False
-        return obj.status == JobApplication.STATUS_HIRED and obj.job.status == JobPosting.STATUS_ASSIGNED
+        # Not before the start date: the request would be refused, so the
+        # clients should not offer it (see job_not_started_message).
+        return (
+            obj.status == JobApplication.STATUS_HIRED
+            and obj.job.status == JobPosting.STATUS_ASSIGNED
+            and not job_not_started_message(obj.job)
+        )
 
     def get_can_review(self, obj):
         request = self.context.get("request")
@@ -534,6 +542,10 @@ class JobPostingSerializer(serializers.ModelSerializer):
         # PATCH sending them used to just drop them with a 200 and no
         # explanation. Reject instead of silently no-op-ing (F11); a wrong
         # pin should be fixed by cancelling and reposting, not edited here.
+        if "required_skill" in attrs and is_other_placeholder(attrs["required_skill"]):
+            raise serializers.ValidationError(
+                {"required_skill": "Type the service you need instead of \"Other\"."}
+            )
         location_keys = {"latitude", "longitude"} & set((self.initial_data or {}).keys())
         if location_keys:
             raise serializers.ValidationError(
@@ -561,6 +573,13 @@ class JobPostingSerializer(serializers.ModelSerializer):
             )
         _reject_past_dates(attrs)
         _validate_job_dates(attrs, instance)
+        # Posting writes the schedule as "<type> starting <date>"; an edit
+        # that moves the start date would otherwise leave the old date there.
+        new_start = attrs.get("job_start_date")
+        if "schedule" not in attrs and new_start and instance.job_start_date and new_start != instance.job_start_date:
+            old_suffix = f"starting {instance.job_start_date.isoformat()}"
+            if (instance.schedule or "").endswith(old_suffix):
+                attrs["schedule"] = instance.schedule[: -len(old_suffix)] + f"starting {new_start.isoformat()}"
         for field in ("title", "job_type", "required_skill", "schedule", "description"):
             if field in attrs:
                 attrs[field] = sanitize_text(attrs[field])
@@ -685,7 +704,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
         application = self.get_current_worker_application_obj(obj)
         if not application or application.status != JobApplication.STATUS_HIRED:
             return False
-        return obj.status == JobPosting.STATUS_ASSIGNED
+        return obj.status == JobPosting.STATUS_ASSIGNED and not job_not_started_message(obj)
 
     def get_can_review(self, obj):
         request = self.context.get("request")
@@ -782,6 +801,12 @@ class JobCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         if not attrs.get("schedule") and not attrs.get("job_start_date"):
             raise serializers.ValidationError({"schedule": "Schedule text or a job start date is required."})
+        # "Other" is the clients' choice for typing a service outside the
+        # catalog; a job "needing Other" can't be matched to any worker.
+        if is_other_placeholder(attrs.get("required_skill")):
+            raise serializers.ValidationError(
+                {"required_skill": "Type the service you need instead of \"Other\"."}
+            )
         _reject_past_dates(attrs)
         validate_tayabas_coordinates(attrs)
         _validate_job_dates(attrs)

@@ -624,23 +624,63 @@ class RecommendedWorkersAiRankingTests(TestCase):
         self.assertEqual(scores["no-location-worker"], 0.0)
         self.assertEqual(results[-1]["worker_username"], "no-location-worker")
 
-    def test_smart_rank_skips_the_ai_scoring_pass_entirely(self):
-        """roadmap audit LOW #38: rank=smart never reads the AI score
-        breakdown, so the (expensive, content-based) scoring pass shouldn't
-        run at all for it -- only for rank=ai, which actually uses it."""
-        self.create_worker_profile("smart-only-worker", ["House Cleaning"])
+    def test_smart_rank_carries_the_same_ai_score_as_the_ai_rank(self):
+        """AGENTS.md I.C: both scores on every result. The Smart order used
+        to send placeholder zeros, which read as "0% match"."""
+        self.create_worker_profile("skilled-worker", ["House Cleaning"])
 
-        with patch("apps.matching.views.get_recommended_workers") as mocked:
-            mocked.return_value = []
-            results = self.fetch_results()["results"]
-        mocked.assert_not_called()
-        self.assertEqual(results[0]["ai_score"], 0.0)
-        self.assertFalse(results[0]["exact_skill_match"])
+        smart = self.fetch_results()["results"][0]
+        ai = self.fetch_results(rank="ai")["results"][0]
 
-        with patch("apps.matching.views.get_recommended_workers") as mocked:
-            mocked.return_value = []
-            self.fetch_results(rank="ai")
-        mocked.assert_called_once()
+        self.assertGreater(smart["ai_score"], 0)
+        self.assertTrue(smart["exact_skill_match"])
+        self.assertEqual(smart["ai_score"], ai["ai_score"])
+        self.assertEqual(smart["skill_contribution"], ai["skill_contribution"])
+
+    def test_worker_list_rounds_the_score_like_the_applicant_card(self):
+        """M2: one pair, one number. The list used to add the two rounded
+        parts (0.41 + 0.20 = 0.61) while the applicant card rounded the
+        whole 0.6012 to 0.60."""
+        from apps.matching.recommendations import get_recommended_workers
+
+        self.create_worker_profile("two-skill-worker", ["House Cleaning", "Laundry"])
+        result = self.fetch_results(rank="ai")["results"][0]
+        profile = UserProfile.objects.get(user__username="two-skill-worker")
+        raw = get_recommended_workers(self.job, [profile])[0]
+
+        self.assertEqual(result["ai_score"], round(raw["ai_score"], 2))
+        self.assertAlmostEqual(
+            result["skill_contribution"] + result["proximity_contribution"], result["ai_score"], places=6
+        )
+
+    def test_ai_view_leaves_out_workers_with_no_skill_fit(self):
+        self.create_worker_profile("skilled-worker", ["House Cleaning"])
+        self.create_worker_profile("electrician-next-door", ["Electrical Work"])
+
+        ai_names = [item["worker_username"] for item in self.fetch_results(rank="ai")["results"]]
+        smart_names = [item["worker_username"] for item in self.fetch_results()["results"]]
+
+        self.assertEqual(ai_names, ["skilled-worker"])
+        self.assertIn("electrician-next-door", smart_names)
+
+    def test_scoring_does_not_route_workers_already_outside_the_radius(self):
+        """Road distance is never shorter than straight-line, so the AI pass
+        skips routing for anyone outside the radius as the crow flies, the
+        same shortcut Smart Matching takes."""
+        self.job.geographic_boundary = "1km"
+        self.job.max_distance_km = 1.0
+        self.job.save(update_fields=["geographic_boundary", "max_distance_km"])
+        self.create_worker_profile("far-away-worker", ["House Cleaning"], latitude="14.0700000", longitude="121.6200000")
+        calls = []
+
+        def counting_route(lat1, lon1, lat2, lon2):
+            calls.append((lat2, lon2))
+            return self.fake_road_route(lat1, lon1, lat2, lon2)
+
+        with patch("apps.matching.services.fetch_road_route", counting_route):
+            response = self.client.get(reverse("recommended-workers"), {"job_id": self.job.id, "rank": "ai"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [])
 
 
 JOB_SITE = ("13.9622745", "121.5632841")

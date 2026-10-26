@@ -1527,6 +1527,50 @@ class JobLifecycleTransitionTests(TestCase):
         self.assertEqual(notification.related_application_id, application.id)
         self.assertTrue(notification.requires_action)
 
+    def test_a_job_cannot_be_completed_before_its_start_date(self):
+        # AGENTS.md II.A: the review gate exists to stop ratings for work
+        # that never happened; a job starting tomorrow was marked done,
+        # confirmed and reviewed today.
+        from django.utils import timezone
+
+        self.apply_as_worker()
+        application = JobApplication.objects.get(job=self.job, worker=self.worker)
+        self.send_hire_request(application)
+        self.decide_hire_request(application, "accept")
+        tomorrow = timezone.localdate() + timezone.timedelta(days=1)
+        JobPosting.objects.filter(pk=self.job.pk).update(job_start_date=tomorrow)
+
+        self.client.force_authenticate(user=self.worker)
+        detail = self.client.get(reverse("job-detail", args=[self.job.id]))
+        self.assertFalse(detail.data["can_request_completion"])
+        request = self.client.post(
+            reverse("job-request-completion", args=[self.job.id]),
+            {"note": "Done early."},
+            format="json",
+        )
+        self.assertEqual(request.status_code, 400)
+        self.assertIn("starts on", request.data["detail"])
+
+        self.client.force_authenticate(user=self.household)
+        confirm = self.client.patch(
+            reverse("job-detail", args=[self.job.id]),
+            {"status": JobPosting.STATUS_COMPLETED},
+            format="json",
+        )
+        self.assertEqual(confirm.status_code, 400)
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, JobPosting.STATUS_ASSIGNED)
+
+        # From the start date on, completion works as before.
+        JobPosting.objects.filter(pk=self.job.pk).update(job_start_date=timezone.localdate())
+        self.client.force_authenticate(user=self.worker)
+        allowed = self.client.post(
+            reverse("job-request-completion", args=[self.job.id]),
+            {"note": "Done."},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, 200)
+
     def test_household_confirms_completion_transition(self):
         self.apply_as_worker()
         application = JobApplication.objects.get(job=self.job, worker=self.worker)
@@ -1990,6 +2034,30 @@ class JobLifecycleSafeguardTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_open_job_edit_moves_the_schedule_date_and_radius(self):
+        # The clients' Edit Job screen sends only what changed; the
+        # "<type> starting <date>" schedule line follows a new start date.
+        from django.utils import timezone
+
+        start = timezone.localdate() + timezone.timedelta(days=2)
+        new_start = start + timezone.timedelta(days=3)
+        JobPosting.objects.filter(pk=self.job.pk).update(
+            job_start_date=start, schedule=f"One-Time starting {start.isoformat()}"
+        )
+
+        response = self.client.patch(
+            reverse("job-detail", args=[self.job.id]),
+            {"job_start_date": new_start.isoformat(), "geographic_boundary": "5km", "service_rate": "650.00"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.schedule, f"One-Time starting {new_start.isoformat()}")
+        self.assertEqual(self.job.geographic_boundary, "5km")
+        self.assertEqual(float(self.job.max_distance_km), 5.0)
+        self.assertEqual(str(self.job.service_rate), "650.00")
 
     def test_rate_is_locked_once_a_worker_is_hired(self):
         self._hire()

@@ -140,10 +140,17 @@ class UserProfile(models.Model):
 
     @property
     def block_message(self) -> str:
+        # Shown at login and when an open session is ended. AGENTS.md II.D:
+        # the user is told the superadmin's reason, not only that they are
+        # suspended.
+        reason = (self.blocked_reason or "").strip()
+        if reason and reason[-1] not in ".!?":
+            reason += "."
+        reason = f" Reason: {reason}" if reason else ""
         if self.blocked_until:
             until = timezone.localtime(self.blocked_until).strftime("%Y-%m-%d %H:%M")
-            return f"This account is suspended until {until}. Contact support for assistance."
-        return "This account has been blocked. Contact support for assistance."
+            return f"This account is suspended until {until}.{reason} Contact support for assistance."
+        return f"This account has been blocked.{reason} Contact support for assistance."
 
     @property
     def has_location(self) -> bool:

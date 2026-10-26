@@ -71,7 +71,8 @@ def apply_account_suspension(profile: UserProfile, *, blocked=True, reason="", d
     request because JWTAuthentication checks it per-request, not just at
     login.
 
-    Raises SuspensionValidationError if duration_days isn't 3, 7, or omitted.
+    Raises SuspensionValidationError if duration_days isn't 3, 7, or omitted,
+    or if a suspension is given no reason.
     """
     blocked = parse_blocked_flag(blocked)
 
@@ -81,6 +82,13 @@ def apply_account_suspension(profile: UserProfile, *, blocked=True, reason="", d
     was_blocked = profile.refresh_block_status()
     if not blocked and not was_blocked:
         return
+
+    # AGENTS.md II.D: the suspended user is told the superadmin's reason. A
+    # blank prompt used to go through, and the email then said "No reason
+    # was recorded".
+    reason = " ".join(str(reason or "").split())
+    if blocked and not reason:
+        raise SuspensionValidationError("Give a reason for the suspension; the user will see it.")
 
     blocked_until = None
     if blocked and duration_days not in (None, "", "null"):

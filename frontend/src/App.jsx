@@ -38,12 +38,11 @@ import { getBarangayCenter, getFallbackBarangay } from "./utils/locationUtils";
 import {
   buildCoordinateLocation,
   buildMapPreviewUrl,
-  buildTayabasLatLngBounds,
   formatCoordinateAddress,
   getNearestBarangayFromCoordinates,
   getSavedHouseholdLocation,
   haversineDistanceKm,
-  isValidGmailAddress,
+  isValidEmailAddress,
   resolveLocationCoordinates,
   reverseGeocodeCoordinates,
 } from "./utils/locationServices";
@@ -885,6 +884,28 @@ function App() {
       addToast(error.message || "Unable to update this skill.", "danger");
     }
   };
+  // Saves the worker's skill list on its own. The Add Skills dialog used to
+  // only change the form, so "Done" looked final but nothing was stored until
+  // the separate "Save Changes" button. Throws with the server's message so
+  // the caller can keep its draft open.
+  const handleSaveWorkerSkills = async (skills) => {
+    const response = await apiRequest("accounts/me/", {
+      method: "PATCH",
+      auth: true,
+      body: { skills },
+    });
+    const data = await readResponseData(response);
+    if (!response.ok) {
+      throw new Error(getApiErrorMessage(data, "Unable to save your skills."));
+    }
+    const savedSkills = Array.isArray(data?.profile?.skills) ? data.profile.skills : skills;
+    setWorkerProfileForm((prev) => ({ ...prev, skills: savedSkills }));
+    setRegisteredWorkers((prev) =>
+      prev.map((item) => (item.username === currentUser?.username ? { ...item, skills: savedSkills } : item)),
+    );
+    setCurrentUser((prev) => (prev?.profile ? { ...prev, profile: { ...prev.profile, skills: savedSkills } } : prev));
+    return savedSkills;
+  };
   const adminVisibleWorkers = registeredWorkers.filter((worker) => Boolean(worker.verificationSubmission));
   const pendingVerificationRequests = verificationRequests.filter(
     (item) => item.status === "Pending" || item.status === "Under Review",
@@ -1137,13 +1158,22 @@ function App() {
       householdJobBarangaySyncRef,
       householdJobForm,
       householdJobMapViewRef,
-      resolveLocationCoordinates,
       reverseGeocodeCoordinates,
       setHouseholdJobCoordinates,
       setHouseholdJobForm,
       setHouseholdJobLocationPreview,
       setHouseholdJobMapMode,
     });
+  // Post a Job opens with the household's saved barangay filled in; frame the
+  // map on it (with a pin to move) instead of on the whole city, where a pin
+  // dropped "in the middle" landed in a different barangay.
+  useEffect(() => {
+    if (view === "household-post-job" && !householdJobLocationPreview && householdJobForm.barangay) {
+      syncHouseholdJobBarangayLocation(householdJobForm.barangay, { keepStreetAddress: true });
+    }
+    // Only on arriving at the screen: later barangay changes sync themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
   const {
     handleApplyToJob,
     handleHireWorker,
@@ -1161,6 +1191,8 @@ function App() {
     handleHouseholdReviewSubmit,
     handleWorkerFeedbackSubmit,
     handleWorkerFeedbackForReviewSubmit,
+    handleWorkerRateHousehold,
+    handleUpdateJob,
     handleHouseholdJobSubmit,
     handleAdminApproveVerification,
     handleAdminRejectVerification,
@@ -1194,7 +1226,7 @@ function App() {
     householdProfileForm,
     householdReviewForm,
     isNumericIdentifier,
-    isValidGmailAddress,
+    isValidEmailAddress,
     loginForm,
     mergeBackendWorkerIntoState,
     normalizeBackendApplication,
@@ -1208,6 +1240,7 @@ function App() {
     refreshNotificationsFromBackend,
     refreshRecommendedWorkers,
     refreshReviewsFromBackend,
+    refreshProfilesFromBackend,
     refreshVerificationStateFromBackend,
     registeredHouseholds,
     registeredWorkers,
@@ -1252,6 +1285,7 @@ function App() {
     toggleSkill,
     toggleWorkerProfileSkill,
   } = useGawaGoFormHandlers({
+    householdJobForm,
     setHouseholdForm,
     setHouseholdJobCoordinates,
     setHouseholdJobForm,
@@ -1275,6 +1309,7 @@ function App() {
     selectedVerificationRequestId,
     setCurrentUser,
     setHouseholdJobForm,
+    setLoginError,
     setLoginForm,
     setSelectedJobId,
     setSelectedVerificationRequestId,
@@ -1654,6 +1689,8 @@ function App() {
       handleWorkerProfileChange={handleWorkerProfileChange}
       handleWorkerProfileSave={handleWorkerProfileSave}
       handleWorkerFeedbackForReviewSubmit={handleWorkerFeedbackForReviewSubmit}
+      handleWorkerRateHousehold={handleWorkerRateHousehold}
+      handleUpdateJob={handleUpdateJob}
       handleWorkerRegisterSubmit={handleWorkerRegisterSubmit}
       householdForm={householdForm}
       registerErrors={registerErrors}
@@ -1723,6 +1760,7 @@ function App() {
       setWorkerProfileForm={setWorkerProfileForm}
       toggleSkill={toggleSkill}
       toggleWorkerProfileSkill={toggleWorkerProfileSkill}
+      handleSaveWorkerSkills={handleSaveWorkerSkills}
       showCertificationModal={showCertificationModal}
       setShowCertificationModal={setShowCertificationModal}
       showSkillModal={showSkillModal}

@@ -46,6 +46,7 @@ class RegisterLoginFlowTests(TestCase):
                 "first_name": "Juan",
                 "last_name": "Worker",
                 "role": UserProfile.ROLE_WORKER,
+                "skills": ["House Cleaning"],
                 "hourly_rate": "150.00",
                 "location_label": "Isabang, Tayabas City",
                 "latitude": "13.9622745",
@@ -76,6 +77,7 @@ class RegisterLoginFlowTests(TestCase):
                 "email": "incomplete.worker@gmail.com",
                 "password": "worker-pass123",
                 "role": UserProfile.ROLE_WORKER,
+                "skills": ["House Cleaning"],
                 "hourly_rate": "0.00",
             },
             content_type="application/json",
@@ -84,6 +86,51 @@ class RegisterLoginFlowTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("service_rate", response.json())
         self.assertFalse(User.objects.filter(username="IncompleteWorker").exists())
+
+    def test_worker_registration_requires_at_least_one_skill(self):
+        # A worker with no skills can never match a job, and the web and
+        # mobile forms both require one; the API used to accept none.
+        for skills in (None, [], ["Other"]):
+            payload = {
+                "username": "SkilllessWorker",
+                "email": "skillless.worker@gmail.com",
+                "password": "worker-pass123",
+                "role": UserProfile.ROLE_WORKER,
+                "hourly_rate": "150.00",
+                "location_label": "Isabang, Tayabas City",
+                "latitude": "13.9622745",
+                "longitude": "121.5632841",
+            }
+            if skills is not None:
+                payload["skills"] = skills
+            response = self.client.post(reverse("register"), payload, content_type="application/json")
+
+            self.assertEqual(response.status_code, 400, skills)
+            self.assertIn("skills", response.json())
+        self.assertFalse(User.objects.filter(username="SkilllessWorker").exists())
+
+    def test_worker_registration_outside_tayabas_is_rejected(self):
+        # Lucena City sits inside the old rectangular "Tayabas" box; the
+        # city boundary polygon excludes it.
+        response = self.client.post(
+            reverse("register"),
+            {
+                "username": "LucenaWorker",
+                "email": "lucena.worker@gmail.com",
+                "password": "worker-pass123",
+                "role": UserProfile.ROLE_WORKER,
+                "skills": ["House Cleaning"],
+                "hourly_rate": "150.00",
+                "location_label": "Lucena City",
+                "latitude": "13.9373",
+                "longitude": "121.6170",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("location", response.json())
+        self.assertFalse(User.objects.filter(username="LucenaWorker").exists())
 
     def test_worker_registration_rejects_more_than_four_skills(self):
         response = self.client.post(
@@ -203,6 +250,22 @@ class PasswordResetFlowTests(TestCase):
         self.assertTrue(PasswordResetRequest.objects.filter(email="worker1@gmail.com").exists())
         mock_generate_token.assert_called_once()
         mock_send_email.assert_called_once()
+
+    @patch(
+        "apps.accounts.views.send_password_reset_email",
+        side_effect=RuntimeError("Brevo rejected the message (HTTP 401): key not found"),
+    )
+    def test_forgot_password_reports_a_failed_send_without_leaking_the_error(self, mock_send_email):
+        # The Brevo backend raises RuntimeError, which used to escape as a
+        # 500; SMTP errors were echoed to the user verbatim.
+        with self.assertLogs("apps.accounts.views", level="ERROR"):
+            response = self.client.post(
+                reverse("forgot-password"), {"email": "worker1@gmail.com"}, content_type="application/json"
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("Brevo", response.json()["detail"])
+        self.assertFalse(PasswordResetRequest.objects.filter(email="worker1@gmail.com").exists())
 
     @patch("apps.accounts.views.send_password_reset_email")
     @patch("apps.accounts.services.generate_reset_token", return_value="123456")
@@ -690,7 +753,9 @@ class UserAccountBlockAdminTests(TestCase):
         self.authenticate(self.admin)
         url = reverse("profile-block-admin", kwargs={"username": self.worker.username})
 
-        response = self.client.post(url, {"duration_days": 7}, content_type="application/json")
+        response = self.client.post(
+            url, {"duration_days": 7, "reason": "Repeated no-shows."}, content_type="application/json"
+        )
 
         self.assertEqual(response.status_code, 200)
         self.worker.profile.refresh_from_db()
@@ -701,9 +766,53 @@ class UserAccountBlockAdminTests(TestCase):
         self.authenticate(self.admin)
         url = reverse("profile-block-admin", kwargs={"username": self.worker.username})
 
-        response = self.client.post(url, {"duration_days": 5}, content_type="application/json")
+        response = self.client.post(
+            url, {"duration_days": 5, "reason": "Repeated no-shows."}, content_type="application/json"
+        )
 
         self.assertEqual(response.status_code, 400)
+        self.assertIn("duration_days", str(response.json()))
+        self.worker.profile.refresh_from_db()
+        self.assertFalse(self.worker.profile.is_blocked)
+
+    def test_suspension_without_a_reason_is_rejected(self):
+        # AGENTS.md II.D: the suspended user is told the superadmin's reason,
+        # so a suspension with a blank reason is refused rather than sent as
+        # "No reason was recorded".
+        self.authenticate(self.admin)
+        url = reverse("profile-block-admin", kwargs={"username": self.worker.username})
+
+        for payload in ({"duration_days": 3}, {"duration_days": 3, "reason": "   "}, {"reason": ""}):
+            response = self.client.post(url, payload, content_type="application/json")
+            self.assertEqual(response.status_code, 400, payload)
+
+        self.worker.profile.refresh_from_db()
+        self.assertFalse(self.worker.profile.is_blocked)
+
+    def test_suspended_user_is_told_the_reason_at_login(self):
+        self.authenticate(self.admin)
+        url = reverse("profile-block-admin", kwargs={"username": self.worker.username})
+        self.client.post(url, {"duration_days": 3, "reason": "Repeated no-shows."}, content_type="application/json")
+        self.client.defaults.pop("HTTP_AUTHORIZATION")
+
+        response = self.client.post(
+            reverse("login"),
+            {"username": self.worker.username, "password": "worker-pass123"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("suspended until", response.json()["detail"])
+        self.assertIn("Reason: Repeated no-shows.", response.json()["detail"])
+
+    def test_restoring_an_account_needs_no_reason(self):
+        self.authenticate(self.admin)
+        url = reverse("profile-block-admin", kwargs={"username": self.worker.username})
+        self.client.post(url, {"reason": "Policy violation."}, content_type="application/json")
+
+        restored = self.client.post(url, {"blocked": False}, content_type="application/json")
+
+        self.assertEqual(restored.status_code, 200)
         self.worker.profile.refresh_from_db()
         self.assertFalse(self.worker.profile.is_blocked)
 

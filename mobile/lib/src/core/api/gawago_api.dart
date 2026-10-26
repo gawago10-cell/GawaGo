@@ -70,8 +70,9 @@ class GawaGoApi {
         if (role == 'worker') ...{
           'bio': bio.trim(),
           'skills': skills,
-          'hourly_rate': hourlyRate.trim().isEmpty ? '0.00' : hourlyRate.trim(),
-          'daily_rate': dailyRate.trim().isEmpty ? '0.00' : dailyRate.trim(),
+          // An empty rate is "not disclosed" (null), not a free service.
+          'hourly_rate': hourlyRate.trim().isEmpty ? null : hourlyRate.trim(),
+          'daily_rate': dailyRate.trim().isEmpty ? null : dailyRate.trim(),
           'years_experience': yearsExperience,
         },
       },

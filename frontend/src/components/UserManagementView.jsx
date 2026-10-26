@@ -3,6 +3,7 @@ import React, { useMemo, useState } from "react";
 import { setUserAccountBlocked } from "../services/backendDataService";
 import { formatCurrency, getDisplayName } from "../utils/formatters";
 import AdminUserHistorySection from "./AdminUserHistorySection";
+import SuspendAccountDialog from "./SuspendAccountDialog";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
@@ -55,6 +56,7 @@ export default function UserManagementView({
   const [search, setSearch] = useState("");
   const [selectedUsername, setSelectedUsername] = useState(null);
   const [savingUsername, setSavingUsername] = useState(null);
+  const [suspendRequest, setSuspendRequest] = useState(null);
 
   const jobsByHouseholdUsername = useMemo(() => {
     const map = new Map();
@@ -159,21 +161,18 @@ export default function UserManagementView({
   const selectedUser = selectedHousehold || selectedWorker;
   const selectedUserRole = selectedHousehold ? "household" : "worker";
 
-  async function suspend(user, durationDays) {
-    const durationLabel = durationDays ? `for ${durationDays} days` : "permanently";
-    const confirmed = window.confirm(
-      `Suspend ${user.username} ${durationLabel}? They will be signed out immediately and cannot log back in until restored.`,
-    );
-    if (!confirmed) return;
-    const reason = window.prompt("Reason for suspending (shown to the user):", "");
-    if (reason === null) return;
+  function suspend(user, durationDays) {
+    setSuspendRequest({ username: user.username, durationDays });
+  }
 
-    setSavingUsername(user.username);
+  // Throws on failure so the dialog stays open with the server's message.
+  async function confirmSuspend(reason) {
+    const { username, durationDays } = suspendRequest;
+    setSavingUsername(username);
     try {
-      await setUserAccountBlocked(user.username, { blocked: true, reason: reason || "", durationDays });
+      await setUserAccountBlocked(username, { blocked: true, reason, durationDays });
       await refreshProfilesFromBackend();
-    } catch (error) {
-      window.alert(error.message || "Unable to update this account.");
+      setSuspendRequest(null);
     } finally {
       setSavingUsername(null);
     }
@@ -475,6 +474,14 @@ export default function UserManagementView({
             </div>
           </div>
         </div>
+      )}
+      {suspendRequest && (
+        <SuspendAccountDialog
+          username={suspendRequest.username}
+          durationDays={suspendRequest.durationDays}
+          onConfirm={confirmSuspend}
+          onCancel={() => setSuspendRequest(null)}
+        />
       )}
     </div>
   );

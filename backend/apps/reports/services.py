@@ -22,6 +22,7 @@ from django.utils import timezone
 from apps.accounts.models import UserProfile
 from apps.analytics.services import pending_account_verifications
 from apps.common.barangays import barangay_from_location_label
+from apps.common.skills import canonical_skill_label
 from apps.jobs.models import JobApplication, JobPosting
 from apps.reviews.models import Review
 
@@ -136,7 +137,7 @@ def build_household_report(user: User, period):
 
     by_service = OrderedDict()
     for job in jobs:
-        key = job.required_skill or job.job_type or "Unspecified"
+        key = canonical_skill_label(job.required_skill or job.job_type) or "Unspecified"
         by_service[key] = by_service.get(key, 0) + 1
 
     monthly = _monthly_counts(period, jobs)
@@ -227,7 +228,7 @@ def build_worker_report(user: User, period):
         job = application.job
         if job is None:
             continue
-        key = job.required_skill or job.job_type or "Unspecified"
+        key = canonical_skill_label(job.required_skill or job.job_type) or "Unspecified"
         by_skill[key] = by_skill.get(key, 0) + 1
 
     monthly = _monthly_counts(period, applications, date_field="applied_at")
@@ -348,7 +349,7 @@ def build_platform_report(period):
     by_service = OrderedDict()
     by_barangay = OrderedDict()
     for job in job_list:
-        service = job.required_skill or job.job_type or "Unspecified"
+        service = canonical_skill_label(job.required_skill or job.job_type) or "Unspecified"
         by_service[service] = by_service.get(service, 0) + 1
         barangay = barangay_from_location_label(job.location_label) or "Unspecified"
         by_barangay[barangay] = by_barangay.get(barangay, 0) + 1

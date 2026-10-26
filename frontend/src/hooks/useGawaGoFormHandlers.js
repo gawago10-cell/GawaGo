@@ -1,9 +1,11 @@
 import { sanitizePhilippinesPhone } from "../utils/formatters";
 import { readFileAsDataUrl } from "../utils/mediaUtils";
 import { normalizeBarangayName } from "../utils/locationUtils";
+import { isAutoFilledStreetAddress } from "../utils/locationServices";
 import { MAX_WORKER_SKILLS } from "../constants/appConstants";
 
 export function useGawaGoFormHandlers({
+  householdJobForm,
   setHouseholdForm,
   setHouseholdJobCoordinates,
   setHouseholdJobForm,
@@ -61,19 +63,6 @@ export function useGawaGoFormHandlers({
         ...prev,
         barangay,
         streetAddress: barangay && !prev.streetAddress ? `Barangay ${barangay}, Tayabas City` : prev.streetAddress,
-        latitude: null,
-        longitude: null,
-        locationLabel: "",
-        locationSource: "",
-        locationWarning: "",
-        locationAccuracy: "",
-      }));
-      return;
-    }
-    if (name === "streetAddress") {
-      setWorkerForm((prev) => ({
-        ...prev,
-        streetAddress: value,
         latitude: null,
         longitude: null,
         locationLabel: "",
@@ -169,19 +158,17 @@ export function useGawaGoFormHandlers({
       setHouseholdJobForm((prev) => ({
         ...prev,
         barangay: value,
-        streetAddress: value ? `Barangay ${value}, Tayabas City` : prev.streetAddress,
       }));
       if (value) {
-        syncHouseholdJobBarangayLocation(value);
+        // Keeps a street the household typed; replaces only the filler.
+        syncHouseholdJobBarangayLocation(value, {
+          keepStreetAddress: !isAutoFilledStreetAddress(householdJobForm?.streetAddress),
+        });
       } else {
         setHouseholdJobCoordinates(null);
         setHouseholdJobLocationPreview(null);
       }
       return;
-    }
-    if (name === "streetAddress") {
-      setHouseholdJobCoordinates(null);
-      setHouseholdJobLocationPreview(null);
     }
     setHouseholdJobForm((prev) => ({
       ...prev,
@@ -222,7 +209,10 @@ export function useGawaGoFormHandlers({
         );
       return;
     }
-    if (name === "barangay" || name === "streetAddress") {
+    // A new barangay needs a new pin; editing the street only relabels the
+    // pin, and clearing it there used to drop workers back to a geocoded
+    // guess on save.
+    if (name === "barangay") {
       setWorkerProfileForm((prev) => ({
         ...prev,
         [name]: value,
@@ -318,6 +308,8 @@ export function useGawaGoFormHandlers({
   }
 
   function toggleSkill(skill) {
+    clearRegisterError("skills");
+    clearRegisterError("customSkill");
     setWorkerForm((prev) => {
       const exists = prev.skills.includes(skill);
       if (!exists && prev.skills.length >= MAX_WORKER_SKILLS) {

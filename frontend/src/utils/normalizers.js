@@ -148,8 +148,10 @@ export function normalizeBackendWorker(currentUser) {
     barangay: currentUser.barangay || locationParts.barangay || "",
     streetAddress: currentUser.streetAddress || locationParts.streetAddress || "",
     bio: profile.bio || currentUser.bio || "",
-    hourlyRate: profile.hourly_rate || currentUser.hourlyRate || "0.00",
-    dailyRate: profile.daily_rate || currentUser.dailyRate || "0.00",
+    // Empty, not "0.00", when undisclosed: the profile form saves what it
+    // shows, and a zero rate read as a free service.
+    hourlyRate: profile.hourly_rate ?? currentUser.hourlyRate ?? "",
+    dailyRate: profile.daily_rate ?? currentUser.dailyRate ?? "",
     yearsExperience: profile.years_experience ?? currentUser.yearsExperience ?? "0",
     skills: profile.skills || currentUser.skills || [],
     verification: profile.verification_status === "verified" ? "Verified" : profile.verification_status === "pending" ? "Under Review" : profile.verification_status === "rejected" ? "Rejected" : "Not Yet Verified",
@@ -213,8 +215,8 @@ export function normalizeProfileRecord(profile) {
     profilePhotoName: profile.profile_photo ? String(profile.profile_photo).split("/").pop() : "",
     profilePhotoPreview: profile.profile_photo_url || profile.profile_photo || "",
     skills: profile.skills || [],
-    hourlyRate: profile.hourly_rate || "0.00",
-    dailyRate: profile.daily_rate || "0.00",
+    hourlyRate: profile.hourly_rate ?? "",
+    dailyRate: profile.daily_rate ?? "",
     yearsExperience: profile.years_experience ?? "0",
     verification: getWorkerVerificationLabel(profile.verification_status),
     rating: profile.display_rating || "No ratings yet",

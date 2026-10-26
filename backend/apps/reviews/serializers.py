@@ -1,8 +1,23 @@
+from decimal import ROUND_HALF_UP, Decimal
+
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
 from apps.common.sanitize import sanitize_text
 from apps.reviews.models import Review
+
+
+METRIC_FIELDS = ("quality_of_work", "punctuality", "communication", "professionalism")
+
+
+def average_metric_rating(values):
+    """The average of the metrics present in `values`, to one decimal place,
+    or None when none was rated."""
+    metrics = [values.get(field) for field in METRIC_FIELDS]
+    metrics = [metric for metric in metrics if metric is not None]
+    if not metrics:
+        return None
+    return (Decimal(sum(metrics)) / Decimal(len(metrics))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
 
 def mask_name_part(value):
@@ -123,4 +138,11 @@ class ReviewCreateSerializer(serializers.Serializer):
         scores = ["rating", "quality_of_work", "punctuality", "communication", "professionalism"]
         if all(attrs.get(field) is None for field in scores):
             raise serializers.ValidationError({"rating": "Give an overall rating or rate at least one metric."})
+        # AGENTS.md II.A: when the metrics are given, the overall rating is
+        # their average. The star picker's value used to be stored beside
+        # them, so one review read 5.0 in `rating` and 4.5 in
+        # `overall_rating`, and screens disagreed depending on which they used.
+        metric_average = average_metric_rating(attrs)
+        if metric_average is not None:
+            attrs["rating"] = metric_average
         return attrs

@@ -135,6 +135,33 @@ class ReviewPermissionTests(TestCase):
         self.assertEqual(notification.action_url, f"/reviews/jobs/{self.completed_job.id}")
         self.assertFalse(notification.requires_action)
 
+    def test_rating_is_the_metric_average_when_metrics_are_given(self):
+        # AGENTS.md II.A: with the metrics provided, the overall rating is
+        # their average. The star picker's 5.0 used to be stored beside a
+        # 4.5 average, so screens disagreed on the same review.
+        self.client.force_authenticate(user=self.household)
+
+        response = self.client.post(
+            reverse("review-list-create"),
+            {
+                "target_username": self.worker.username,
+                "job_id": self.completed_job.id,
+                "rating": "5.0",
+                "quality_of_work": 4,
+                "punctuality": 5,
+                "communication": 4,
+                "professionalism": 5,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Decimal(str(response.json()["rating"])), Decimal("4.5"))
+        self.assertEqual(Decimal(str(response.json()["overall_rating"])), Decimal("4.5"))
+        self.assertEqual(Review.objects.get().rating, Decimal("4.5"))
+        self.worker.profile.refresh_from_db()
+        self.assertEqual(self.worker.profile.average_rating, Decimal("4.50"))
+
     def test_worker_rating_stats_recalculate_when_ratings_change(self):
         self.client.force_authenticate(user=self.household)
         second_job = self.create_completed_job_for_worker("Completed laundry")

@@ -51,6 +51,30 @@ SKILL_ALIASES = {
     "plumbing": "plumbing",
     "welding": "welding",
     "welder": "welding",
+    # Common English variants and the Filipino words workers in Tayabas
+    # actually type when their trade isn't in the list ("tubero" never
+    # matched a Plumbing job before).
+    "aircon technician": "aircon_repair",
+    "caregiver": "elder_care",
+    "child care": "childcare",
+    "nanny": "childcare",
+    "yaya": "childcare",
+    "electrical repair": "electrical_work",
+    "electrical wiring": "electrical_work",
+    "wiring": "electrical_work",
+    "elektrisyan": "electrical_work",
+    "tubero": "plumbing",
+    "karpintero": "carpentry",
+    "karpentero": "carpentry",
+    "pintor": "painting",
+    "labandera": "laundry",
+    "kusinera": "cooking",
+    "kusinero": "cooking",
+    "hardinero": "gardening",
+    "drayber": "driving",
+    "tsuper": "driving",
+    "kasambahay": "house_cleaning",
+    "katulong": "house_cleaning",
 }
 
 

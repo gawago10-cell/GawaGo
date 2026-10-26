@@ -66,6 +66,12 @@ class HouseholdRepository {
     await GawaGoApi.patch('/jobs/$jobId/', body: {'status': status});
   }
 
+  /// Edits an open job. The backend refuses changes once a worker is hired
+  /// and never moves the job site, so [changes] carries only edited fields.
+  Future<void> updateJob(int jobId, Map<String, dynamic> changes) async {
+    await GawaGoApi.patch('/jobs/$jobId/', body: changes);
+  }
+
   /// Smart Matching's rule order is the default; `rank: 'ai'` opts into the
   /// content-based re-ranking instead. Kept as a parameter so neither
   /// ranking replaces the other.

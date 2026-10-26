@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from apps.accounts.models import UserProfile
 from apps.accounts.services import ensure_portfolio_skills
+from apps.common.barangays import BARANGAY_CENTERS
 from apps.common.models import VerificationRequest
 from apps.jobs.models import JobApplication, JobPosting
 from apps.reviews.models import Review
@@ -48,14 +49,14 @@ HOUSEHOLDS = [
 WORKER_TEMPLATES = [
     (["House Cleaning", "Laundry"], "120.00", "650.00", 3, "verified", "4.90", 3),
     (["Plumbing", "Carpentry"], "180.00", "900.00", 5, "verified", "4.50", 2),
-    (["Electrical Work", "Aircon Repair/Cleaning"], "200.00", "1000.00", 4, "pending", "4.00", 1),
+    (["Electrical Work", "Aircon Repair"], "200.00", "1000.00", 4, "pending", "4.00", 1),
     (["Childcare", "Cooking"], "130.00", "700.00", 2, "rejected", "3.00", 1),
     (["Laundry", "House Cleaning", "Cooking"], "110.00", "600.00", 1, "pending", None, 0),
     (["Gardening", "House Cleaning"], "115.00", "620.00", 2, "verified", "4.70", 2),
     (["Painting", "Carpentry"], "170.00", "850.00", 6, "verified", "4.80", 4),
     (["Elder Care", "Cooking"], "150.00", "780.00", 4, "pending", "4.20", 1),
     (["Welding", "Electrical Work"], "220.00", "1200.00", 7, "verified", "4.60", 3),
-    (["Driving", "Other"], "160.00", "800.00", 3, "pending", None, 0),
+    (["Driving", "Gardening"], "160.00", "800.00", 3, "pending", None, 0),
 ]
 
 WORKERS = [
@@ -82,19 +83,26 @@ WORKERS = [
 ]
 
 JOBS = [
-    {"household": "Household 1", "worker": "Worker1", "title": "House Cleaning Help", "skill": "House Cleaning", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Poblacion", "lat": "13.9411000", "lng": "121.5874000", "rate": "700.00", "months_ago": 0},
-    {"household": "Household 2", "worker": "Worker2", "title": "Kitchen Plumbing Repair", "skill": "Plumbing", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Isabang", "lat": "13.9633000", "lng": "121.5447000", "rate": "950.00", "months_ago": 1},
-    {"household": "Household 3", "worker": "Worker3", "title": "Electrical Outlet Check", "skill": "Electrical Work", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "San Roque", "lat": "13.9431000", "lng": "121.5827000", "rate": "1200.00", "months_ago": 2},
-    {"household": "Household 4", "worker": "Worker5", "title": "Laundry Assistance", "skill": "Laundry", "status": JobPosting.STATUS_CANCELLED, "application_status": None, "barangay": "Calumpang", "lat": "13.9404000", "lng": "121.5528000", "rate": "500.00", "months_ago": 3},
-    {"household": "Household 5", "worker": "Worker4", "title": "Childcare Support", "skill": "Childcare", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Dapdap", "lat": "13.9616000", "lng": "121.6168000", "rate": "750.00", "months_ago": 4},
-    {"household": "Household 1", "worker": "Worker5", "title": "Cooking Support", "skill": "Cooking", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Poblacion", "lat": "13.9411000", "lng": "121.5874000", "rate": "650.00", "months_ago": 5},
-    {"household": "Household 6", "worker": "Worker6", "title": "Garden Cleanup", "skill": "Gardening", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Del Rosario", "lat": "13.9463000", "lng": "121.5919000", "rate": "680.00", "months_ago": 0},
-    {"household": "Household 7", "worker": "Worker7", "title": "Room Repainting", "skill": "Painting", "status": JobPosting.STATUS_ASSIGNED, "application_status": JobApplication.STATUS_HIRED, "barangay": "San Isidro", "lat": "13.9558000", "lng": "121.5763000", "rate": "900.00", "months_ago": 1},
-    {"household": "Household 8", "worker": "Worker8", "title": "Elder Care Visit", "skill": "Elder Care", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Bucal", "lat": "13.9328000", "lng": "121.6108000", "rate": "820.00", "months_ago": 2},
-    {"household": "Household 9", "worker": "Worker9", "title": "Gate Welding Repair", "skill": "Welding", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Talolong", "lat": "13.8824000", "lng": "121.5526000", "rate": "1300.00", "months_ago": 3},
-    {"household": "Household 10", "worker": "Worker10", "title": "Family Driver Needed", "skill": "Driving", "status": JobPosting.STATUS_CANCELLED, "application_status": None, "barangay": "Wakas", "lat": "13.9263000", "lng": "121.6047000", "rate": "850.00", "months_ago": 4},
-    {"household": "Household 6", "worker": "Worker1", "title": "Deep Cleaning Follow-up", "skill": "House Cleaning", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Del Rosario", "lat": "13.9463000", "lng": "121.5919000", "rate": "720.00", "months_ago": 5},
+    {"household": "Household 1", "worker": "Worker1", "title": "House Cleaning Help", "skill": "House Cleaning", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "San Diego Zone I", "rate": "700.00", "months_ago": 0},
+    {"household": "Household 2", "worker": "Worker2", "title": "Kitchen Plumbing Repair", "skill": "Plumbing", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Isabang", "rate": "950.00", "months_ago": 1},
+    {"household": "Household 3", "worker": "Worker3", "title": "Electrical Outlet Check", "skill": "Electrical Work", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "San Roque Zone I", "rate": "1200.00", "months_ago": 2},
+    {"household": "Household 4", "worker": "Worker5", "title": "Laundry Assistance", "skill": "Laundry", "status": JobPosting.STATUS_CANCELLED, "application_status": None, "barangay": "Calumpang", "rate": "500.00", "months_ago": 3},
+    {"household": "Household 5", "worker": "Worker4", "title": "Childcare Support", "skill": "Childcare", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Dapdap", "rate": "750.00", "months_ago": 4},
+    {"household": "Household 1", "worker": "Worker5", "title": "Cooking Support", "skill": "Cooking", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "San Diego Zone I", "rate": "650.00", "months_ago": 5},
+    {"household": "Household 6", "worker": "Worker6", "title": "Garden Cleanup", "skill": "Gardening", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Angeles Zone I", "rate": "680.00", "months_ago": 0},
+    {"household": "Household 7", "worker": "Worker7", "title": "Room Repainting", "skill": "Painting", "status": JobPosting.STATUS_ASSIGNED, "application_status": JobApplication.STATUS_HIRED, "barangay": "San Isidro Zone I", "rate": "900.00", "months_ago": 1},
+    {"household": "Household 8", "worker": "Worker8", "title": "Elder Care Visit", "skill": "Elder Care", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Bukal Ibaba", "rate": "820.00", "months_ago": 2},
+    {"household": "Household 9", "worker": "Worker9", "title": "Gate Welding Repair", "skill": "Welding", "status": JobPosting.STATUS_COMPLETED, "application_status": JobApplication.STATUS_CLOSED, "barangay": "Talolong", "rate": "1300.00", "months_ago": 3},
+    {"household": "Household 10", "worker": "Worker10", "title": "Family Driver Needed", "skill": "Driving", "status": JobPosting.STATUS_CANCELLED, "application_status": None, "barangay": "Wakas", "rate": "850.00", "months_ago": 4},
+    {"household": "Household 6", "worker": "Worker1", "title": "Deep Cleaning Follow-up", "skill": "House Cleaning", "status": JobPosting.STATUS_OPEN, "application_status": JobApplication.STATUS_PENDING, "barangay": "Angeles Zone I", "rate": "720.00", "months_ago": 5},
 ]
+
+# Fallback job locations (used only when a household has none) come from
+# the shared barangay table, so a demo job is never placed outside the city.
+for _job in JOBS:
+    _centre = BARANGAY_CENTERS[_job["barangay"]]
+    _job["lat"] = f"{_centre['latitude']:.7f}"
+    _job["lng"] = f"{_centre['longitude']:.7f}"
 
 REVIEWS = [
     {"author": "Household 1", "target": "Worker1", "job_title": "House Cleaning Help", "rating": 5, "feedback": "Reliable and fast."},

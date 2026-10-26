@@ -23,6 +23,7 @@ from apps.matching.services import (
     get_road_route_for_match,
     normalize_skill_label,
     scope_distance_km,
+    straight_line_distance_km,
 )
 
 # Relative importance of skill fit vs. proximity in the final score.
@@ -89,6 +90,17 @@ def _within_radius(job, distance_km):
     return distance_km <= job.max_distance_km
 
 
+def _beyond_radius_in_a_straight_line(job, profile):
+    """True when the pair is outside the job's radius even as the crow
+    flies. A road is never shorter than that, so the routing call -- the
+    slow part of scoring -- can be skipped. Smart Matching's
+    build_match_results() applies the same shortcut."""
+    if job.geographic_boundary == DISTANCE_UNLIMITED or not job.max_distance_km:
+        return False
+    straight_km = straight_line_distance_km(job.latitude, job.longitude, profile.latitude, profile.longitude)
+    return straight_km is not None and straight_km > float(job.max_distance_km)
+
+
 def _proximity_score(distance_km):
     """proximity_score = 1 / (1 + distance_km).
 
@@ -118,6 +130,8 @@ def score_job_for_worker(job, profile):
         location/skills or the job is outside their radius.
     """
     if profile is None or not profile.has_location:
+        return None
+    if _beyond_radius_in_a_straight_line(job, profile):
         return None
 
     route = get_road_route_for_match(job, profile)
@@ -187,13 +201,12 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     Algorithm (content-based filtering):
       1. Build one text document from the worker's skill list, and one
          per open job from its required skill.
-      2. Fit a single TfidfVectorizer across the worker's document plus
-         every open job's document, so IDF weighting reflects how
-         common/rare each skill term is across the current pool of open
-         jobs -- a skill almost every job needs contributes less to
-         similarity than a rare, specific one.
-      3. cosine_similarity(worker_vector, job_vectors) -> skill_similarity
-         in [0, 1] per job.
+      2. For each job, fit TF-IDF on just that pair -- the worker's
+         document and the job's -- and take their cosine similarity as
+         skill_similarity in [0, 1]. Fitting on the pair (not on every open
+         job at once) is what makes a worker and a job score the same on
+         every screen: the IDF of a shared corpus changed with whoever else
+         was in it, so one pair read 51% in one place and 53% in another.
       4. distance_km comes from get_road_route_for_match(), the same
          OSRM-backed, cached road-distance lookup the rule-based Smart
          Matching feature already uses -- "distance" means the same
@@ -238,27 +251,20 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     if not open_jobs:
         return []
 
-    job_documents = [_job_skill_document(job) for job in open_jobs]
-
-    TfidfVectorizer, cosine_similarity = _tfidf()
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform([worker_document] + job_documents)
-    worker_vector = tfidf_matrix[0:1]
-    job_vectors = tfidf_matrix[1:]
-    similarities = cosine_similarity(worker_vector, job_vectors)[0]
-
     results = []
-    for job, skill_similarity in zip(open_jobs, similarities):
+    for job in open_jobs:
+        if _beyond_radius_in_a_straight_line(job, profile):
+            continue
         route = get_road_route_for_match(job, profile)
         distance_km = scope_distance_km(job, profile, route["distance_km"])
 
         if not _within_radius(job, distance_km):
             continue
 
-        results.append({
-            "job": job,
-            **_build_score_result(job, profile, float(skill_similarity), distance_km),
-        })
+        scored = score_pair_with_distance(job, profile, distance_km)
+        if scored is None:
+            continue
+        results.append({"job": job, **scored})
 
     results.sort(key=lambda r: r["ai_score"], reverse=True)
     return results[:limit]
@@ -273,11 +279,9 @@ def get_recommended_workers(job, worker_profiles, limit: int = 20):
     similarity blended with road-route proximity, each carrying the same
     explainability breakdown a worker sees on a recommended job.
 
-    The single TfidfVectorizer is fit across the job's document plus every
-    candidate worker's document, so IDF weighting reflects how common a
-    skill is across the current candidate pool -- a worker whose skill is
-    rare among candidates scores higher on it than one whose skill
-    everybody lists.
+    Each worker is scored against the job on its own (score_pair_with_distance),
+    the same pairwise fit the worker's side, the applicant cards and the
+    job-match alerts use, so a pair shows one score everywhere.
 
     Workers with no location or no listed skills cannot be scored and are
     dropped, as are workers outside the job's configured search radius
@@ -307,25 +311,20 @@ def get_recommended_workers(job, worker_profiles, limit: int = 20):
     if not candidates:
         return []
 
-    worker_documents = [_worker_skill_document(profile) for profile in candidates]
-
-    TfidfVectorizer, cosine_similarity = _tfidf()
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform([job_document] + worker_documents)
-    similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0]
-
     results = []
-    for profile, skill_similarity in zip(candidates, similarities):
+    for profile in candidates:
+        if _beyond_radius_in_a_straight_line(job, profile):
+            continue
         route = get_road_route_for_match(job, profile)
         distance_km = scope_distance_km(job, profile, route["distance_km"])
 
         if not _within_radius(job, distance_km):
             continue
 
-        results.append({
-            "profile": profile,
-            **_build_score_result(job, profile, float(skill_similarity), distance_km),
-        })
+        scored = score_pair_with_distance(job, profile, distance_km)
+        if scored is None:
+            continue
+        results.append({"profile": profile, **scored})
 
     results.sort(key=lambda r: r["ai_score"], reverse=True)
     return results[:limit]

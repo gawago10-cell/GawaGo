@@ -1,3 +1,26 @@
+import {
+  describeGpsAccuracy,
+  isAutoFilledStreetAddress,
+  OUTSIDE_TAYABAS_GPS_MESSAGE,
+  requestCurrentCoordinates,
+} from "../utils/locationServices";
+import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
+
+// A job's location is a pin the household confirmed: a device fix or a spot
+// they chose on the map. Choosing a barangay only suggests a pin at its
+// centre ("barangay" source), which posting does not accept on its own: a
+// barangay centre can be kilometres from the job site, and matching uses a
+// 1 km default radius.
+export const CONFIRMED_JOB_PIN_SOURCES = new Set(["device", "manual"]);
+
+export function isConfirmedJobPin(location) {
+  return (
+    location?.latitude != null &&
+    location?.longitude != null &&
+    CONFIRMED_JOB_PIN_SOURCES.has(location?.source)
+  );
+}
+
 export function useHouseholdJobLocation({
   buildCoordinateLocation,
   buildMapPreviewUrl,
@@ -9,84 +32,76 @@ export function useHouseholdJobLocation({
   householdJobBarangaySyncRef,
   householdJobForm,
   householdJobMapViewRef,
-  resolveLocationCoordinates,
   reverseGeocodeCoordinates,
   setHouseholdJobCoordinates,
   setHouseholdJobForm,
   setHouseholdJobLocationPreview,
   setHouseholdJobMapMode,
 }) {
-  async function captureHouseholdJobLocation(showSuccessMessage = true) {
-    const resolvedLocation = await resolveLocationCoordinates(
-      householdJobForm.barangay,
-      householdJobForm.streetAddress,
-      true,
-    );
-    if (!resolvedLocation) {
-      window.alert(
-        "We could not detect or estimate your location yet. Please allow browser location access or complete the barangay and street fields first.",
-      );
+  async function captureHouseholdJobLocation() {
+    const { coordinates, message } = await requestCurrentCoordinates();
+    if (!coordinates) {
+      window.alert(message);
       return null;
     }
-    setHouseholdJobCoordinates({
-      latitude: resolvedLocation.latitude,
-      longitude: resolvedLocation.longitude,
-    });
-    setHouseholdJobLocationPreview(resolvedLocation);
-    setHouseholdJobForm((prev) => ({
-      ...prev,
-      barangay: getFallbackBarangay(resolvedLocation.barangay || prev.barangay),
-      streetAddress:
-        resolvedLocation.streetAddress ||
-        formatCoordinateAddress(resolvedLocation.latitude, resolvedLocation.longitude),
-    }));
-    if (showSuccessMessage) {
-      if (resolvedLocation.warning) {
-        window.alert(resolvedLocation.warning);
-      } else {
-        window.alert(
-          resolvedLocation.source === "device"
-            ? "Current location captured successfully. You can now post the job."
-            : "We estimated your location from the address fields and loaded the map preview.",
-        );
-      }
+    if (!isInsideTayabasCity(coordinates.latitude, coordinates.longitude)) {
+      window.alert(OUTSIDE_TAYABAS_GPS_MESSAGE);
+      return null;
     }
+    const resolvedLocation = await placeHouseholdJobPin(
+      coordinates.latitude,
+      coordinates.longitude,
+      "device",
+      false,
+      coordinates.accuracy,
+    );
+    window.alert(resolvedLocation.warning || "Current location pinned. Check the pin, then post the job.");
     return resolvedLocation;
   }
-  async function placeHouseholdJobPin(latitude, longitude, source = "manual", showSuccessMessage = false) {
-    const reverseResult = await reverseGeocodeCoordinates(
-      latitude,
-      longitude,
-      householdJobForm.barangay,
-      householdJobForm.streetAddress,
-    );
-    const fallbackLocation = buildCoordinateLocation(
-      latitude,
-      longitude,
-      await getNearestBarangayFromCoordinates(latitude, longitude),
-      formatCoordinateAddress(latitude, longitude),
-      source,
-    );
-    const resolvedBarangay = getFallbackBarangay(reverseResult?.barangay || fallbackLocation.barangay);
-    const resolvedLatitude = source === "manual" ? fallbackLocation.latitude : reverseResult?.latitude ?? fallbackLocation.latitude;
-    const resolvedLongitude =
-      source === "manual" ? fallbackLocation.longitude : reverseResult?.longitude ?? fallbackLocation.longitude;
-    const resolvedStreetAddress =
-      reverseResult?.streetAddress ||
-      fallbackLocation.streetAddress ||
-      formatCoordinateAddress(resolvedLatitude, resolvedLongitude);
+  async function placeHouseholdJobPin(latitude, longitude, source = "manual", showSuccessMessage = false, accuracy = null) {
+    let reverseResult = null;
+    try {
+      reverseResult = await reverseGeocodeCoordinates(
+        latitude,
+        longitude,
+        householdJobForm.barangay,
+        householdJobForm.streetAddress,
+      );
+    } catch {
+      reverseResult = null;
+    }
+    // The chosen point is kept exactly; the lookup only names it.
+    const pointLatitude = Number(Number(latitude).toFixed(7));
+    const pointLongitude = Number(Number(longitude).toFixed(7));
+    const pinBarangay =
+      getFallbackBarangay(reverseResult?.barangay) ||
+      getFallbackBarangay(await getNearestBarangayFromCoordinates(pointLatitude, pointLongitude)) ||
+      getFallbackBarangay(householdJobForm.barangay);
+    // A street the household typed stays; only the form's own filler is
+    // replaced by the street at the pin.
+    const keepTypedStreet = !isAutoFilledStreetAddress(householdJobForm.streetAddress);
+    const resolvedStreetAddress = keepTypedStreet
+      ? householdJobForm.streetAddress.trim()
+      : reverseResult?.streetAddress || formatCoordinateAddress(pointLatitude, pointLongitude);
+    const previousBarangay = getFallbackBarangay(householdJobForm.barangay);
+    const warnings = [];
+    if (previousBarangay && pinBarangay && previousBarangay !== pinBarangay) {
+      warnings.push(`The pin is in ${pinBarangay}, so the barangay was changed from ${previousBarangay}.`);
+    }
+    if (source === "device") {
+      const accuracyWarning = describeGpsAccuracy(accuracy);
+      if (accuracyWarning) warnings.push(accuracyWarning);
+    }
     const resolvedLocation = {
-      latitude: Number(Number(resolvedLatitude).toFixed(7)),
-      longitude: Number(Number(resolvedLongitude).toFixed(7)),
-      barangay: resolvedBarangay,
+      latitude: pointLatitude,
+      longitude: pointLongitude,
+      barangay: pinBarangay,
       streetAddress: resolvedStreetAddress,
-      locationLabel: reverseResult?.locationLabel || formatLocation(resolvedBarangay, resolvedStreetAddress),
-      mapUrl: buildMapPreviewUrl(resolvedLatitude, resolvedLongitude),
+      locationLabel: formatLocation(pinBarangay, resolvedStreetAddress),
+      mapUrl: buildMapPreviewUrl(pointLatitude, pointLongitude),
       source,
-      warning:
-        source === "manual"
-          ? "Manual pin placed. Review the auto-filled address before posting."
-          : reverseResult?.warning || "",
+      accuracy: source === "device" ? accuracy : null,
+      warning: warnings.join(" "),
     };
     setHouseholdJobCoordinates({
       latitude: resolvedLocation.latitude,
@@ -95,24 +110,27 @@ export function useHouseholdJobLocation({
     setHouseholdJobLocationPreview(resolvedLocation);
     setHouseholdJobForm((prev) => ({
       ...prev,
-      barangay: getFallbackBarangay(resolvedLocation.barangay || prev.barangay),
-      streetAddress:
-        resolvedLocation.streetAddress ||
-        formatCoordinateAddress(resolvedLocation.latitude, resolvedLocation.longitude),
+      barangay: pinBarangay || prev.barangay,
+      streetAddress: resolvedStreetAddress,
     }));
     if (source !== "manual") {
       setHouseholdJobMapMode("preview");
     }
     if (showSuccessMessage) {
       window.alert(
-        source === "manual"
-          ? "Manual pin saved. Barangay and street fields were updated automatically."
-          : "Location updated.",
+        resolvedLocation.warning ||
+          (source === "manual" ? "Job site pinned. Drag the pin to adjust it." : "Location updated."),
       );
     }
     return resolvedLocation;
   }
-  async function syncHouseholdJobBarangayLocation(barangay) {
+  /**
+   * Moves the map to a barangay and suggests a pin at its centre. Used when
+   * the household picks a barangay and when Post a Job opens with their
+   * saved one, so the map starts where the job is rather than on the whole
+   * city. `keepStreetAddress` keeps a saved street instead of the filler.
+   */
+  function syncHouseholdJobBarangayLocation(barangay, { keepStreetAddress = false } = {}) {
     const selectedBarangay = getFallbackBarangay(barangay);
     if (!selectedBarangay) {
       return null;
@@ -120,33 +138,29 @@ export function useHouseholdJobLocation({
     const syncId = householdJobBarangaySyncRef.current + 1;
     householdJobBarangaySyncRef.current = syncId;
     const barangayCenter = getBarangayCenter(selectedBarangay);
-    const fallbackLocation = buildCoordinateLocation(
+    const keptStreetAddress = keepStreetAddress ? String(householdJobForm.streetAddress || "").trim() : "";
+    const suggestedLocation = buildCoordinateLocation(
       barangayCenter.latitude,
       barangayCenter.longitude,
       selectedBarangay,
-      `Barangay ${selectedBarangay}, Tayabas City`,
-      "address",
+      keptStreetAddress || `Barangay ${selectedBarangay}, Tayabas City`,
+      "barangay",
+      `The pin is at the centre of ${selectedBarangay}. Drag it to the job site, pin it on the map, or use your current location before posting.`,
     );
-    setHouseholdJobCoordinates({
-      latitude: fallbackLocation.latitude,
-      longitude: fallbackLocation.longitude,
-    });
-    setHouseholdJobLocationPreview(fallbackLocation);
+    setHouseholdJobCoordinates(null);
+    setHouseholdJobLocationPreview(suggestedLocation);
     setHouseholdJobMapMode("preview");
     householdJobMapViewRef.current = {
-      center: [fallbackLocation.latitude, fallbackLocation.longitude],
+      center: [suggestedLocation.latitude, suggestedLocation.longitude],
       zoom: 15,
       touched: false,
     };
     setHouseholdJobForm((prev) => ({
       ...prev,
       barangay: selectedBarangay,
-      streetAddress: fallbackLocation.streetAddress,
+      streetAddress: suggestedLocation.streetAddress,
     }));
-    if (householdJobBarangaySyncRef.current !== syncId) {
-      return null;
-    }
-    return fallbackLocation;
+    return suggestedLocation;
   }
   return {
     captureHouseholdJobLocation,

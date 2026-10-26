@@ -188,9 +188,11 @@ class ComplaintAdminViewTests(TestCase):
 
     def test_admin_can_resolve_a_complaint(self):
         authenticate(self.client, self.superadmin)
+        url = reverse("complaint-update-admin", args=[self.complaint.id])
 
+        self.client.patch(url, {"status": "under_review"}, content_type="application/json")
         response = self.client.patch(
-            reverse("complaint-update-admin", args=[self.complaint.id]),
+            url,
             {"status": "resolved", "resolution": "Worker was warned."},
             content_type="application/json",
         )
@@ -198,6 +200,32 @@ class ComplaintAdminViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], "resolved")
         self.assertEqual(response.data["resolution"], "Worker was warned.")
+
+    def test_a_report_cannot_be_settled_before_it_is_under_review(self):
+        authenticate(self.client, self.superadmin)
+        url = reverse("complaint-update-admin", args=[self.complaint.id])
+
+        for new_status in ("resolved", "closed"):
+            response = self.client.patch(
+                url, {"status": new_status, "resolution": "Done."}, content_type="application/json"
+            )
+            self.assertEqual(response.status_code, 400, new_status)
+
+        self.complaint.refresh_from_db()
+        self.assertEqual(self.complaint.status, Complaint.STATUS_SUBMITTED)
+
+    def test_a_settled_report_cannot_be_reopened(self):
+        authenticate(self.client, self.superadmin)
+        url = reverse("complaint-update-admin", args=[self.complaint.id])
+        self.client.patch(url, {"status": "under_review"}, content_type="application/json")
+        self.client.patch(url, {"status": "closed", "resolution": "Not enough detail."}, content_type="application/json")
+
+        for new_status in ("submitted", "under_review", "resolved"):
+            response = self.client.patch(url, {"status": new_status}, content_type="application/json")
+            self.assertEqual(response.status_code, 400, new_status)
+
+        self.complaint.refresh_from_db()
+        self.assertEqual(self.complaint.status, Complaint.STATUS_CLOSED)
 
     def test_invalid_status_is_rejected(self):
         authenticate(self.client, self.superadmin)
@@ -368,7 +396,9 @@ class ComplaintEvidenceAndBlockingTests(TestCase):
         authenticate(self.client, self.admin)
         url = reverse("complaint-block-admin", kwargs={"pk": complaint.id})
 
-        response = self.client.post(url, {"duration_days": 7}, content_type="application/json")
+        response = self.client.post(
+            url, {"duration_days": 7, "reason": "Unpaid work."}, content_type="application/json"
+        )
         self.assertEqual(response.status_code, 200)
 
         household_profile = UserProfile.objects.get(user=self.household)
@@ -602,12 +632,13 @@ class ComplaintConfidentialityTests(TestCase):
 
     def test_respondent_is_never_notified_about_the_report(self):
         authenticate(self.client, self.superadmin)
-        for new_status in ("resolved", "closed"):
-            self.client.patch(
+        for new_status in ("under_review", "resolved", "closed"):
+            response = self.client.patch(
                 reverse("complaint-update-admin", args=[self.complaint.id]),
-                {"status": new_status},
+                {"status": new_status, "resolution": "Both parties were contacted."},
                 content_type="application/json",
             )
+            self.assertEqual(response.status_code, 200, new_status)
 
         authenticate(self.client, self.worker)
         notifications = self.client.get(reverse("notification-list")).json()["results"]

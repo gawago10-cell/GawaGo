@@ -695,6 +695,7 @@ class _JobMarketOverviewState extends State<_JobMarketOverview> {
   Widget build(BuildContext context) {
     final query = _search.trim().toLowerCase();
     final visibleSkills = gawagoSkills
+        .where((skill) => !isOtherSkillChoice(skill))
         .where((skill) => query.isEmpty || skill.toLowerCase().contains(query))
         .toList();
     final workerSkills = widget.profile.skills.map(_normalizeSkill).toSet();
@@ -1431,9 +1432,11 @@ class _WorkerJobsFilterCard extends StatelessWidget {
             decoration: _filterFieldDecoration(hintText: 'All Types'),
             items: [
               const DropdownMenuItem(value: null, child: Text('All Types')),
-              ...gawagoSkills.map(
-                (item) => DropdownMenuItem(value: item, child: Text(item)),
-              ),
+              ...gawagoSkills
+                  .where((item) => !isOtherSkillChoice(item))
+                  .map(
+                    (item) => DropdownMenuItem(value: item, child: Text(item)),
+                  ),
             ],
             onChanged: onSkillChanged,
           ),
@@ -1443,7 +1446,7 @@ class _WorkerJobsFilterCard extends StatelessWidget {
           TextField(
             controller: location,
             onSubmitted: (_) => onFilter(),
-            decoration: _filterFieldDecoration(hintText: 'e.g. Poblacion'),
+            decoration: _filterFieldDecoration(hintText: 'e.g. Lita'),
           ),
           const SizedBox(height: 18),
           SizedBox(
@@ -3356,6 +3359,13 @@ class _WorkerInProgressJobCard extends StatelessWidget {
         : 'Household';
     final awaitingConfirmation =
         _workerApplicationStage(job) == 'awaiting_confirmation';
+    // The backend refuses completion before the start date (a review must
+    // follow work that happened), so the button waits for it too.
+    final startDate = DateTime.tryParse(job.jobStartDate);
+    final now = DateTime.now();
+    final notStarted =
+        startDate != null &&
+        DateTime(now.year, now.month, now.day).isBefore(startDate);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -3412,6 +3422,16 @@ class _WorkerInProgressJobCard extends StatelessWidget {
           if (awaitingConfirmation)
             Text(
               'Marked complete — waiting for $household to confirm.',
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 13,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          else if (notStarted)
+            Text(
+              'You can mark this job complete once it starts on ${job.jobStartDate}.',
+              key: const ValueKey('worker-job-not-started'),
               style: const TextStyle(
                 color: GawaGoColors.textMuted,
                 fontSize: 13,
@@ -3694,6 +3714,12 @@ class _ProfileFormState extends State<_ProfileForm> {
       _message('Enter an hourly or daily service rate.');
       return;
     }
+    // "Other" is never saved as a skill (an older profile may still hold it).
+    final skills = resolveWorkerSkills(_skills, '');
+    if (skills.isEmpty) {
+      _message('Choose at least one skill.');
+      return;
+    }
     if (_availabilityWindows.any((item) => item.startTime == item.endTime)) {
       _message('Availability start and end time must be different.');
       return;
@@ -3712,9 +3738,12 @@ class _ProfileFormState extends State<_ProfileForm> {
         'location_label': _location.text.trim(),
         'latitude': _coordinateForApi(_profilePin!.latitude),
         'longitude': _coordinateForApi(_profilePin!.longitude),
-        'skills': _skills.toList(),
+        'skills': skills,
       }, profilePhotoPath: _photoPath);
       await widget.repository.saveAvailabilityWindows(_availabilityWindows);
+      _skills
+        ..clear()
+        ..addAll(skills);
       _savedSkills = _skills.toSet();
       if (mounted) {
         setState(() => _editing = false);
@@ -3821,6 +3850,57 @@ class _ProfileFormState extends State<_ProfileForm> {
     }
   }
 
+  Future<void> _addTypedSkillChip() async {
+    final controller = TextEditingController();
+    final typed = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add a skill not listed'),
+        content: TextField(
+          key: const ValueKey('profile-typed-skill-field'),
+          controller: controller,
+          autofocus: true,
+          maxLength: 120,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Skill name',
+            hintText: 'e.g. Masonry',
+            counterText: '',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (typed == null || !mounted) return;
+    final names = resolveWorkerSkills([gawagoOtherSkill], typed);
+    if (names.isEmpty) {
+      _message('Type the name of the skill.');
+      return;
+    }
+    // A typed catalog name ticks that chip instead of adding a copy.
+    final catalogName = gawagoSkills.firstWhere(
+      (skill) => skill.toLowerCase() == names.first.toLowerCase(),
+      orElse: () => names.first,
+    );
+    if (_skills.any(
+      (skill) => skill.toLowerCase() == catalogName.toLowerCase(),
+    )) {
+      _message('That skill is already listed.');
+      return;
+    }
+    setState(() => _skills.add(catalogName));
+  }
+
   Future<void> _addPortfolioSkill(List<PortfolioSkill> existing) async {
     if (_skillChipsUnsaved) {
       _message('Save your skill changes first, then add a portfolio skill.');
@@ -3836,18 +3916,21 @@ class _ProfileFormState extends State<_ProfileForm> {
       ...existing.map((item) => item.skillName.toLowerCase()),
       ..._skills.map((item) => item.toLowerCase()),
     };
+    // "Other" stays last and opens a text box: the word itself is never a
+    // skill (the backend refuses it).
     final available = gawagoSkills
-        .where((skill) => !taken.contains(skill.toLowerCase()))
+        .where(
+          (skill) =>
+              isOtherSkillChoice(skill) || !taken.contains(skill.toLowerCase()),
+        )
         .toList();
-    if (available.isEmpty) {
-      _message('Every skill category is already on your profile.');
-      return;
-    }
+    final typedSkill = TextEditingController();
     final result = await showDialog<(String, String)>(
       context: context,
       builder: (dialogContext) {
         String skill = available.first;
         String proficiency = PortfolioSkill.proficiencyOptions.first;
+        String? typedError;
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
             title: const Text('Add skill'),
@@ -3860,13 +3943,32 @@ class _ProfileFormState extends State<_ProfileForm> {
                   decoration: const InputDecoration(labelText: 'Skill'),
                   items: available
                       .map(
-                        (item) =>
-                            DropdownMenuItem(value: item, child: Text(item)),
+                        (item) => DropdownMenuItem(
+                          value: item,
+                          child: Text(
+                            isOtherSkillChoice(item) ? 'Other (type it)' : item,
+                          ),
+                        ),
                       )
                       .toList(),
                   onChanged: (value) =>
                       setDialogState(() => skill = value ?? skill),
                 ),
+                if (isOtherSkillChoice(skill)) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('portfolio-custom-skill'),
+                    controller: typedSkill,
+                    maxLength: 120,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      labelText: 'Skill name',
+                      hintText: 'e.g. Masonry',
+                      errorText: typedError,
+                      counterText: '',
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   isExpanded: true,
@@ -3893,8 +3995,28 @@ class _ProfileFormState extends State<_ProfileForm> {
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () =>
-                    Navigator.pop(dialogContext, (skill, proficiency)),
+                onPressed: () {
+                  if (!isOtherSkillChoice(skill)) {
+                    Navigator.pop(dialogContext, (skill, proficiency));
+                    return;
+                  }
+                  final typed = resolveWorkerSkills([
+                    gawagoOtherSkill,
+                  ], typedSkill.text);
+                  if (typed.isEmpty) {
+                    setDialogState(
+                      () => typedError = 'Type the name of the skill.',
+                    );
+                    return;
+                  }
+                  if (taken.contains(typed.first.toLowerCase())) {
+                    setDialogState(
+                      () => typedError = 'That skill is already listed.',
+                    );
+                    return;
+                  }
+                  Navigator.pop(dialogContext, (typed.first, proficiency));
+                },
                 child: const Text('Add Skill'),
               ),
             ],
@@ -3902,6 +4024,7 @@ class _ProfileFormState extends State<_ProfileForm> {
         );
       },
     );
+    typedSkill.dispose();
     if (result == null) return;
     await _runPortfolioAction(() async {
       await widget.repository.addPortfolioSkill(
@@ -4151,30 +4274,52 @@ class _ProfileFormState extends State<_ProfileForm> {
               Wrap(
                 spacing: 8,
                 runSpacing: 4,
-                children: gawagoSkills
-                    .map(
-                      (skill) => FilterChip(
-                        label: Text(skill),
-                        selected: _skills.contains(skill),
-                        onSelected: !_editing
-                            ? null
-                            : (selected) {
-                                if (selected &&
-                                    _skills.length >= maxWorkerSkills) {
-                                  _message(
-                                    'You can select up to $maxWorkerSkills skills only.',
+                children: [
+                  ...gawagoSkills
+                      .where((skill) => !isOtherSkillChoice(skill))
+                      .map(
+                        (skill) => FilterChip(
+                          label: Text(skill),
+                          selected: _skills.contains(skill),
+                          onSelected: !_editing
+                              ? null
+                              : (selected) {
+                                  if (selected &&
+                                      _skills.length >= maxWorkerSkills) {
+                                    _message(
+                                      'You can select up to $maxWorkerSkills skills only.',
+                                    );
+                                    return;
+                                  }
+                                  setState(
+                                    () => selected
+                                        ? _skills.add(skill)
+                                        : _skills.remove(skill),
                                   );
-                                  return;
-                                }
-                                setState(
-                                  () => selected
-                                      ? _skills.add(skill)
-                                      : _skills.remove(skill),
-                                );
-                              },
+                                },
+                        ),
                       ),
-                    )
-                    .toList(),
+                  // Skills the worker typed (outside the catalog) were
+                  // saved but never shown here, so they could not be removed.
+                  ..._skills
+                      .where((skill) => !gawagoSkills.contains(skill))
+                      .map(
+                        (skill) => InputChip(
+                          label: Text(skill),
+                          selected: true,
+                          onDeleted: _editing
+                              ? () => setState(() => _skills.remove(skill))
+                              : null,
+                        ),
+                      ),
+                  if (_editing && _skills.length < maxWorkerSkills)
+                    ActionChip(
+                      key: const ValueKey('profile-add-typed-skill'),
+                      avatar: const Icon(Icons.add, size: 16),
+                      label: const Text('Other skill'),
+                      onPressed: _addTypedSkillChip,
+                    ),
+                ],
               ),
             ],
           ),

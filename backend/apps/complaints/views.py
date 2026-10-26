@@ -26,14 +26,11 @@ MAX_EVIDENCE_IMAGES = 5
 # Submitted -> Under Review -> Resolved/Closed (AGENTS.md II.D), forward
 # only. Any transition used to be accepted, so a resolved report could be
 # pushed back to submitted and a closed one reopened, re-notifying the filer
-# that their report had "been updated" each time. An administrator may still
-# settle a clear-cut case in one step without parking it in review first.
+# that their report had "been updated" each time. A report is also never
+# settled without first being marked Under Review, so the filer always sees
+# it was looked at before it was decided.
 ALLOWED_COMPLAINT_TRANSITIONS = {
-    Complaint.STATUS_SUBMITTED: {
-        Complaint.STATUS_UNDER_REVIEW,
-        Complaint.STATUS_RESOLVED,
-        Complaint.STATUS_CLOSED,
-    },
+    Complaint.STATUS_SUBMITTED: {Complaint.STATUS_UNDER_REVIEW},
     Complaint.STATUS_UNDER_REVIEW: {Complaint.STATUS_RESOLVED, Complaint.STATUS_CLOSED},
     Complaint.STATUS_RESOLVED: {Complaint.STATUS_CLOSED},
     Complaint.STATUS_CLOSED: set(),

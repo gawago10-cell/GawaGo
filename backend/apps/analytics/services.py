@@ -15,26 +15,14 @@ from apps.common.barangays import (
     barangay_from_location_label as _barangay_from_location_label,
     normalize_barangay_name as _normalize_barangay_name,
 )
+from apps.common.skills import SKILL_CATALOG, canonical_skill_label
 from apps.jobs.models import JobApplication, JobPosting
 
 
 # The barangay table and label parser are shared with reports and the job
-# serializer's label masking -- see apps.common.barangays.
-SERVICE_CATEGORIES = [
-    "House Cleaning",
-    "Cooking",
-    "Laundry",
-    "Childcare",
-    "Elder Care",
-    "Gardening",
-    "Electrical Work",
-    "Plumbing",
-    "Carpentry",
-    "Painting",
-    "Aircon Repair/Cleaning",
-    "Welding",
-    "Driving",
-]
+# serializer's label masking -- see apps.common.barangays. The service
+# categories are the skill catalog the clients offer (apps.common.skills).
+SERVICE_CATEGORIES = list(SKILL_CATALOG)
 
 
 def _decimal_to_float(value):
@@ -121,7 +109,9 @@ def _build_enhanced_analytics(jobs, total_workers):
 
 
 def _build_service_analytics(jobs):
-    counts = Counter(job.required_skill for job in jobs if job.required_skill)
+    # Counted under the catalog name, so "Electrician" and "Electrical Work"
+    # are one bar rather than two.
+    counts = Counter(canonical_skill_label(job.required_skill) for job in jobs if job.required_skill)
     categories = [*SERVICE_CATEGORIES, *[skill for skill in counts if skill not in SERVICE_CATEGORIES]]
     return [
         {

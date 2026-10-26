@@ -29,6 +29,7 @@ from apps.jobs.services import (
     close_open_applications,
     complete_job,
     hire_application,
+    job_not_started_message,
     record_application_status_event,
     record_job_status_event,
 )
@@ -296,6 +297,10 @@ class JobViewSet(viewsets.ModelViewSet):
                 should_complete = current_status != JobPosting.STATUS_COMPLETED and requested_status == JobPosting.STATUS_COMPLETED
                 if should_complete and not serializer.instance.applications.filter(status=JobApplication.STATUS_HIRED).exists():
                     raise ValidationError({"status": "Only jobs with hired workers can be completed."})
+                if should_complete:
+                    not_started = job_not_started_message(serializer.instance)
+                    if not_started:
+                        raise ValidationError({"status": not_started})
                 if should_complete and not actor.is_staff:
                     household_profile = getattr(actor, "profile", None)
                     if not household_profile or household_profile.verification_status != "verified":
@@ -704,6 +709,9 @@ class JobCompletionRequestView(APIView):
                 {"detail": "Only the hired worker can request completion for this job."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        not_started = job_not_started_message(job)
+        if not_started:
+            return Response({"detail": not_started}, status=status.HTTP_400_BAD_REQUEST)
 
         note = str(request.data.get("note", "")).strip()
         if note:

@@ -32,6 +32,22 @@ class HiringWorkerSuspendedError(HiringError):
     pass
 
 
+def job_not_started_message(job):
+    """Why the job can't be finished yet, or "" when it can.
+
+    A job starting tomorrow could be marked done, confirmed and reviewed
+    today, which is exactly the "rating for work that never happened" the
+    completion gate exists to stop (AGENTS.md II.A). A job with no start
+    date (schedule text only) is not held back.
+    """
+    if job.job_start_date and timezone.localdate() < job.job_start_date:
+        return (
+            f"This job starts on {job.job_start_date:%B} {job.job_start_date.day}, {job.job_start_date.year}. "
+            "It can be marked complete once it has started."
+        )
+    return ""
+
+
 def get_user_display_name(user) -> str:
     return user.get_full_name().strip() or user.username
 

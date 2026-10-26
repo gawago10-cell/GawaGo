@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 
 import App from "./App";
-import { validateRegistration } from "./utils/registrationValidation";
+import { validateRegistration, validateWorkerRegistration } from "./utils/registrationValidation";
+import { resolveWorkerSkills } from "./utils/skillUtils";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -40,14 +41,58 @@ describe("validateRegistration", () => {
     );
   });
 
+  it("accepts any email provider, as the backend and mobile app do", () => {
+    expect(validateRegistration({ ...FILLED, email: "ralph@yahoo.com" })).toEqual({});
+    expect(validateRegistration({ ...FILLED, email: "ralph@school.edu.ph" })).toEqual({});
+  });
+
   it("explains a bad email, a short password and a mismatch on their own fields", () => {
-    expect(validateRegistration({ ...FILLED, email: "ralph@yahoo.com" }).email).toMatch(/gmail/i);
+    expect(validateRegistration({ ...FILLED, email: "ralph@yahoo" }).email).toMatch(/complete email/i);
+    expect(validateRegistration({ ...FILLED, email: "ralph yahoo.com" }).email).toMatch(/complete email/i);
     expect(validateRegistration({ ...FILLED, password: "short", confirmPassword: "short" }).password).toMatch(/8/);
     expect(validateRegistration({ ...FILLED, confirmPassword: "different1" }).confirmPassword).toMatch(/match/i);
   });
 
   it("passes a complete, valid form", () => {
     expect(validateRegistration(FILLED)).toEqual({});
+  });
+});
+
+describe("validateWorkerRegistration", () => {
+  const WORKER = { ...FILLED, latitude: 14.05, longitude: 121.53, skills: ["Plumbing"], customSkill: "" };
+
+  it("passes a complete worker form", () => {
+    expect(validateWorkerRegistration(WORKER)).toEqual({});
+  });
+
+  it("requires a map pin, since matching measures distance from it", () => {
+    expect(validateWorkerRegistration({ ...WORKER, latitude: null, longitude: null }).location).toMatch(/pin/i);
+  });
+
+  it("requires a skill, and a typed name when Other is ticked", () => {
+    expect(validateWorkerRegistration({ ...WORKER, skills: [] }).skills).toMatch(/at least one/i);
+    expect(validateWorkerRegistration({ ...WORKER, skills: ["Other"] }).customSkill).toMatch(/type/i);
+    expect(validateWorkerRegistration({ ...WORKER, skills: ["Other"], customSkill: "other" }).customSkill).toMatch(/type/i);
+    expect(validateWorkerRegistration({ ...WORKER, skills: ["Other"], customSkill: "Masonry" })).toEqual({});
+  });
+
+  it("counts a typed skill toward the limit of three", () => {
+    const skills = ["Plumbing", "Carpentry", "Welding", "Other"];
+    expect(validateWorkerRegistration({ ...WORKER, skills, customSkill: "Masonry" }).skills).toMatch(/up to 3/);
+  });
+});
+
+describe("resolveWorkerSkills", () => {
+  it("never saves the word Other, and saves the typed skill in its place", () => {
+    expect(resolveWorkerSkills(["Electrical Work", "Other"], "  Solar   Panel Install ")).toEqual([
+      "Electrical Work",
+      "Solar Panel Install",
+    ]);
+  });
+
+  it("ignores a typed skill when Other is not ticked, and merges case duplicates", () => {
+    expect(resolveWorkerSkills(["Plumbing"], "Masonry")).toEqual(["Plumbing"]);
+    expect(resolveWorkerSkills(["Plumbing", "Other"], "plumbing")).toEqual(["Plumbing"]);
   });
 });
 
@@ -136,10 +181,13 @@ describe("worker registration form", () => {
     window.dispatchEvent(new PopStateEvent("popstate"));
     await waitFor(() => expect(document.querySelector('form [name="streetAddress"]')).toBeTruthy());
 
-    expect(document.querySelectorAll("form .required-mark").length).toBe(9);
+    // The nine shared fields, plus the map pin and the skills.
+    expect(document.querySelectorAll("form .required-mark").length).toBe(11);
     fireEvent.submit(document.querySelector("form"));
 
-    await waitFor(() => expect(document.querySelectorAll("form .is-invalid").length).toBe(9));
+    await waitFor(() => expect(document.querySelectorAll("form .is-invalid").length).toBe(11));
+    expect(document.querySelector("#register-error-location").textContent).toMatch(/pin/i);
+    expect(document.querySelector("#register-error-skills").textContent).toMatch(/at least one skill/i);
     expect(window.alert).not.toHaveBeenCalled();
   });
 });

@@ -1430,6 +1430,8 @@ class _PostJobState extends State<_PostJob> {
   final _rate = TextEditingController();
   final _slots = TextEditingController(text: '1');
   final _workingDays = TextEditingController();
+  // The service typed when "Other" is picked; "Other" is never sent.
+  final _customService = TextEditingController();
   String? _skill;
   String? _barangay;
   String _scheduleType = 'One-Time';
@@ -1456,6 +1458,18 @@ class _PostJobState extends State<_PostJob> {
   static const int _maxJobImages = 5;
   static const int _maxJobImageBytes = 5 * 1024 * 1024;
 
+  @override
+  void dispose() {
+    _title.dispose();
+    _description.dispose();
+    _location.dispose();
+    _rate.dispose();
+    _slots.dispose();
+    _workingDays.dispose();
+    _customService.dispose();
+    super.dispose();
+  }
+
   /// Clears everything that describes one job. The location and pin are
   /// the household's own address, so they stay for the next posting.
   void _resetJobFields() {
@@ -1465,6 +1479,7 @@ class _PostJobState extends State<_PostJob> {
       _rate.clear();
       _slots.text = '1';
       _workingDays.clear();
+      _customService.clear();
       _skill = null;
       _scheduleType = 'One-Time';
       _rateType = 'Per Day';
@@ -1536,10 +1551,25 @@ class _PostJobState extends State<_PostJob> {
     setState(() => _pin = point);
   }
 
+  /// The service the job is for: the picked catalog skill, or the typed one
+  /// when "Other" is picked. Null when nothing usable was chosen.
+  String? get _serviceType {
+    final skill = _skill;
+    if (skill == null) return null;
+    if (!isOtherSkillChoice(skill)) return skill;
+    final typed = resolveWorkerSkills([gawagoOtherSkill], _customService.text);
+    return typed.isEmpty ? null : typed.first;
+  }
+
   Future<void> _submit() async {
     if (_posting) return;
+    if (_skill != null && isOtherSkillChoice(_skill!) && _serviceType == null) {
+      _message('Type the service you need instead of "Other".');
+      return;
+    }
+    final serviceType = _serviceType;
     if (_title.text.trim().isEmpty ||
-        _skill == null ||
+        serviceType == null ||
         _barangay == null ||
         _startDate == null ||
         _location.text.trim().isEmpty ||
@@ -1585,8 +1615,8 @@ class _PostJobState extends State<_PostJob> {
       final locationLabel = '${_barangay!}, ${_location.text.trim()}';
       final created = await widget.repository.createJob({
         'title': _title.text.trim(),
-        'job_type': _skill,
-        'required_skill': _skill,
+        'job_type': serviceType,
+        'required_skill': serviceType,
         'schedule_type': _scheduleType,
         'description': _description.text.trim(),
         'rate_type': switch (_rateType) {
@@ -1747,6 +1777,7 @@ class _PostJobState extends State<_PostJob> {
                         rate: _rate,
                         slots: _slots,
                         workingDays: _workingDays,
+                        customService: _customService,
                         serviceType: _skill,
                         scheduleType: _scheduleType,
                         barangay: _barangay,
@@ -1763,8 +1794,12 @@ class _PostJobState extends State<_PostJob> {
                         onScheduleChanged: (value) => setState(
                           () => _scheduleType = value ?? _scheduleType,
                         ),
-                        onBarangayChanged: (value) =>
-                            setState(() => _barangay = value),
+                        // A job in another barangay is pinned there, not at
+                        // the household's home pin.
+                        onBarangayChanged: (value) => setState(() {
+                          if (value != _barangay) _pin = null;
+                          _barangay = value;
+                        }),
                         onRateTypeChanged: (value) =>
                             setState(() => _rateType = value ?? _rateType),
                         onGeographicBoundaryChanged: (value) => setState(
@@ -1795,6 +1830,7 @@ class _PostJobState extends State<_PostJob> {
                       final map = _PostJobMapPanel(
                         pin: _pin,
                         profilePin: profilePin,
+                        focus: barangayCenter(_barangay),
                         onSetPin: _setPin,
                         onLocate: _locate,
                       );
@@ -1894,6 +1930,7 @@ class _PostJobFields extends StatelessWidget {
     required this.rate,
     required this.slots,
     required this.workingDays,
+    required this.customService,
     required this.serviceType,
     required this.scheduleType,
     required this.barangay,
@@ -1916,6 +1953,7 @@ class _PostJobFields extends StatelessWidget {
   final TextEditingController rate;
   final TextEditingController slots;
   final TextEditingController workingDays;
+  final TextEditingController customService;
   final String? serviceType;
   final String scheduleType;
   final String? barangay;
@@ -1955,6 +1993,13 @@ class _PostJobFields extends StatelessWidget {
             onChanged: onScheduleChanged,
           ),
         ),
+        if (serviceType != null && isOtherSkillChoice(serviceType!))
+          _PostJobInput(
+            key: const ValueKey('post-job-custom-service'),
+            label: 'Specify Service Type',
+            controller: customService,
+            hint: 'e.g. Pet Grooming',
+          ),
         _PostJobInput(
           label: 'Job Description',
           controller: description,
@@ -2061,6 +2106,7 @@ class _PostJobTwoColumn extends StatelessWidget {
 
 class _PostJobInput extends StatelessWidget {
   const _PostJobInput({
+    super.key,
     required this.label,
     required this.controller,
     this.hint,
@@ -2241,18 +2287,43 @@ class _PostJobLabeledField extends StatelessWidget {
   }
 }
 
-class _PostJobMapPanel extends StatelessWidget {
+class _PostJobMapPanel extends StatefulWidget {
   const _PostJobMapPanel({
     required this.pin,
     required this.profilePin,
     required this.onSetPin,
     required this.onLocate,
+    this.focus,
   });
 
   final LatLng? pin;
   final LatLng? profilePin;
   final ValueChanged<LatLng> onSetPin;
   final VoidCallback onLocate;
+
+  /// The chosen barangay's centre; the map moves there when it changes.
+  final LatLng? focus;
+
+  @override
+  State<_PostJobMapPanel> createState() => _PostJobMapPanelState();
+}
+
+class _PostJobMapPanelState extends State<_PostJobMapPanel> {
+  final MapController _controller = MapController();
+
+  LatLng? get pin => widget.pin;
+  LatLng? get profilePin => widget.profilePin;
+  ValueChanged<LatLng> get onSetPin => widget.onSetPin;
+  VoidCallback get onLocate => widget.onLocate;
+
+  @override
+  void didUpdateWidget(covariant _PostJobMapPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final focus = widget.focus;
+    if (widget.pin == null && focus != null && focus != oldWidget.focus) {
+      _controller.move(focus, 15);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2264,12 +2335,16 @@ class _PostJobMapPanel extends StatelessWidget {
           child: SizedBox(
             height: 462,
             child: FlutterMap(
+              mapController: _controller,
               options: MapOptions(
                 // Fallback is Tayabas City (the service area), the same
                 // center the worker screens use -- not the whole country,
                 // where a tap can't place a usable pin.
                 initialCenter:
-                    pin ?? profilePin ?? const LatLng(14.0253, 121.5929),
+                    pin ??
+                    profilePin ??
+                    widget.focus ??
+                    const LatLng(14.0253, 121.5929),
                 initialZoom: pin == null && profilePin == null ? 13 : 14,
                 onTap: (_, point) => onSetPin(point),
               ),
@@ -3215,6 +3290,20 @@ class _JobDetailState extends State<_JobDetail> {
               _JobDetailsSummaryCard(
                 job: job,
                 busy: _busy,
+                // Editable until someone is hired; the empty matches screen
+                // tells households to widen the radius here.
+                onEdit: job.status == 'open'
+                    ? () async {
+                        final changes = await showDialog<Map<String, dynamic>>(
+                          context: context,
+                          builder: (_) => _EditJobDialog(job: job),
+                        );
+                        if (changes == null || changes.isEmpty) return;
+                        await _run(
+                          () => widget.repository.updateJob(job.id, changes),
+                        );
+                      }
+                    : null,
                 onCancel: job.status == 'open' || job.status == 'assigned'
                     ? () async {
                         final confirmed = await _confirmDialog(
@@ -3326,16 +3415,249 @@ class _JobDetailState extends State<_JobDetail> {
   }
 }
 
+/// Edits an open job's wording, rate, dates, worker count and search
+/// radius. Pops with only the fields that changed (an unchanged past start
+/// date would otherwise be refused as a past date), or null on cancel.
+class _EditJobDialog extends StatefulWidget {
+  const _EditJobDialog({required this.job});
+
+  final HouseholdJob job;
+
+  @override
+  State<_EditJobDialog> createState() => _EditJobDialogState();
+}
+
+class _EditJobDialogState extends State<_EditJobDialog> {
+  static const _radii = ['1km', '2km', '5km', '10km', 'unlimited'];
+  static const _rateTypes = ['Per Day', 'Per Hour', 'Fixed Rate'];
+
+  late final _title = TextEditingController(text: widget.job.title);
+  late final _description = TextEditingController(text: widget.job.description);
+  late final _rate = TextEditingController(
+    text: widget.job.serviceRate.toStringAsFixed(2),
+  );
+  late final _slots = TextEditingController(text: '${widget.job.workerSlots}');
+  late final _workingDays = TextEditingController(
+    text: widget.job.estimatedWorkingDays?.toString() ?? '',
+  );
+  late String _rateType = _rateTypes.contains(widget.job.rateTypeLabel)
+      ? widget.job.rateTypeLabel
+      : 'Per Day';
+  late String _radius = _radii.contains(widget.job.geographicBoundary)
+      ? widget.job.geographicBoundary
+      : '1km';
+  late DateTime? _start = DateTime.tryParse(widget.job.jobStartDate ?? '');
+  late DateTime? _end = DateTime.tryParse(widget.job.jobEndDate ?? '');
+  String? _error;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _description.dispose();
+    _rate.dispose();
+    _slots.dispose();
+    _workingDays.dispose();
+    super.dispose();
+  }
+
+  String _iso(DateTime? date) => date == null
+      ? ''
+      : '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _rateTypeValue(String label) => switch (label) {
+    'Per Hour' => 'per_hour',
+    'Fixed Rate' => 'fixed',
+    _ => 'per_day',
+  };
+
+  Future<void> _pickDate({required bool start}) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final current = start ? _start : _end;
+    final first = start ? today : (_start ?? today);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current != null && !current.isBefore(first)
+          ? current
+          : first,
+      firstDate: first,
+      lastDate: today.add(const Duration(days: 365)),
+    );
+    if (picked == null) return;
+    setState(() {
+      _error = null;
+      if (start) {
+        _start = picked;
+        if (_end != null && _end!.isBefore(picked)) _end = null;
+      } else {
+        _end = picked;
+      }
+    });
+  }
+
+  void _save() {
+    final job = widget.job;
+    final rate = double.tryParse(_rate.text.trim());
+    final slots = int.tryParse(_slots.text.trim());
+    final daysText = _workingDays.text.trim();
+    final days = daysText.isEmpty ? null : int.tryParse(daysText);
+    if (_title.text.trim().isEmpty) {
+      setState(() => _error = 'Give the job a title.');
+      return;
+    }
+    if (rate == null || rate <= 0) {
+      setState(() => _error = 'Enter an offered rate above zero.');
+      return;
+    }
+    if (slots == null || slots < 1 || slots > 50) {
+      setState(() => _error = 'Workers needed must be between 1 and 50.');
+      return;
+    }
+    if (daysText.isNotEmpty && (days == null || days < 1 || days > 366)) {
+      setState(
+        () => _error = 'Working days must be a number between 1 and 366.',
+      );
+      return;
+    }
+    if (_start == null) {
+      setState(() => _error = 'A job needs a start date.');
+      return;
+    }
+    final changes = <String, dynamic>{};
+    if (_title.text.trim() != job.title) changes['title'] = _title.text.trim();
+    if (_description.text.trim() != job.description) {
+      changes['description'] = _description.text.trim();
+    }
+    if ((rate - job.serviceRate).abs() > 0.001) {
+      changes['service_rate'] = rate.toStringAsFixed(2);
+    }
+    if (_rateTypeValue(_rateType) != _rateTypeValue(job.rateTypeLabel)) {
+      changes['rate_type'] = _rateTypeValue(_rateType);
+    }
+    if (slots != job.workerSlots) changes['worker_slots'] = slots;
+    if (days != job.estimatedWorkingDays) {
+      changes['estimated_working_days'] = days;
+    }
+    if (_iso(_start) != (job.jobStartDate ?? '')) {
+      changes['job_start_date'] = _iso(_start);
+    }
+    if (_iso(_end) != (job.jobEndDate ?? '')) {
+      changes['job_end_date'] = _end == null ? null : _iso(_end);
+    }
+    if (_radius != job.geographicBoundary) {
+      changes['geographic_boundary'] = _radius;
+    }
+    Navigator.pop(context, changes);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit job'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _title,
+              decoration: const InputDecoration(labelText: 'Job title'),
+            ),
+            TextField(
+              controller: _description,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Description'),
+            ),
+            TextField(
+              controller: _rate,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Offered rate (PHP)',
+              ),
+            ),
+            DropdownButtonFormField<String>(
+              initialValue: _rateType,
+              decoration: const InputDecoration(labelText: 'Rate type'),
+              items: _rateTypes
+                  .map(
+                    (item) => DropdownMenuItem(value: item, child: Text(item)),
+                  )
+                  .toList(),
+              onChanged: (value) =>
+                  setState(() => _rateType = value ?? _rateType),
+            ),
+            TextField(
+              controller: _slots,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Workers needed'),
+            ),
+            TextField(
+              controller: _workingDays,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Working days (optional)',
+              ),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Start date'),
+              trailing: Text(_start == null ? 'Pick' : _iso(_start)),
+              onTap: () => _pickDate(start: true),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('End date (optional)'),
+              trailing: Text(_end == null ? 'None' : _iso(_end)),
+              onTap: () => _pickDate(start: false),
+            ),
+            DropdownButtonFormField<String>(
+              key: const ValueKey('edit-job-radius'),
+              initialValue: _radius,
+              decoration: const InputDecoration(labelText: 'Search radius'),
+              items: _radii
+                  .map(
+                    (item) => DropdownMenuItem(value: item, child: Text(item)),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => _radius = value ?? _radius),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "The job site can't be moved after posting.",
+              style: TextStyle(fontSize: 12, color: GawaGoColors.textMuted),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: const TextStyle(color: GawaGoColors.danger)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Save changes')),
+      ],
+    );
+  }
+}
+
 class _JobDetailsSummaryCard extends StatelessWidget {
   const _JobDetailsSummaryCard({
     required this.job,
     required this.busy,
     required this.onCancel,
+    this.onEdit,
   });
 
   final HouseholdJob job;
   final bool busy;
   final VoidCallback? onCancel;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -3390,6 +3712,15 @@ class _JobDetailsSummaryCard extends StatelessWidget {
             label: 'Hiring Status',
             value: '${job.hiredCount}/${job.workerSlots} Hired',
           ),
+          if (onEdit != null) ...[
+            OutlinedButton.icon(
+              key: const ValueKey('household-edit-job'),
+              onPressed: busy ? null : onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Edit Job'),
+            ),
+            const SizedBox(height: 10),
+          ],
           if (onCancel != null)
             OutlinedButton(
               onPressed: busy ? null : onCancel,

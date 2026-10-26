@@ -15740,3 +15740,15 @@ a,
     padding-inline: 14px;
   }
 }
+
+/* Profile dialogs (Add Skills, certificates, work samples) used Bootstrap's
+   teal bg-success header, outside the GawaGo palette. */
+.modal-header.bg-success {
+  background: var(--gg-card-muted) !important;
+  color: var(--gg-ink) !important;
+  border-bottom: 1px solid var(--gg-line-strong);
+}
+
+.modal-header.bg-success .btn-close-white {
+  filter: none;
+}
