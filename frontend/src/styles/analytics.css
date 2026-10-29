@@ -20,6 +20,10 @@
 
 .superadmin-analytics {
   display: grid;
+  /* minmax(0, 1fr), not the implicit auto column: the map and charts have
+     a wide intrinsic size, and an auto column grew to fit them (722px on a
+     390px phone), cutting every card off at the right edge. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
 }
 

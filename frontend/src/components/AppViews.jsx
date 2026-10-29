@@ -5158,7 +5158,7 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-md-6">
+                      <div className="col-6">
                         <label className="form-label fw-semibold">Workers Needed</label>
                         <input
                           type="number"
@@ -5171,7 +5171,7 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-md-6">
+                      <div className="col-6">
                         <label className="form-label fw-semibold">Offered Rate</label>
                         <input
                           type="number"
@@ -5196,7 +5196,7 @@ export default function AppViews({
                           <option>Fixed Rate</option>
                         </select>
                       </div>
-                      <div className="col-md-6">
+                      <div className="col-6">
                         <label className="form-label fw-semibold">Job Start Date</label>
                         <input
                           type="date"
@@ -5208,7 +5208,7 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-md-6">
+                      <div className="col-6">
                         <label className="form-label fw-semibold">Job End Date</label>
                         <input
                           type="date"
@@ -5219,7 +5219,7 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-md-6">
+                      <div className="col-6">
                         <label className="form-label fw-semibold">Estimated Working Days</label>
                         <input
                           type="number"
@@ -5233,7 +5233,7 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-md-6">
+                      <div className="col-6">
                         <label className="form-label fw-semibold">Search Radius</label>
                         <select
                           name="geographicBoundary"

@@ -15958,3 +15958,41 @@ a,
     padding-top: 0.75rem;
   }
 }
+
+/* Platform Activity Report: its tables are two columns (name, count), but
+   the 780px minimum meant for the wide Posted Jobs table pushed the count
+   off the card on a phone, where overflow:hidden cut it off. */
+@media (max-width: 860px) {
+  .admin-platform-report .admin-reports-table {
+    min-width: 0;
+  }
+}
+
+.admin-platform-report .admin-reports-table :is(th, td):last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 767px) {
+  .admin-platform-report-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  /* The 200px minimum is for the sideways stat strip under "Reports"; in
+     this two-column grid it pushed the right card past the screen edge. */
+  .admin-platform-report .admin-report-stat-card {
+    min-width: 0;
+  }
+}
+
+/* Post a Job pairs its short fields two a row on a phone (col-6 in
+   AppViews); a two-line label like "Estimated Working Days" would push its
+   input below its neighbour's, so the pair lines up at the bottom. */
+@media (max-width: 767px) {
+  .household-job-fields > .col-6 {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+}
