@@ -248,6 +248,7 @@ export default function AppViews({
   householdScanLoadingRef.current = Boolean(recommendedWorkersLoading);
   const [ratingExtraSkillChoice, setRatingExtraSkillChoice] = useState("");
   const [workerMarketSearch, setWorkerMarketSearch] = useState("");
+  const [workerMarketExpanded, setWorkerMarketExpanded] = useState(false);
   const [householdNotificationMenuId, setHouseholdNotificationMenuId] = useState(null);
   const [householdNotificationDeletingId, setHouseholdNotificationDeletingId] = useState(null);
   const [workerNotificationPreview, setWorkerNotificationPreview] = useState(null);
@@ -672,6 +673,21 @@ export default function AppViews({
     }
     return workerMarketCategories.filter((category) => category.serviceType.toLowerCase().includes(searchTerm));
   }, [workerMarketCategories, workerMarketSearch]);
+  // Categories with open jobs or in the worker's skills come first. On a
+  // phone the rest fold behind a "Show more" button (see main.css) so the
+  // dashboard isn't a long scroll of empty categories; a search shows all.
+  const workerMarketList = useMemo(() => {
+    const isPriority = (category) => category.matchesWorkerSkills || category.openJobs > 0;
+    const priority = filteredWorkerMarketCategories
+      .filter(isPriority)
+      .sort((first, second) => second.openJobs - first.openJobs);
+    const rest = filteredWorkerMarketCategories.filter((category) => !isPriority(category));
+    const foldRest = !workerMarketSearch.trim() && priority.length > 0;
+    return {
+      categories: [...priority, ...rest.map((category) => ({ ...category, folded: foldRest }))],
+      foldedCount: foldRest ? rest.length : 0,
+    };
+  }, [filteredWorkerMarketCategories, workerMarketSearch]);
   const filteredWorkerVisibleJobs = useMemo(() => {
     return workerVisibleJobs.filter((job) => {
       const matchesJobType = workerJobTypeFilter === "All Types" || job.serviceType === workerJobTypeFilter;
@@ -2047,7 +2063,7 @@ export default function AppViews({
                   </div>
                 </div>
 
-                <section className="worker-market-panel">
+                <section className={`worker-market-panel ${workerMarketExpanded ? "is-expanded" : ""}`}>
                   <div className="worker-market-head">
                     <h2>Job Market Overview</h2>
                     <input
@@ -2059,15 +2075,19 @@ export default function AppViews({
                     />
                   </div>
                   <div className="worker-market-grid">
-                    {filteredWorkerMarketCategories.length > 0 ? (
-                      filteredWorkerMarketCategories.map((category) => (
+                    {workerMarketList.categories.length > 0 ? (
+                      workerMarketList.categories.map((category) => (
                       <article
-                        className={`worker-market-card ${category.matchesWorkerSkills ? "worker-market-card-match" : ""}`}
+                        className={`worker-market-card ${category.matchesWorkerSkills ? "worker-market-card-match" : ""} ${
+                          category.folded ? "worker-market-card-folded" : ""
+                        }`}
                         key={category.serviceType}
                       >
                         <div>
                           <h3>{category.serviceType}</h3>
-                          <p>{category.openJobs} open jobs</p>
+                          <p>
+                            {category.openJobs} open {category.openJobs === 1 ? "job" : "jobs"}
+                          </p>
                         </div>
                         <div className="worker-market-card-actions">
                           <span className={`badge ${category.matchesWorkerSkills ? "worker-skill-match" : "worker-skill-neutral"}`}>
@@ -2092,6 +2112,20 @@ export default function AppViews({
                       </article>
                     )}
                   </div>
+                  {workerMarketList.foldedCount > 0 && (
+                    <button
+                      className="worker-market-toggle"
+                      type="button"
+                      aria-expanded={workerMarketExpanded}
+                      onClick={() => setWorkerMarketExpanded((expanded) => !expanded)}
+                    >
+                      {workerMarketExpanded
+                        ? "Show fewer categories"
+                        : `Show ${workerMarketList.foldedCount} more ${
+                            workerMarketList.foldedCount === 1 ? "category" : "categories"
+                          }`}
+                    </button>
+                  )}
                 </section>
               </div>
             </div>

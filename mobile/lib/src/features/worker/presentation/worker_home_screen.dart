@@ -690,6 +690,15 @@ class _JobMarketOverview extends StatefulWidget {
 
 class _JobMarketOverviewState extends State<_JobMarketOverview> {
   String _search = '';
+  bool _expanded = false;
+
+  int _openCount(String skill) => widget.jobs
+      .where(
+        (job) =>
+            _normalizeSkill(job.jobType) == _normalizeSkill(skill) ||
+            _normalizeSkill(job.requiredSkill) == _normalizeSkill(skill),
+      )
+      .length;
 
   @override
   Widget build(BuildContext context) {
@@ -699,6 +708,21 @@ class _JobMarketOverviewState extends State<_JobMarketOverview> {
         .where((skill) => query.isEmpty || skill.toLowerCase().contains(query))
         .toList();
     final workerSkills = widget.profile.skills.map(_normalizeSkill).toSet();
+    final counts = {
+      for (final skill in visibleSkills) skill: _openCount(skill),
+    };
+    bool isPriority(String skill) =>
+        workerSkills.contains(_normalizeSkill(skill)) || counts[skill]! > 0;
+    // Categories with open jobs or in the worker's skills come first; the
+    // rest fold behind "Show more" so the dashboard isn't a long scroll of
+    // empty categories. A search shows every result.
+    final priority = visibleSkills.where(isPriority).toList()
+      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+    final rest = visibleSkills.where((skill) => !isPriority(skill)).toList();
+    final canFold = query.isEmpty && priority.isNotEmpty && rest.isNotEmpty;
+    final shownSkills = canFold && !_expanded
+        ? priority
+        : [...priority, ...rest];
 
     return Container(
       decoration: BoxDecoration(
@@ -771,32 +795,53 @@ class _JobMarketOverviewState extends State<_JobMarketOverview> {
               ),
             )
           else
-            ...visibleSkills.map((skill) {
-              final count = widget.jobs
-                  .where(
-                    (job) =>
-                        _normalizeSkill(job.jobType) ==
-                            _normalizeSkill(skill) ||
-                        _normalizeSkill(job.requiredSkill) ==
-                            _normalizeSkill(skill),
-                  )
-                  .length;
-              return _MarketCategoryRow(
+            ...shownSkills.map(
+              (skill) => _MarketCategoryRow(
                 skill: skill,
-                openCount: count,
+                openCount: counts[skill]!,
                 matches: workerSkills.contains(_normalizeSkill(skill)),
                 onTap: () => widget.onOpenJobs(skill),
-              );
-            }),
+              ),
+            ),
+          if (canFold)
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: GawaGoColors.border)),
+              ),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              child: OutlinedButton(
+                onPressed: () => setState(() => _expanded = !_expanded),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: GawaGoColors.ink,
+                  side: const BorderSide(color: GawaGoColors.lineStrong),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                    fontFamily: GawaGoColors.fontBody,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                child: Text(
+                  _expanded
+                      ? 'Show fewer categories'
+                      : 'Show ${rest.length} more '
+                            '${rest.length == 1 ? 'category' : 'categories'}',
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 }
 
-/// One work category inside the market panel. A full-width row rather than
-/// a grid cell, so the name, the open-job count and the "View All" action
-/// all stay readable at phone width.
+/// One work category inside the market panel: name and open-job count on
+/// the left, "View All" on the right, and a "Matches your skills" pill only
+/// on the categories that match, so each row stays short.
 class _MarketCategoryRow extends StatelessWidget {
   const _MarketCategoryRow({
     required this.skill,
@@ -817,58 +862,59 @@ class _MarketCategoryRow extends StatelessWidget {
         color: matches ? GawaGoColors.leafTint : GawaGoColors.surfaceMuted,
         border: const Border(top: BorderSide(color: GawaGoColors.border)),
       ),
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(18, 12, 14, 12),
+      child: Row(
         children: [
-          Text(
-            skill,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '$openCount open ${openCount == 1 ? 'job' : 'jobs'}',
-            style: const TextStyle(
-              fontSize: 14,
-              color: GawaGoColors.textMuted,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Flexible(child: _SkillMatchPill(matches: matches)),
-              const SizedBox(width: 10),
-              OutlinedButton(
-                onPressed: onTap,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: GawaGoColors.ink,
-                  side: const BorderSide(color: GawaGoColors.lineStrong),
-                  backgroundColor: Colors.transparent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  textStyle: const TextStyle(
-                    fontFamily: GawaGoColors.fontBody,
-                    fontSize: 13.5,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  skill,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 16,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0,
                   ),
                 ),
-                child: const Text('View All'),
+                const SizedBox(height: 2),
+                Text(
+                  '$openCount open ${openCount == 1 ? 'job' : 'jobs'}',
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    color: GawaGoColors.textMuted,
+                    letterSpacing: 0,
+                  ),
+                ),
+                if (matches) ...[
+                  const SizedBox(height: 6),
+                  const _SkillMatchPill(matches: true),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton(
+            onPressed: onTap,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: GawaGoColors.ink,
+              side: const BorderSide(color: GawaGoColors.lineStrong),
+              backgroundColor: Colors.transparent,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
               ),
-            ],
+              textStyle: const TextStyle(
+                fontFamily: GawaGoColors.fontBody,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            child: const Text('View All'),
           ),
         ],
       ),

@@ -465,9 +465,25 @@
     grid-template-columns: 1fr;
   }
 
-  .analytics-overview-metrics,
+  /* Two tiles a row (three for the account counts) instead of one, so the
+     snapshot isn't thirteen full-width tiles of scrolling on a phone. */
+  .analytics-overview-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
   .analytics-overview-panel:first-child .analytics-overview-metrics {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .analytics-overview-metric {
+    min-height: 0;
+    padding: 0.7rem;
+  }
+
+  /* Average Rating spans the row on desktop; here it fills the 2x2. */
+  .analytics-overview-metric.wide {
+    grid-column: auto;
   }
 
   .analytics-section-head {

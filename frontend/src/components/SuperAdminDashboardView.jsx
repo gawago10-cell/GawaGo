@@ -428,7 +428,7 @@ export default function SuperAdminDashboardView({
                   <div className="p-4">
                     {/* Metric Cards */}
                     <div className="row g-3 mb-4">
-                      <div className="col-md-3">
+                      <div className="col-6 col-md-3">
                         <div className="card border-0 shadow-sm bg-success text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Hiring Success Rate</h6>
@@ -437,7 +437,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="col-md-3">
+                      <div className="col-6 col-md-3">
                         <div className="card border-0 shadow-sm bg-info text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Job Match Rate</h6>
@@ -446,7 +446,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="col-md-3">
+                      <div className="col-6 col-md-3">
                         <div className="card border-0 shadow-sm bg-warning text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Hired Workers</h6>
@@ -455,7 +455,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="col-md-3">
+                      <div className="col-6 col-md-3">
                         <div className="card border-0 shadow-sm bg-primary text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Repeat Hires</h6>
