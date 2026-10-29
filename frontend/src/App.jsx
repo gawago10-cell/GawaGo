@@ -492,6 +492,10 @@ function App() {
   const currentHousehold = localCurrentHousehold
     ? {
         ...localCurrentHousehold,
+        // The shared profile list hides contact details, so the household's
+        // own email and phone come from their signed-in account instead.
+        email: localCurrentHousehold.email || currentUser?.email || "",
+        phone: localCurrentHousehold.phone || currentUser?.profile?.phone || "",
         verification: currentHouseholdVerificationRequest
           ? getWorkerVerificationLabel(currentHouseholdVerificationRequest.status)
           : currentUser?.profile?.verification_status === "verified"
@@ -826,6 +830,28 @@ function App() {
       profilePhotoPreview: currentWorker.profilePhotoPreview || "",
     });
   }, [currentWorker?.username]);
+  // The household profile form was only filled by the sidebar's "My Profile"
+  // click, so a refresh on that page showed "User", "@household" and empty
+  // fields. Fill it once the signed-in household is known, as for workers.
+  const lastPopulatedHouseholdRef = useRef(null);
+  useEffect(() => {
+    if (!currentHousehold || currentHousehold.username === lastPopulatedHouseholdRef.current) {
+      return;
+    }
+    lastPopulatedHouseholdRef.current = currentHousehold.username;
+    setHouseholdProfileForm({
+      firstName: currentHousehold.firstName || "",
+      lastName: currentHousehold.lastName || "",
+      username: currentHousehold.username || "",
+      email: currentHousehold.email || "",
+      phone: currentHousehold.phone || "",
+      barangay: currentHousehold.barangay || "",
+      streetAddress: currentHousehold.streetAddress || "",
+      profilePhotoFile: null,
+      profilePhotoName: currentHousehold.profilePhotoName || "",
+      profilePhotoPreview: currentHousehold.profilePhotoPreview || "",
+    });
+  }, [currentHousehold?.username]);
 
   useEffect(() => {
     if (!currentWorker || currentUser?.role !== "worker" || !getAuthToken()) {

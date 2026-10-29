@@ -15865,3 +15865,96 @@ a,
     column-gap: 10px;
   }
 }
+
+/* Household dashboard and My Jobs on a phone: each active job card was
+   ~410px (three full-width buttons stacked) and each finished job ~270px,
+   so six jobs ran to three screens. Same content, tighter cards: the
+   outline buttons sit two a row, the "we'll notify you" hint drops below
+   them, and the three My Jobs totals share one row. */
+@media (max-width: 767px) {
+  .worker-dashboard .household-process-card {
+    flex-flow: row wrap;
+    gap: 0.6rem;
+    padding: 1rem;
+  }
+
+  .worker-dashboard .household-process-card > * {
+    flex: 1 1 100%;
+    margin-top: 0;
+  }
+
+  .worker-dashboard .household-process-card > .household-process-outline-cta {
+    flex: 1 1 40%;
+    padding-inline: 0.5rem;
+    order: 1;
+  }
+
+  .worker-dashboard .household-process-card > .household-process-note {
+    order: 2;
+    padding: 0;
+    background: none;
+    text-align: center;
+  }
+
+  .worker-dashboard .household-process-card > :is(.household-process-cancel-link, .household-process-report-link) {
+    flex: 1 1 auto;
+    order: 3;
+    min-height: 36px;
+  }
+
+  .household-history-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 0.5rem;
+    margin: 1rem 0;
+  }
+
+  .household-history-stat {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+    padding: 0.75rem;
+  }
+
+  .household-history-stat-icon {
+    width: 1.9rem;
+    height: 1.9rem;
+  }
+
+  .household-history-stat strong {
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+
+  .household-history-stat span {
+    font-size: 0.72rem;
+  }
+
+  .household-history-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+  }
+
+  .household-history-tab {
+    white-space: nowrap;
+    padding-inline: 0.75rem;
+  }
+
+  .household-history-card > :is(.household-history-top, .household-history-meta, .household-history-cancelled-note, .household-history-body) {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .household-history-card > .household-history-top {
+    padding-top: 1rem;
+  }
+
+  .household-history-card > :is(.household-history-cancelled-note, .household-history-body) {
+    padding-bottom: 1rem;
+  }
+
+  .household-history-body {
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+  }
+}
