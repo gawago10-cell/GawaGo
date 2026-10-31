@@ -408,6 +408,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
     can_apply = serializers.SerializerMethodField()
     apply_blocked_reason = serializers.SerializerMethodField()
     apply_blocked_title = serializers.SerializerMethodField()
+    accepting_applications = serializers.SerializerMethodField()
     can_accept_hire_request = serializers.SerializerMethodField()
     can_request_completion = serializers.SerializerMethodField()
     can_mark_done = serializers.SerializerMethodField()
@@ -484,6 +485,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "can_apply",
             "apply_blocked_reason",
             "apply_blocked_title",
+            "accepting_applications",
             "can_accept_hire_request",
             "can_request_completion",
             "can_mark_done",
@@ -699,14 +701,16 @@ class JobPostingSerializer(serializers.ModelSerializer):
             cache[user.id] = hired_jobs_under_way(user)
         return hold_on(obj, cache[user.id])
 
+    def get_accepting_applications(self, obj):
+        """Still in the market: open, or under way with openings left.
+        Mirrors JobApplicationView -- a multi-worker job keeps taking
+        applicants after its first hire, until every opening is filled."""
+        if obj.status == JobPosting.STATUS_OPEN:
+            return True
+        return obj.status == JobPosting.STATUS_ASSIGNED and self.get_hired_count(obj) < obj.worker_slots
+
     def _could_apply(self, obj, user, profile):
-        if profile.verification_status != "verified":
-            return False
-        # Mirrors JobApplicationView: a multi-worker job still has openings
-        # while assigned, so it keeps accepting applications until full.
-        if obj.status not in (JobPosting.STATUS_OPEN, JobPosting.STATUS_ASSIGNED):
-            return False
-        if self.get_hired_count(obj) >= obj.worker_slots:
+        if profile.verification_status != "verified" or not self.get_accepting_applications(obj):
             return False
         return not obj.applications.filter(worker=user).exists()
 

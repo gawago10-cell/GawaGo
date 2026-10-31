@@ -404,6 +404,29 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a job with openings left keeps showing applicants after its first hire',
+    (tester) async {
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'household-token', role: 'household'),
+      );
+      GawaGoApi.setClient(MockClient(_openingsLeftResponses));
+
+      await tester.pumpWidget(
+        MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Aircon repair'), findsOneWidget);
+      expect(
+        find.text('In progress \u00B7 1 of 3 hired \u00B7 1 applicant waiting'),
+        findsOneWidget,
+      );
+      expect(find.text('Mark as done'), findsOneWidget);
+      expect(find.text('View Applicants (1)'), findsOneWidget);
+    },
+  );
+
   testWidgets('household My Jobs shows the finished job history', (
     tester,
   ) async {
@@ -895,6 +918,47 @@ Future<http.Response> _householdDashboardResponses(http.Request request) async {
     ]);
   }
   return _json({});
+}
+
+Future<http.Response> _openingsLeftResponses(http.Request request) async {
+  final path = request.url.path;
+  if (path.endsWith('/jobs/')) {
+    return _json([
+      {
+        'id': 21,
+        'household_username': 'juan',
+        'title': 'Aircon repair',
+        'job_type': 'Aircon Repair',
+        'required_skill': 'Aircon Repair',
+        'schedule': '',
+        'description': '',
+        'location_label': 'Calumpang',
+        'latitude': 13.95,
+        'longitude': 121.59,
+        'service_rate': '600.00',
+        'workers_needed': 3,
+        'hired_count': 1,
+        'status': 'assigned',
+        'can_review': false,
+        'applications': [
+          {
+            'id': 41,
+            'worker_username': 'louise',
+            'worker_name': 'Louise Reyes',
+            'status': 'hired',
+          },
+          {
+            'id': 42,
+            'worker_username': 'mery',
+            'worker_name': 'Mery Santos',
+            'status': 'pending',
+          },
+        ],
+        'images': [],
+      },
+    ]);
+  }
+  return _householdDashboardResponses(request);
 }
 
 Future<http.Response> _completedApplicationResponses(

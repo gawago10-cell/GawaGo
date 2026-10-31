@@ -19,7 +19,12 @@ import RequiredMark, { hasAnswer } from "./RequiredMark";
 import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
-import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
+import {
+  getApplicationStatusLabel,
+  getHiredWorkerCount,
+  getPendingApplicationCount,
+  getWorkersNeeded,
+} from "../utils/jobUtils";
 import { getHouseholdInitials } from "../utils/formatters";
 import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
 import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_WORKER_SKILLS, OTHER_SKILL } from "../constants/appConstants";
@@ -6882,8 +6887,20 @@ export default function AppViews({
                       // before the household took over marking jobs done.
                       const isAssigned =
                         job.status === "Already found a worker" || job.status === "Waiting for Household Confirmation";
-                      const hasApplicants = !isAssigned && pendingCount > 0;
-                      const awaitingReply = !isAssigned && !hasApplicants && requestedCount > 0;
+                      // A job needing several workers keeps taking applicants
+                      // after its first hire, so they stay visible here until
+                      // every opening is filled (the backend closes the rest then).
+                      const hasApplicants = pendingCount > 0;
+                      const awaitingReply = !hasApplicants && requestedCount > 0;
+                      const workersNeeded = getWorkersNeeded(job);
+                      const progressText = [
+                        "In progress",
+                        workersNeeded > 1 ? `${getHiredWorkerCount(job)} of ${workersNeeded} hired` : "",
+                        hasApplicants ? `${pendingCount} applicant${pendingCount === 1 ? "" : "s"} waiting` : "",
+                        awaitingReply ? `${requestedCount} request${requestedCount === 1 ? "" : "s"} sent` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ");
                       const toneClass = isAssigned
                         ? "assigned"
                         : hasApplicants
@@ -6919,7 +6936,7 @@ export default function AppViews({
                               <span className={`household-process-status-line ${toneClass}`}>
                                 <i aria-hidden="true" />
                                 {isAssigned
-                                    ? "In progress"
+                                    ? progressText
                                     : hasApplicants
                                       ? `${pendingCount} applicant${pendingCount === 1 ? "" : "s"} waiting`
                                       : awaitingReply
@@ -6989,7 +7006,7 @@ export default function AppViews({
                                 <circle cx="9" cy="7" r="4"></circle>
                                 <path d="M23 21v-2a4 4 0 00-3-3.87"></path>
                               </svg>
-                              View Applicants
+                              {isAssigned ? `View Applicants (${pendingCount || requestedCount})` : "View Applicants"}
                             </button>
                           )}
                           {!isAssigned && (
@@ -7138,8 +7155,18 @@ export default function AppViews({
                   <p className="gg-modal-kicker">Applicants</p>
                   <h2>{selectedJob.jobTitle || selectedJob.serviceType}</h2>
                   <p className="gg-modal-sub">
-                    {selectedJobApplicantWorkers.length} applicant
-                    {selectedJobApplicantWorkers.length === 1 ? "" : "s"} waiting &middot; review and respond below
+                    {/* Hired workers stay listed here, so count only those still waiting. */}
+                    {[
+                      getPendingApplicationCount(selectedJob) > 0
+                        ? `${getPendingApplicationCount(selectedJob)} applicant${getPendingApplicationCount(selectedJob) === 1 ? "" : "s"} waiting`
+                        : "",
+                      getWorkersNeeded(selectedJob) > 1
+                        ? `${getHiredWorkerCount(selectedJob)} of ${getWorkersNeeded(selectedJob)} hired`
+                        : "",
+                      "review and respond below",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </p>
                 </div>
                 <button type="button" className="gg-modal-close" aria-label="Close" onClick={closeDashboardModal}>

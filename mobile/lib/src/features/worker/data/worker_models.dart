@@ -237,6 +237,14 @@ class WorkerJob {
   final WorkerApplication? application;
   final List<JobSkillRating> skillRatings;
 
+  /// Whether Find Jobs lists it: the worker can apply, another job of theirs
+  /// holds them from it (the card says why), or they applied and are still
+  /// waiting (the card says "Applied").
+  bool get listedInFindJobs =>
+      canApply ||
+      applyBlockedReason.isNotEmpty ||
+      application?.status == 'pending';
+
   factory WorkerJob.fromJson(Map<String, dynamic> json) {
     final application = json['current_worker_application'];
     return WorkerJob(

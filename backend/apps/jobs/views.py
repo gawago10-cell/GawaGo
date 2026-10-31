@@ -33,6 +33,7 @@ from apps.jobs.services import (
     hold_apply_message,
     hold_hire_message,
     job_not_started_message,
+    jobs_accepting_applications,
     record_application_status_event,
     record_job_status_event,
     worker_hold,
@@ -171,6 +172,9 @@ class JobViewSet(viewsets.ModelViewSet):
                 queryset = queryset.exclude(currently_suspended_q("household__profile__"))
         if params.get("status"):
             queryset = queryset.filter(status=params["status"])
+        # The open market: open jobs and multi-worker jobs with openings left.
+        if params.get("accepting", "").lower() in {"1", "true", "yes"}:
+            queryset = jobs_accepting_applications(queryset)
         if params.get("job_type"):
             queryset = queryset.filter(job_type__icontains=params["job_type"])
         if params.get("location"):

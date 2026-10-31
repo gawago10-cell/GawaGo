@@ -416,6 +416,8 @@ export function normalizeBackendJob(job) {
     // "" otherwise. Worded by the backend.
     applyBlockedReason: job.apply_blocked_reason ?? job.applyBlockedReason ?? "",
     applyBlockedTitle: job.apply_blocked_title ?? job.applyBlockedTitle ?? "",
+    // Still in the market: open, or under way with openings left.
+    acceptingApplications: Boolean(job.accepting_applications ?? job.acceptingApplications ?? false),
     canAcceptHireRequest: Boolean(job.can_accept_hire_request ?? job.canAcceptHireRequest ?? false),
     canRequestCompletion: Boolean(job.can_request_completion ?? job.canRequestCompletion ?? false),
     canMarkDone: Boolean(job.can_mark_done ?? job.canMarkDone ?? false),

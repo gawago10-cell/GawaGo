@@ -159,4 +159,36 @@ void main() {
       );
     },
   );
+
+  test(
+    'Find Jobs lists jobs to apply to, held from, or applied to and waiting',
+    () {
+      WorkerJob withApplication(String status) => WorkerJob.fromJson({
+        'id': 9,
+        'title': 'Aircon repair',
+        'status': 'assigned',
+        'can_apply': false,
+        'current_worker_application': {'id': 3, 'job_id': 9, 'status': status},
+      });
+
+      expect(
+        _job(1, 'Open', 'Mila Reyes', null, null).listedInFindJobs,
+        isTrue,
+      );
+      expect(
+        _job(
+          2,
+          'Held',
+          'Mila Reyes',
+          null,
+          null,
+          blockedReason: 'Busy.',
+        ).listedInFindJobs,
+        isTrue,
+      );
+      expect(withApplication('pending').listedInFindJobs, isTrue);
+      expect(withApplication('rejected').listedInFindJobs, isFalse);
+      expect(withApplication('hired').listedInFindJobs, isFalse);
+    },
+  );
 }

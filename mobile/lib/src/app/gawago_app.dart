@@ -2709,7 +2709,7 @@ class _StatsCard extends StatefulWidget {
 }
 
 class _StatsCardState extends State<_StatsCard> {
-  final Future<List<dynamic>> _jobs = GawaGoApi.getList('/jobs/?status=open');
+  final Future<List<dynamic>> _jobs = GawaGoApi.getList('/jobs/?accepting=true');
 
   @override
   Widget build(BuildContext context) {

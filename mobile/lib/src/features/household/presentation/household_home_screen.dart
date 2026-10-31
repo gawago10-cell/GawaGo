@@ -790,14 +790,16 @@ class _InProcessJobCard extends StatelessWidget {
     final isAssigned =
         assignedApp != null &&
         (assignedApp.status == 'hired' || assignedApp.status == 'completed');
-    final hasApplicants = !isAssigned && pendingCount > 0;
+    // A job needing several workers keeps taking applicants after its first
+    // hire, so they stay visible until every opening is filled.
+    final hasApplicants = pendingCount > 0;
     // A sent hire request is still an open thread on this job: without its own
     // state the card would claim nobody applied the moment the household
     // asked someone.
     final requestedCount = job.applications
         .where((application) => application.status == 'hire_requested')
         .length;
-    final awaitingReply = !isAssigned && !hasApplicants && requestedCount > 0;
+    final awaitingReply = !hasApplicants && requestedCount > 0;
 
     final tone = isAssigned || awaitingReply
         ? _ProcessTone.assigned
@@ -827,7 +829,15 @@ class _InProcessJobCard extends StatelessWidget {
         : GawaGoColors.primary;
 
     final statusLabel = isAssigned
-        ? 'In progress'
+        ? [
+            'In progress',
+            if (job.workerSlots > 1)
+              '${job.hiredCount} of ${job.workerSlots} hired',
+            if (hasApplicants)
+              '$pendingCount applicant${pendingCount == 1 ? '' : 's'} waiting',
+            if (awaitingReply)
+              '$requestedCount request${requestedCount == 1 ? '' : 's'} sent',
+          ].join(' \u00B7 ')
         : hasApplicants
         ? '$pendingCount applicant${pendingCount == 1 ? '' : 's'} waiting'
         : awaitingReply
@@ -1005,6 +1015,30 @@ class _InProcessJobCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 12.5,
                     color: GawaGoColors.textMuted,
+                  ),
+                ),
+              ),
+            ],
+            if (hasApplicants || awaitingReply) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onViewApplicants,
+                  icon: const Icon(Icons.groups_outlined, size: 16),
+                  label: Text(
+                    'View Applicants (${hasApplicants ? pendingCount : requestedCount})',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: GawaGoColors.leafDeep,
+                    side: const BorderSide(
+                      color: GawaGoColors.primary,
+                      width: 1.5,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
               ),

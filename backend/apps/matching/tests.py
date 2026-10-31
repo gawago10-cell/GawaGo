@@ -988,3 +988,16 @@ class RadiusWithoutRoutingTests(TestCase):
 
         self.assertIn(self.job.id, near_jobs)
         self.assertNotIn(self.job.id, far_jobs)
+
+    def test_ai_recommendation_keeps_a_job_with_openings_after_its_first_hire(self):
+        from apps.jobs.models import JobApplication
+        from apps.matching.recommendations import get_recommended_jobs
+
+        JobPosting.objects.filter(pk=self.job.pk).update(worker_slots=2, status=JobPosting.STATUS_ASSIGNED)
+        JobApplication.objects.create(job=self.job, worker=self.far.user, status=JobApplication.STATUS_HIRED)
+        with patch("apps.matching.recommendations.get_road_route_for_match", return_value=self.no_route):
+            self.assertIn(self.job.id, [row["job"].id for row in get_recommended_jobs(self.near.user)])
+
+        JobPosting.objects.filter(pk=self.job.pk).update(worker_slots=1)
+        with patch("apps.matching.recommendations.get_road_route_for_match", return_value=self.no_route):
+            self.assertNotIn(self.job.id, [row["job"].id for row in get_recommended_jobs(self.near.user)])

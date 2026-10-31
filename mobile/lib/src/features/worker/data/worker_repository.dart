@@ -23,13 +23,19 @@ class WorkerRepository {
     return WorkerProfile.fromJson(response);
   }
 
+  /// Find Jobs: every job still in the market (open, or under way with
+  /// openings left) that the worker can apply to, is held from, or already
+  /// applied to -- the same list the web shows.
   Future<List<WorkerJob>> getJobs({String? skill, String? location}) async {
-    final query = <String, String>{'status': 'open'};
+    final query = <String, String>{'accepting': 'true'};
     if (skill != null && skill.isNotEmpty) query['job_type'] = skill;
     if (location != null && location.isNotEmpty) query['location'] = location;
     final uri = Uri(path: '/jobs/', queryParameters: query);
     final data = await GawaGoApi.getList(uri.toString());
-    return data.map((item) => WorkerJob.fromJson(item)).toList();
+    return data
+        .map((item) => WorkerJob.fromJson(item))
+        .where((job) => job.listedInFindJobs)
+        .toList();
   }
 
   Future<WorkerJob> getJob(int id) async {

@@ -2709,3 +2709,88 @@ class SameDaysRuleTests(TestCase):
         self.client.force_authenticate(user=self.worker)
         later_same_week = self._job(self.home_b, "Ironing", date(2026, 11, 10), date(2026, 11, 10))
         self.assertFalse(self.client.get(reverse("job-detail", args=[later_same_week.id])).data["can_apply"])
+
+
+class OpeningsLeftTests(TestCase):
+    """A job needing several workers stays in the market after its first hire
+    until every opening is filled, so later applicants can find it and the
+    household can see them (panel review follow-up, 2026-11-01)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.home = User.objects.create_user(username="os-home", password="password")
+        UserProfile.objects.create(user=self.home, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        self.workers = []
+        for name in ("os-louise", "os-mery", "os-third"):
+            worker = User.objects.create_user(username=name, password="password")
+            UserProfile.objects.create(user=worker, role=UserProfile.ROLE_WORKER, verification_status="verified")
+            self.workers.append(worker)
+        self.three = self._job("Aircon repair", 3)
+        self.single = self._job("Window washing", 1)
+        for job in (self.three, self.single):
+            self._hire(job, self.workers[0])
+
+    def _job(self, title, slots):
+        return JobPosting.objects.create(
+            household=self.home,
+            title=title,
+            job_type="Aircon Repair",
+            required_skill="Aircon Repair",
+            schedule="One-Time",
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+            worker_slots=slots,
+        )
+
+    def _hire(self, job, worker):
+        application = JobApplication.objects.create(job=job, worker=worker)
+        self.client.force_authenticate(user=self.home)
+        response = self.client.patch(
+            reverse("job-application-status", args=[application.id]), {"status": "hired"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def _listed(self, **params):
+        response = self.client.get(reverse("job-list"), params)
+        return {row["id"] for row in response.data["results"]}
+
+    def test_the_market_keeps_a_job_with_openings_after_its_first_hire(self):
+        self.three.refresh_from_db()
+        self.assertEqual(self.three.status, JobPosting.STATUS_ASSIGNED)
+        self.client.force_authenticate(user=self.workers[1])
+
+        self.assertIn(self.three.id, self._listed(accepting="true"))
+        self.assertNotIn(self.single.id, self._listed(accepting="true"))
+        # The old filter the phone used dropped it after the first hire.
+        self.assertNotIn(self.three.id, self._listed(status="open"))
+
+        detail = self.client.get(reverse("job-detail", args=[self.three.id])).data
+        self.assertTrue(detail["accepting_applications"])
+        self.assertTrue(detail["can_apply"])
+        self.assertFalse(self.client.get(reverse("job-detail", args=[self.single.id])).data["accepting_applications"])
+
+    def test_a_later_applicant_stays_listed_and_reaches_the_household(self):
+        self.client.force_authenticate(user=self.workers[1])
+        self.assertEqual(self.client.post(reverse("job-apply", args=[self.three.id]), {}, format="json").status_code, 201)
+
+        # Still in the worker's market, now marked as theirs.
+        self.assertIn(self.three.id, self._listed(accepting="true"))
+        detail = self.client.get(reverse("job-detail", args=[self.three.id])).data
+        self.assertFalse(detail["can_apply"])
+        self.assertEqual(detail["current_worker_application"]["status"], JobApplication.STATUS_PENDING)
+
+        # The household sees the waiting applicant next to the hired worker.
+        self.client.force_authenticate(user=self.home)
+        own = self.client.get(reverse("job-detail", args=[self.three.id])).data
+        statuses = sorted(application["status"] for application in own["applications"])
+        self.assertEqual(statuses, [JobApplication.STATUS_HIRED, JobApplication.STATUS_PENDING])
+
+    def test_it_leaves_the_market_once_every_opening_is_filled(self):
+        self._hire(self.three, self.workers[1])
+        self._hire(self.three, self.workers[2])
+        self.client.force_authenticate(user=self.workers[1])
+        self.assertNotIn(self.three.id, self._listed(accepting="true"))
+        self.assertFalse(self.client.get(reverse("job-detail", args=[self.three.id])).data["accepting_applications"])
+

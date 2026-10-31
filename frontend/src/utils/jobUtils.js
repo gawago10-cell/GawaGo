@@ -168,9 +168,14 @@ export function getWorkerJobMatches(worker, jobs) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
   const workerSkills = new Set((worker.skills || []).map(normalizeSkill));
-  // A worker on a full-time job still sees open jobs, each saying why they
-  // can't apply yet, rather than an empty Find Jobs page.
-  return jobs.filter((job) => isJobOpenForApplications(job) || job.applyBlockedReason).map((job) => {
+  // Find Jobs keeps every job still in the market: ones the worker can
+  // apply to, ones another job of theirs holds them from (each saying why),
+  // and ones they already applied to, marked "Applied".
+  const listed = (job) =>
+    isJobOpenForApplications(job)
+    || job.applyBlockedReason
+    || (job.acceptingApplications && job.applicationStatus === "Pending");
+  return jobs.filter(listed).map((job) => {
     const matchesSkill = workerSkills.has(normalizeSkill(job.serviceType))
       || workerSkills.has(normalizeSkill(job.requiredSkill));
     return { ...job, matchesSkill };

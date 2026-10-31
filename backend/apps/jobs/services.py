@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.db import transaction
+from django.db.models import Count, F, OuterRef, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.accounts.models import UserProfile
@@ -50,6 +52,24 @@ class HiringWorkerUnavailableError(HiringError):
 # these terms only needs this set updated.
 FULL_TIME_SCHEDULE_TYPES = {"full-time", "full time", "fulltime"}
 UNDERWAY_JOB_STATUSES = (JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED)
+
+
+def jobs_accepting_applications(queryset):
+    """Open jobs, plus jobs under way that still have openings: a job needing
+    several workers keeps taking applicants after its first hire, so it stays
+    in the market until every opening is filled (as JobApplicationView
+    allows). The hired count is a subquery so other filters on applications
+    can't skew it."""
+    hired = (
+        JobApplication.objects.filter(job=OuterRef("pk"), status=JobApplication.STATUS_HIRED)
+        .values("job")
+        .annotate(total=Count("pk"))
+        .values("total")
+    )
+    return queryset.annotate(hired_so_far=Coalesce(Subquery(hired), 0)).filter(
+        Q(status=JobPosting.STATUS_OPEN)
+        | Q(status=JobPosting.STATUS_ASSIGNED, hired_so_far__lt=F("worker_slots"))
+    )
 
 
 def is_full_time_job(job) -> bool:

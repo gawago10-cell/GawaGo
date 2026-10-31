@@ -18,6 +18,7 @@ from django.contrib.auth.models import User
 from apps.accounts.models import currently_suspended_q
 from apps.jobs.models import JobPosting
 from apps.jobs.privacy import rounded_distance_km
+from apps.jobs.services import jobs_accepting_applications
 from apps.matching.services import (
     DISTANCE_UNLIMITED,
     get_road_route_for_match,
@@ -240,10 +241,11 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     if not worker_document.strip():
         return []
 
-    # Same market the job list shows: a suspended household's jobs can't be
-    # applied to, so they must not be recommended either.
+    # Same market the job list shows: open jobs and multi-worker jobs with
+    # openings left, minus a suspended household's jobs, which can't be
+    # applied to.
     open_jobs = list(
-        JobPosting.objects.filter(status=JobPosting.STATUS_OPEN)
+        jobs_accepting_applications(JobPosting.objects.all())
         .exclude(household_id=worker.id)
         .exclude(currently_suspended_q("household__profile__"))
         .select_related("household")
