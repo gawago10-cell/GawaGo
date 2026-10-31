@@ -15,6 +15,7 @@ import WorkerSkillsDialog from "./WorkerSkillsDialog";
 import EditJobDialog from "./EditJobDialog";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
+import RequiredMark, { hasAnswer } from "./RequiredMark";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
@@ -1495,7 +1496,7 @@ export default function AppViews({
                         <div className="register-section-label">Personal Information</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">First Name <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">First Name <RequiredMark filled={hasAnswer(workerForm.firstName)} /></label>
                         <input
                           type="text"
                           name="firstName"
@@ -1511,7 +1512,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Last Name <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Last Name <RequiredMark filled={hasAnswer(workerForm.lastName)} /></label>
                         <input
                           type="text"
                           name="lastName"
@@ -1527,7 +1528,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Username <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Username <RequiredMark filled={hasAnswer(workerForm.username)} /></label>
                         <input
                           type="text"
                           name="username"
@@ -1543,7 +1544,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Email <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Email <RequiredMark filled={hasAnswer(workerForm.email)} /></label>
                         <input
                           type="email"
                           name="email"
@@ -1562,7 +1563,7 @@ export default function AppViews({
                         <div className="register-section-label">Contact & Location</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Phone Number <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Phone Number <RequiredMark filled={hasAnswer(workerForm.phone)} /></label>
                         <div className="input-group">
                           <span className="input-group-text">+63</span>
                           <input
@@ -1583,7 +1584,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Barangay <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Barangay <RequiredMark filled={hasAnswer(workerForm.barangay)} /></label>
                         <select
                           name="barangay"
                           className={`form-select${registerErrors?.barangay ? " is-invalid" : ""}`}
@@ -1600,7 +1601,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-12">
-                        <label className="form-label fw-semibold">Street / House No. <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Street / House No. <RequiredMark filled={hasAnswer(workerForm.streetAddress)} /></label>
                         <input
                           type="text"
                           name="streetAddress"
@@ -1678,7 +1679,7 @@ export default function AppViews({
                       </div>
                       <div className="col-12">
                         <div className="register-section-label">
-                          Skills <span className="required-mark" aria-hidden="true">*</span>{" "}
+                          Skills <RequiredMark filled={hasAnswer(workerForm.skills)} />{" "}
                           <span>(choose up to {MAX_WORKER_SKILLS})</span>
                         </div>
                         <div
@@ -1707,7 +1708,7 @@ export default function AppViews({
                       {workerForm.skills.includes(OTHER_SKILL) && (
                         <div className="col-12">
                           <label className="form-label fw-semibold" htmlFor="register-custom-skill">
-                            Your other skill <span className="required-mark" aria-hidden="true">*</span>
+                            Your other skill <RequiredMark filled={hasAnswer(workerForm.customSkill)} />
                           </label>
                           <input
                             id="register-custom-skill"
@@ -1730,7 +1731,7 @@ export default function AppViews({
                         <div className="register-section-label">Security</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Password <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Password <RequiredMark filled={hasAnswer(workerForm.password)} /></label>
                         <input
                           type="password"
                           name="password"
@@ -1746,7 +1747,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Confirm Password <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Confirm Password <RequiredMark filled={hasAnswer(workerForm.password)} /></label>
                         <input
                           type="password"
                           name="confirmPassword"
@@ -1805,7 +1806,7 @@ export default function AppViews({
                         <div className="register-section-label">Personal Information</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">First Name <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">First Name <RequiredMark filled={hasAnswer(householdForm.firstName)} /></label>
                         <input
                           type="text"
                           name="firstName"
@@ -1821,7 +1822,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Last Name <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Last Name <RequiredMark filled={hasAnswer(householdForm.lastName)} /></label>
                         <input
                           type="text"
                           name="lastName"
@@ -1837,7 +1838,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Username <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Username <RequiredMark filled={hasAnswer(householdForm.username)} /></label>
                         <input
                           type="text"
                           name="username"
@@ -1853,7 +1854,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Email <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Email <RequiredMark filled={hasAnswer(householdForm.email)} /></label>
                         <input
                           type="email"
                           name="email"
@@ -1872,7 +1873,7 @@ export default function AppViews({
                         <div className="register-section-label">Contact & Location</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Phone Number <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Phone Number <RequiredMark filled={hasAnswer(householdForm.phone)} /></label>
                         <div className="input-group">
                           <span className="input-group-text">+63</span>
                           <input
@@ -1893,7 +1894,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Barangay <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Barangay <RequiredMark filled={hasAnswer(householdForm.barangay)} /></label>
                         <select
                           name="barangay"
                           className={`form-select${registerErrors?.barangay ? " is-invalid" : ""}`}
@@ -1910,7 +1911,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-12">
-                        <label className="form-label fw-semibold">Street / House No. <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Street / House No. <RequiredMark filled={hasAnswer(householdForm.streetAddress)} /></label>
                         <input
                           type="text"
                           name="streetAddress"
@@ -1930,7 +1931,7 @@ export default function AppViews({
                         <div className="register-section-label">Security</div>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Password <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Password <RequiredMark filled={hasAnswer(householdForm.password)} /></label>
                         <input
                           type="password"
                           name="password"
@@ -1946,7 +1947,7 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Confirm Password <span className="required-mark" aria-hidden="true">*</span></label>
+                        <label className="form-label fw-semibold">Confirm Password <RequiredMark filled={hasAnswer(householdForm.password)} /></label>
                         <input
                           type="password"
                           name="confirmPassword"

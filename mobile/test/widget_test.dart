@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gawago_mobile/main.dart';
@@ -54,9 +55,51 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Register as Worker'), findsOneWidget);
-    expect(find.text('Exact Worker Location'), findsOneWidget);
+    // No pin yet, so the label still carries its asterisk.
+    expect(find.text('Exact Worker Location\u00A0*'), findsOneWidget);
     expect(find.text('Create Worker Account'), findsOneWidget);
   });
+
+  testWidgets(
+    'sign-up asterisks leave answered fields and missing ones turn red',
+    (tester) async {
+      await tester.pumpWidget(const GawaGoApp());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Find Work'));
+      await tester.pumpAndSettle();
+
+      // Every required label starts with an asterisk.
+      expect(find.text('First Name\u00A0*'), findsOneWidget);
+      expect(find.text('Email\u00A0*'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('signup-First Name')),
+        'Louise',
+      );
+      await tester.pump();
+      expect(find.text('First Name\u00A0*'), findsNothing);
+      expect(find.text('First Name'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Create Worker Account'));
+      await tester.tap(find.text('Create Worker Account'));
+      await tester.pump();
+
+      // Each missing field says so under itself; the answered one doesn't.
+      expect(find.text('Email is required.'), findsOneWidget);
+      expect(find.text('Last name is required.'), findsOneWidget);
+      expect(find.text('First name is required.'), findsNothing);
+      expect(find.text('Choose at least one skill.'), findsWidgets);
+
+      // Fixing a field drops its message straight away.
+      await tester.enterText(
+        find.byKey(const ValueKey('signup-Email')),
+        'louise@gmail',
+      );
+      await tester.pump();
+      expect(find.text('Email is required.'), findsNothing);
+      expect(find.text('Email\u00A0*'), findsNothing);
+    },
+  );
 
   testWidgets('hero actions open the matching registration form', (
     tester,

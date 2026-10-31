@@ -15290,17 +15290,34 @@ a,
   margin-left: 2px;
 }
 
+/* !important because the register theme above sets its beige border and green
+   focus ring with !important, which hid the red box -- only the message showed.
+   Focus keeps the red too, so the box doesn't turn green while it's still wrong. */
 .register-page .register-card .form-control.is-invalid,
 .register-page .register-card .form-select.is-invalid,
+.register-page .register-card .form-control.is-invalid:focus,
+.register-page .register-card .form-select.is-invalid:focus,
 .login-section .register-card .form-control.is-invalid,
 .login-section .register-card .form-select.is-invalid {
-  border-color: #c44747;
+  border-color: #c44747 !important;
   background-image: none;
-  box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22);
+  box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22) !important;
 }
 
 .register-page .register-card .input-group:has(.form-control.is-invalid) .input-group-text {
-  border-color: #c44747;
+  border-color: #c44747 !important;
+}
+
+/* The skills checkboxes and the map pin get the same red box. */
+.register-page .register-card .skills-grid.is-invalid,
+.register-page .register-card .worker-location-picker.is-invalid {
+  border: 1px solid #c44747 !important;
+  border-radius: 12px;
+  box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22) !important;
+}
+
+.register-page .register-card .skills-grid.is-invalid {
+  padding: 0.6rem 0.75rem;
 }
 
 .register-page .register-card .invalid-feedback {

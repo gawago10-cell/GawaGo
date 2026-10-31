@@ -10,6 +10,7 @@ import '../core/storage/session_storage.dart';
 import '../core/theme/gawago_colors.dart';
 import '../shared/constants/gawago_options.dart';
 import '../shared/utils/map_tile_guard.dart';
+import '../shared/utils/signup_validation.dart';
 import '../shared/widgets/authenticated_shell.dart' show gawagoTextTheme;
 import '../shared/widgets/intro_splash.dart';
 import '../shared/widgets/otp_code_field.dart';
@@ -894,7 +895,49 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
   LatLng? _selectedLocation;
   bool _isSubmitting = false;
 
+  /// Problems found on the last submit, by [SignupField]. A field's entry is
+  /// dropped as soon as it is edited, so its red box goes away while fixing.
+  Map<String, String> _errors = const {};
+
   bool get isWorker => widget.role == SignupRole.worker;
+
+  Map<String, TextEditingController> get _fieldControllers => {
+    SignupField.firstName: _firstNameController,
+    SignupField.lastName: _lastNameController,
+    SignupField.username: _usernameController,
+    SignupField.email: _emailController,
+    SignupField.phone: _phoneController,
+    SignupField.streetAddress: _streetController,
+    SignupField.customSkill: _customSkillController,
+    SignupField.password: _passwordController,
+    SignupField.confirmPassword: _confirmPasswordController,
+    'hourlyRate': _hourlyRateController,
+    'dailyRate': _dailyRateController,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild on every edit: the label's asterisk shows only while the field
+    // is empty, and an edited field loses its error.
+    for (final entry in _fieldControllers.entries) {
+      entry.value.addListener(() => _clearError(entry.key));
+    }
+  }
+
+  void _clearError(String key) {
+    if (!mounted) return;
+    setState(() {
+      final cleared = {
+        key,
+        if (key == SignupField.password) SignupField.confirmPassword,
+        if (key == 'hourlyRate' || key == 'dailyRate') SignupField.rate,
+      };
+      if (cleared.any(_errors.containsKey)) {
+        _errors = Map.of(_errors)..removeWhere((k, _) => cleared.contains(k));
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -916,38 +959,23 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
 
   Future<void> _submit() async {
     if (_isSubmitting) return;
-    final skillsProblem = isWorker
-        ? workerSkillsProblem(_selectedSkills, _customSkillController.text)
-        : null;
-    final missing = [
-      if (_firstNameController.text.trim().isEmpty) 'first name',
-      if (_lastNameController.text.trim().isEmpty) 'last name',
-      if (_usernameController.text.trim().isEmpty) 'username',
-      if (_emailController.text.trim().isEmpty) 'email',
-      if (_phoneController.text.trim().isEmpty) 'phone number',
-      if (_barangay == null) 'barangay',
-      if (_selectedLocation == null) 'map location',
-      if (skillsProblem == 'Choose at least one skill.') 'at least one skill',
-      if (isWorker &&
-          (double.tryParse(_hourlyRateController.text) ?? 0) <= 0 &&
-          (double.tryParse(_dailyRateController.text) ?? 0) <= 0)
-        'hourly or daily service rate',
-      if (_passwordController.text.isEmpty) 'password',
-    ];
-    if (missing.isNotEmpty) {
-      _showMessage('Please complete: ${missing.join(', ')}.');
-      return;
-    }
-    if (skillsProblem != null) {
-      _showMessage(skillsProblem);
-      return;
-    }
-    if (_passwordController.text != _confirmPasswordController.text) {
-      _showMessage('Passwords do not match.');
-      return;
-    }
-    if (_passwordController.text.length < 8) {
-      _showMessage('Password must be at least 8 characters.');
+    final errors = signupFieldErrors(
+      isWorker: isWorker,
+      text: {
+        for (final entry in _fieldControllers.entries)
+          entry.key: entry.value.text,
+      },
+      barangay: _barangay,
+      hasLocation: _selectedLocation != null,
+      skills: _selectedSkills,
+    );
+    if (errors.isNotEmpty) {
+      setState(() => _errors = errors);
+      _showMessage(
+        errors.length == 1
+            ? errors.values.first
+            : 'Please fix the ${errors.length} fields marked in red.',
+      );
       return;
     }
 
@@ -1074,15 +1102,36 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                 const _SectionTitle('Personal Information'),
                 const SizedBox(height: 14),
                 _ResponsiveInputs(
+                  errors: _errors,
                   fields: [
-                    _InputSpec('First Name', 'Juan', _firstNameController),
-                    _InputSpec('Last Name', 'dela Cruz', _lastNameController),
-                    _InputSpec('Username', 'juandc', _usernameController),
+                    _InputSpec(
+                      'First Name',
+                      'Juan',
+                      _firstNameController,
+                      fieldKey: SignupField.firstName,
+                      required: true,
+                    ),
+                    _InputSpec(
+                      'Last Name',
+                      'dela Cruz',
+                      _lastNameController,
+                      fieldKey: SignupField.lastName,
+                      required: true,
+                    ),
+                    _InputSpec(
+                      'Username',
+                      'juandc',
+                      _usernameController,
+                      fieldKey: SignupField.username,
+                      required: true,
+                    ),
                     _InputSpec(
                       'Email',
                       'juan@email.com',
                       _emailController,
                       keyboardType: TextInputType.emailAddress,
+                      fieldKey: SignupField.email,
+                      required: true,
                     ),
                   ],
                 ),
@@ -1090,6 +1139,7 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                 const _SectionTitle('Contact & Location'),
                 const SizedBox(height: 14),
                 _ResponsiveInputs(
+                  errors: _errors,
                   fields: [
                     _InputSpec(
                       'Phone Number',
@@ -1097,11 +1147,15 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                       _phoneController,
                       prefix: '+63',
                       keyboardType: TextInputType.phone,
+                      fieldKey: SignupField.phone,
+                      required: true,
                     ),
                     _InputSpec(
                       'Street / House No.',
                       'e.g. 45 Mabini St.',
                       _streetController,
+                      fieldKey: SignupField.streetAddress,
+                      required: true,
                     ),
                   ],
                 ),
@@ -1111,11 +1165,13 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                   value: _barangay,
                   hint: '--- Select Barangay ---',
                   items: gawagoBarangays,
+                  error: _errors[SignupField.barangay],
                   // A new barangay moves the map there and drops a pin from
                   // the old one, so the saved point matches the barangay.
                   onChanged: (value) => setState(() {
                     if (value != _barangay) _selectedLocation = null;
                     _barangay = value;
+                    _errors = Map.of(_errors)..remove(SignupField.barangay);
                   }),
                 ),
                 const SizedBox(height: 8),
@@ -1134,8 +1190,11 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                       : 'Exact Household Location',
                   value: _selectedLocation,
                   focus: barangayCenter(_barangay),
-                  onChanged: (value) =>
-                      setState(() => _selectedLocation = value),
+                  error: _errors[SignupField.location],
+                  onChanged: (value) => setState(() {
+                    _selectedLocation = value;
+                    _errors = Map.of(_errors)..remove(SignupField.location);
+                  }),
                 ),
                 if (isWorker) ...[
                   const SizedBox(height: 22),
@@ -1150,18 +1209,25 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                   ),
                   const SizedBox(height: 14),
                   _ResponsiveInputs(
+                    errors: _errors,
                     fields: [
+                      // One of the two rates is needed; the message shows
+                      // once under the row rather than under both boxes.
                       _InputSpec(
                         'Hourly Rate (PHP)',
                         '0.00',
                         _hourlyRateController,
                         keyboardType: TextInputType.number,
+                        fieldKey: SignupField.rate,
+                        showMessage: false,
                       ),
                       _InputSpec(
                         'Daily Rate (PHP)',
                         '0.00',
                         _dailyRateController,
                         keyboardType: TextInputType.number,
+                        fieldKey: SignupField.rate,
+                        showMessage: false,
                       ),
                       _InputSpec(
                         'Years of Experience',
@@ -1171,33 +1237,45 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
                       ),
                     ],
                   ),
+                  if (_errors[SignupField.rate] != null)
+                    _FieldError(_errors[SignupField.rate]!),
                   const SizedBox(height: 18),
                   _SkillsBox(
                     selectedSkills: _selectedSkills,
                     customSkillController: _customSkillController,
-                    onChanged: (skills) => setState(
-                      () => _selectedSkills
+                    error: _errors[SignupField.skills],
+                    customSkillError: _errors[SignupField.customSkill],
+                    onChanged: (skills) => setState(() {
+                      _selectedSkills
                         ..clear()
-                        ..addAll(skills),
-                    ),
+                        ..addAll(skills);
+                      _errors = Map.of(_errors)
+                        ..remove(SignupField.skills)
+                        ..remove(SignupField.customSkill);
+                    }),
                   ),
                 ],
                 const SizedBox(height: 22),
                 const _SectionTitle('Security'),
                 const SizedBox(height: 14),
                 _ResponsiveInputs(
+                  errors: _errors,
                   fields: [
                     _InputSpec(
                       'Password',
                       '********',
                       _passwordController,
                       obscure: true,
+                      fieldKey: SignupField.password,
+                      required: true,
                     ),
                     _InputSpec(
                       'Confirm Password',
                       '********',
                       _confirmPasswordController,
                       obscure: true,
+                      fieldKey: SignupField.confirmPassword,
+                      required: true,
                     ),
                   ],
                 ),
@@ -1310,6 +1388,9 @@ class _InputSpec {
     this.prefix,
     this.obscure = false,
     this.keyboardType,
+    this.fieldKey,
+    this.required = false,
+    this.showMessage = true,
   });
 
   final String label;
@@ -1318,12 +1399,22 @@ class _InputSpec {
   final String? prefix;
   final bool obscure;
   final TextInputType? keyboardType;
+
+  /// The [SignupField] whose error turns this field red.
+  final String? fieldKey;
+
+  /// Shows the label's asterisk while the field is empty.
+  final bool required;
+
+  /// False when a shared message is shown once under the row instead.
+  final bool showMessage;
 }
 
 class _ResponsiveInputs extends StatelessWidget {
-  const _ResponsiveInputs({required this.fields});
+  const _ResponsiveInputs({required this.fields, this.errors = const {}});
 
   final List<_InputSpec> fields;
+  final Map<String, String> errors;
 
   @override
   Widget build(BuildContext context) {
@@ -1347,7 +1438,12 @@ class _ResponsiveInputs extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _FormLabel(field.label),
+                      _FormLabel(
+                        field.label,
+                        showRequired:
+                            field.required &&
+                            field.controller.text.trim().isEmpty,
+                      ),
                       const SizedBox(height: 8),
                       _TextInput(
                         hint: field.hint,
@@ -1355,7 +1451,13 @@ class _ResponsiveInputs extends StatelessWidget {
                         prefix: field.prefix,
                         obscureText: field.obscure,
                         keyboardType: field.keyboardType,
+                        hasError: errors.containsKey(field.fieldKey),
+                        inputKey: field.fieldKey == null
+                            ? null
+                            : ValueKey('signup-${field.label}'),
                       ),
+                      if (field.showMessage && errors[field.fieldKey] != null)
+                        _FieldError(errors[field.fieldKey]!),
                     ],
                   ),
                 ),
@@ -1374,6 +1476,7 @@ class _SignupDropdownField extends StatelessWidget {
     required this.hint,
     required this.items,
     required this.onChanged,
+    this.error,
   });
 
   final String label;
@@ -1381,15 +1484,17 @@ class _SignupDropdownField extends StatelessWidget {
   final String hint;
   final List<String> items;
   final ValueChanged<String?> onChanged;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _FormLabel(label),
+        _FormLabel(label, showRequired: value == null),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
+          key: ValueKey('signup-$label'),
           initialValue: value,
           // Without this, a long barangay name doesn't wrap or ellipsize --
           // it just overflows the dropdown's fixed intrinsic width at phone
@@ -1429,15 +1534,25 @@ class _SignupDropdownField extends StatelessWidget {
               borderRadius: BorderRadius.circular(6),
               borderSide: BorderSide.none,
             ),
+            enabledBorder: error == null
+                ? null
+                : OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(
+                      color: _signupErrorColor,
+                      width: 2,
+                    ),
+                  ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(
-                color: GawaGoColors.primary,
-                width: 1.4,
+              borderSide: BorderSide(
+                color: error == null ? GawaGoColors.primary : _signupErrorColor,
+                width: error == null ? 1.4 : 2,
               ),
             ),
           ),
         ),
+        if (error != null) _FieldError(error!),
       ],
     );
   }
@@ -1449,11 +1564,15 @@ class _WorkerLocationPreview extends StatefulWidget {
     required this.value,
     required this.onChanged,
     this.focus,
+    this.error,
   });
 
   final String label;
   final LatLng? value;
   final ValueChanged<LatLng> onChanged;
+
+  /// Why the form can't be sent without a pin; draws the red box.
+  final String? error;
 
   /// Where the map should look when there is no pin: the chosen barangay.
   final LatLng? focus;
@@ -1509,7 +1628,9 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
       decoration: BoxDecoration(
         color: GawaGoColors.cardGreen,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GawaGoColors.borderGreen),
+        border: widget.error == null
+            ? Border.all(color: GawaGoColors.borderGreen)
+            : Border.all(color: _signupErrorColor, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1517,8 +1638,17 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
           Row(
             children: [
               Expanded(
-                child: Text(
-                  widget.label,
+                child: Text.rich(
+                  TextSpan(
+                    text: widget.label,
+                    children: [
+                      if (widget.value == null)
+                        const TextSpan(
+                          text: '\u00A0*',
+                          style: TextStyle(color: _signupErrorColor),
+                        ),
+                    ],
+                  ),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -1600,6 +1730,7 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
               fontWeight: FontWeight.w500,
             ),
           ),
+          if (widget.error != null) _FieldError(widget.error!),
         ],
       ),
     );
@@ -1731,12 +1862,16 @@ class _SkillsBox extends StatefulWidget {
     required this.selectedSkills,
     required this.customSkillController,
     required this.onChanged,
+    this.error,
+    this.customSkillError,
   });
 
   final Set<String> selectedSkills;
   // Filled in when "Other" is ticked; the word "Other" is never saved.
   final TextEditingController customSkillController;
   final ValueChanged<Set<String>> onChanged;
+  final String? error;
+  final String? customSkillError;
 
   @override
   State<_SkillsBox> createState() => _SkillsBoxState();
@@ -1748,9 +1883,19 @@ class _SkillsBoxState extends State<_SkillsBox> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'SKILLS  (select up to $maxWorkerSkills)',
-          style: TextStyle(
+        Text.rich(
+          TextSpan(
+            text: 'SKILLS',
+            children: [
+              if (widget.selectedSkills.isEmpty)
+                const TextSpan(
+                  text: '\u00A0*',
+                  style: TextStyle(color: _signupErrorColor),
+                ),
+              const TextSpan(text: '  (select up to $maxWorkerSkills)'),
+            ],
+          ),
+          style: const TextStyle(
             color: GawaGoColors.primaryLight,
             fontSize: 10,
             fontWeight: FontWeight.w900,
@@ -1763,7 +1908,9 @@ class _SkillsBoxState extends State<_SkillsBox> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: GawaGoColors.borderGreen),
+            border: widget.error == null
+                ? Border.all(color: GawaGoColors.borderGreen)
+                : Border.all(color: _signupErrorColor, width: 2),
           ),
           child: Wrap(
             spacing: 10,
@@ -1819,18 +1966,25 @@ class _SkillsBoxState extends State<_SkillsBox> {
                 .toList(),
           ),
         ),
+        if (widget.error != null) _FieldError(widget.error!),
         if (widget.selectedSkills.contains(gawagoOtherSkill)) ...[
           const SizedBox(height: 12),
           // Same label and field as the rest of the form.
-          const _FormLabel('Your other skill'),
+          _FormLabel(
+            'Your other skill',
+            showRequired: widget.customSkillController.text.trim().isEmpty,
+          ),
           const SizedBox(height: 8),
           KeyedSubtree(
             key: const ValueKey('register-custom-skill'),
             child: _TextInput(
               hint: 'e.g. Masonry',
               controller: widget.customSkillController,
+              hasError: widget.customSkillError != null,
             ),
           ),
+          if (widget.customSkillError != null)
+            _FieldError(widget.customSkillError!),
         ],
       ],
     );
@@ -2398,20 +2552,60 @@ class _BackChip extends StatelessWidget {
   }
 }
 
+/// Red for the sign-up form's asterisks, messages and error borders. Lighter
+/// than GawaGoColors.danger, which is too dark to read on the green card.
+const _signupErrorColor = Color(0xFFFF9C87);
+
 class _FormLabel extends StatelessWidget {
-  const _FormLabel(this.text);
+  const _FormLabel(this.text, {this.showRequired = false});
 
   final String text;
 
+  /// Adds the red asterisk; callers pass true only while the field is empty.
+  final bool showRequired;
+
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: GawaGoColors.mutedText,
-        fontSize: 13,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 0,
+    const style = TextStyle(
+      color: GawaGoColors.mutedText,
+      fontSize: 13,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0,
+    );
+    if (!showRequired) return Text(text, style: style);
+    return Text.rich(
+      TextSpan(
+        text: text,
+        children: const [
+          TextSpan(
+            text: '\u00A0*',
+            style: TextStyle(color: _signupErrorColor, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+      style: style,
+    );
+  }
+}
+
+/// A sign-up field's problem, shown under it.
+class _FieldError extends StatelessWidget {
+  const _FieldError(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        message,
+        style: const TextStyle(
+          color: _signupErrorColor,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          height: 1.3,
+        ),
       ),
     );
   }
@@ -2424,6 +2618,8 @@ class _TextInput extends StatelessWidget {
     this.prefix,
     this.controller,
     this.keyboardType,
+    this.hasError = false,
+    this.inputKey,
   });
 
   final String hint;
@@ -2432,11 +2628,16 @@ class _TextInput extends StatelessWidget {
   final TextEditingController? controller;
   final TextInputType? keyboardType;
 
+  /// Draws the red box, focused or not, until the field is fixed.
+  final bool hasError;
+  final Key? inputKey;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: 46,
       child: TextField(
+        key: inputKey,
         controller: controller,
         obscureText: obscureText,
         keyboardType: keyboardType,
@@ -2478,11 +2679,20 @@ class _TextInput extends StatelessWidget {
             borderRadius: BorderRadius.circular(6),
             borderSide: BorderSide.none,
           ),
+          enabledBorder: hasError
+              ? OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: const BorderSide(
+                    color: _signupErrorColor,
+                    width: 2,
+                  ),
+                )
+              : null,
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(
-              color: GawaGoColors.primary,
-              width: 1.4,
+            borderSide: BorderSide(
+              color: hasError ? _signupErrorColor : GawaGoColors.primary,
+              width: hasError ? 2 : 1.4,
             ),
           ),
         ),

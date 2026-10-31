@@ -144,6 +144,31 @@ describe("household registration form", () => {
     expect(document.querySelectorAll("form .required-mark").length).toBe(9);
   });
 
+  it("drops a field's asterisk once it is answered, and brings it back if cleared", async () => {
+    await openForm();
+    const firstNameLabel = () => document.querySelector('form [name="firstName"]').closest("div").querySelector("label");
+    expect(firstNameLabel().querySelector(".required-mark")).toBeTruthy();
+
+    fill("firstName", "Ralph");
+    await waitFor(() => expect(firstNameLabel().querySelector(".required-mark")).toBeNull());
+    expect(document.querySelectorAll("form .required-mark").length).toBe(8);
+
+    fill("firstName", "   ");
+    await waitFor(() => expect(firstNameLabel().querySelector(".required-mark")).toBeTruthy());
+  });
+
+  it("keeps the red box on a filled but wrong field", async () => {
+    await openForm();
+    for (const [name, value] of Object.entries(FILLED)) fill(name, value);
+    fill("email", "ralph@yahoo");
+
+    fireEvent.submit(document.querySelector("form"));
+
+    await waitFor(() => expect(invalidNames()).toEqual(["email"]));
+    // Answered, so no asterisk -- the red box and message say what's wrong.
+    expect(document.querySelectorAll("form .required-mark").length).toBe(0);
+  });
+
   it("marks every empty field when the form is submitted blank", async () => {
     await openForm();
 

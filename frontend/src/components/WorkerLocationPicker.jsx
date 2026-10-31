@@ -10,6 +10,7 @@ import {
 import { getBarangayCenter } from "../utils/locationUtils";
 import { applyTwoFingerPan } from "../utils/mapGestures";
 import { frameMapToTayabas, isInsideTayabasCity } from "../utils/tayabasMapFrame";
+import RequiredMark from "./RequiredMark";
 
 const OUTSIDE_TAYABAS_MESSAGE = "GawaGo serves Tayabas City only. Please pin a spot inside the red boundary.";
 
@@ -171,7 +172,7 @@ export default function WorkerLocationPicker({ form, setForm, loadLeafletAssets,
       aria-describedby={error ? "register-error-location" : undefined}
     >
       <div className="worker-location-picker-head">
-        <strong>Exact Worker Location <span className="required-mark" aria-hidden="true">*</span></strong>
+        <strong>Exact Worker Location <RequiredMark filled={form.latitude != null && form.longitude != null} /></strong>
         <span>{hasCoordinates ? "Location pinned" : "Pin required"}</span>
       </div>
       <div className="worker-location-picker-map" ref={mapNodeRef} />
