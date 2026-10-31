@@ -617,7 +617,10 @@ class _AreaJobTile extends StatelessWidget {
           ),
           if (job.applyBlockedReason.isNotEmpty) ...[
             const SizedBox(height: 10),
-            ApplyBlockedNote(reason: job.applyBlockedReason),
+            ApplyBlockedNote(
+              lead: job.applyBlockedTitle,
+              reason: job.applyBlockedReason,
+            ),
           ],
         ],
       ),

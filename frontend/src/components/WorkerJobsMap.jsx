@@ -104,6 +104,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
         job.householdName,
         job.canApply,
         job.applyBlockedReason,
+        job.applyBlockedTitle,
         job.matchesSkill,
         job.applicationStatus,
         job.distanceLabel,
@@ -307,7 +308,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
                             : "Unavailable"}
                     </button>
                   </div>
-                  {job.applyBlockedReason && <p className="job-blocked-note"><span><strong>On a full-time job.</strong> {job.applyBlockedReason}</span></p>}
+                  {job.applyBlockedReason && <p className="job-blocked-note"><span><strong>{job.applyBlockedTitle || "You can't apply right now."}</strong> {job.applyBlockedReason}</span></p>}
                 </article>
               ))}
             </div>

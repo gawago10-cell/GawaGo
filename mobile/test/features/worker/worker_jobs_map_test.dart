@@ -10,6 +10,7 @@ WorkerJob _job(
   double? lat,
   double? lng, {
   String blockedReason = '',
+  String blockedTitle = '',
 }) {
   return WorkerJob.fromJson({
     'id': id,
@@ -25,6 +26,7 @@ WorkerJob _job(
     'status': 'open',
     'can_apply': blockedReason.isEmpty,
     'apply_blocked_reason': blockedReason,
+    'apply_blocked_title': blockedTitle,
     'latitude': null,
     'longitude': null,
     'approximate_latitude': lat,
@@ -109,49 +111,52 @@ void main() {
     expect(find.text('Garden Cleanup'), findsOneWidget);
   });
 
-  testWidgets('a worker on a full-time job sees why they cannot apply', (
-    tester,
-  ) async {
-    const reason =
-        "You're on a full-time job (Yaya) until Mila Reyes marks it done. "
-        'You can apply to other jobs after that.';
-    final job = _job(
-      5,
-      'Garden Cleanup',
-      'Liza Tan',
-      14.03,
-      121.59,
-      blockedReason: reason,
-    );
-    expect(job.canApply, isFalse);
-    expect(job.applyBlockedReason, reason);
+  testWidgets(
+    'a worker already hired on these days sees why they cannot apply',
+    (tester) async {
+      const reason =
+          "You're already hired for Aircon Repair (Mila Reyes) on Sun, Nov 8 "
+          '\u2013 Mon, Nov 9, 2026. You can apply to jobs on other days.';
+      final job = _job(
+        5,
+        'Garden Cleanup',
+        'Liza Tan',
+        14.03,
+        121.59,
+        blockedReason: reason,
+        blockedTitle: 'Already hired on these days.',
+      );
+      expect(job.canApply, isFalse);
+      expect(job.applyBlockedReason, reason);
+      expect(job.applyBlockedTitle, 'Already hired on these days.');
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 400,
-            height: 700,
-            child: WorkerJobsMap(
-              jobs: [job],
-              matchesSkills: (_) => true,
-              distanceLabel: (_) => '1.2 km away',
-              onViewDetails: (_) {},
-              onApply: (_) {},
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 700,
+              child: WorkerJobsMap(
+                jobs: [job],
+                matchesSkills: (_) => true,
+                distanceLabel: (_) => '1.2 km away',
+                onViewDetails: (_) {},
+                onApply: (_) {},
+              ),
             ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('LT'));
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('LT'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Not available'), findsOneWidget);
-    expect(find.text('Apply Now'), findsNothing);
-    expect(
-      find.text('On a full-time job. $reason', findRichText: true),
-      findsOneWidget,
-    );
-  });
+      expect(find.text('Not available'), findsOneWidget);
+      expect(find.text('Apply Now'), findsNothing);
+      expect(
+        find.text('Already hired on these days. $reason', findRichText: true),
+        findsOneWidget,
+      );
+    },
+  );
 }

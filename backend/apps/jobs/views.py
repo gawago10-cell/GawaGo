@@ -24,18 +24,18 @@ from apps.jobs.services import (
     HiringApplicationStateError,
     HiringCapacityReached,
     HiringJobStateError,
-    HiringWorkerOnFullTimeJobError,
     HiringWorkerSuspendedError,
+    HiringWorkerUnavailableError,
     HiringWorkerVerificationError,
-    active_full_time_job,
     close_open_applications,
     complete_job,
-    full_time_apply_message,
-    full_time_hire_message,
     hire_application,
+    hold_apply_message,
+    hold_hire_message,
     job_not_started_message,
     record_application_status_event,
     record_job_status_event,
+    worker_hold,
 )
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
@@ -413,9 +413,9 @@ class JobApplicationView(APIView):
             return Response({"detail": "Only workers can apply to jobs."}, status=status.HTTP_403_FORBIDDEN)
         if profile.verification_status != "verified":
             return Response({"detail": "Only verified workers can apply to jobs."}, status=status.HTTP_403_FORBIDDEN)
-        full_time_job = active_full_time_job(worker, exclude_job_id=job.id)
-        if full_time_job:
-            return Response({"detail": full_time_apply_message(full_time_job)}, status=status.HTTP_400_BAD_REQUEST)
+        hold = worker_hold(worker, job)
+        if hold:
+            return Response({"detail": hold_apply_message(hold)}, status=status.HTTP_400_BAD_REQUEST)
         hired_count = job.applications.filter(status=JobApplication.STATUS_HIRED).count()
         # A job needing several workers keeps accepting applications while it
         # still has openings. It flips to "assigned" on the first hire so the
@@ -570,8 +570,11 @@ class JobApplicationStatusView(APIView):
                     {"detail": "This worker's account is suspended and can't be hired right now."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            except HiringWorkerOnFullTimeJobError:
-                return Response({"detail": full_time_hire_message(application.worker)}, status=status.HTTP_400_BAD_REQUEST)
+            except HiringWorkerUnavailableError as unavailable:
+                return Response(
+                    {"detail": hold_hire_message(application.worker, unavailable.hold)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             except HiringJobStateError:
                 return Response({"detail": "Applications cannot be updated for completed or cancelled jobs."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringApplicationStateError:
@@ -598,8 +601,11 @@ class JobApplicationStatusView(APIView):
             hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).count()
             if hired_count >= application.job.worker_slots:
                 return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
-            if active_full_time_job(application.worker, exclude_job_id=application.job_id):
-                return Response({"detail": full_time_hire_message(application.worker)}, status=status.HTTP_400_BAD_REQUEST)
+            hold = worker_hold(application.worker, application.job)
+            if hold:
+                return Response(
+                    {"detail": hold_hire_message(application.worker, hold)}, status=status.HTTP_400_BAD_REQUEST
+                )
         previous_status = application.status
         application.status = requested_status
         application.save(update_fields=["status", "updated_at"])
@@ -670,8 +676,9 @@ class JobHireRequestView(APIView):
             return Response({"detail": "Only verified workers can receive hire requests."}, status=status.HTTP_400_BAD_REQUEST)
         if worker_profile.refresh_block_status():
             return Response({"detail": "This worker is not available for hire."}, status=status.HTTP_400_BAD_REQUEST)
-        if active_full_time_job(worker, exclude_job_id=job.id):
-            return Response({"detail": full_time_hire_message(worker)}, status=status.HTTP_400_BAD_REQUEST)
+        hold = worker_hold(worker, job)
+        if hold:
+            return Response({"detail": hold_hire_message(worker, hold)}, status=status.HTTP_400_BAD_REQUEST)
         hired_count = job.applications.filter(status=JobApplication.STATUS_HIRED).count()
         if hired_count >= job.worker_slots:
             return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
@@ -752,10 +759,10 @@ class JobApplicationDecisionView(APIView):
                     {"detail": "This worker's account is suspended and can't be hired right now."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            except HiringWorkerOnFullTimeJobError as on_full_time:
+            except HiringWorkerUnavailableError as unavailable:
                 # The worker is the one accepting here, so tell them in their words.
                 return Response(
-                    {"detail": full_time_apply_message(on_full_time.full_time_job)},
+                    {"detail": hold_apply_message(unavailable.hold)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             except HiringJobStateError:

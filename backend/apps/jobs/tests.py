@@ -1,3 +1,4 @@
+from datetime import date
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -2527,17 +2528,17 @@ class FullTimeJobRuleTests(TestCase):
         self.assertEqual(stray.status, JobApplication.STATUS_PENDING)
 
     def test_they_drop_out_of_matching_until_the_job_is_done(self):
-        from apps.jobs.services import workers_on_full_time_jobs
+        from apps.jobs.services import workers_held_from
         from apps.matching.tasks import eligible_workers
 
         self._hire_on(self.full_time)
-        self.assertIn(self.worker.id, workers_on_full_time_jobs())
-        self.assertNotIn(self.worker.id, workers_on_full_time_jobs(exclude_job_id=self.full_time.id))
-        self.assertFalse(eligible_workers().filter(user=self.worker).exists())
+        self.assertIn(self.worker.id, workers_held_from(self.other))
+        self.assertNotIn(self.worker.id, workers_held_from(self.full_time))
+        self.assertFalse(eligible_workers(self.other).filter(user=self.worker).exists())
 
         complete_job(self.full_time, actor=self.home_a)
 
-        self.assertNotIn(self.worker.id, workers_on_full_time_jobs())
+        self.assertNotIn(self.worker.id, workers_held_from(self.other))
         self.client.force_authenticate(user=self.worker)
         detail = self.client.get(reverse("job-detail", args=[self.other.id])).data
         self.assertTrue(detail["can_apply"])
@@ -2554,3 +2555,157 @@ class FullTimeJobRuleTests(TestCase):
         self.client.force_authenticate(user=self.worker)
         third = self._job(self.home_b, "Window washing", "One-Time")
         self.assertTrue(self.client.get(reverse("job-detail", args=[third.id])).data["can_apply"])
+
+
+class SameDaysRuleTests(TestCase):
+    """A worker hired for a job can't take another job sharing one of its
+    days, whatever the job type; their open applications on those days close
+    when they're hired (panel review, 2026-11-01)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.home_a = User.objects.create_user(username="sd-home-a", password="password", first_name="Emman", last_name="Aviles")
+        self.home_b = User.objects.create_user(username="sd-home-b", password="password", first_name="Ralph", last_name="Amarillo")
+        self.home_c = User.objects.create_user(username="sd-home-c", password="password")
+        self.worker = User.objects.create_user(username="sd-worker", password="password", first_name="Wil", last_name="Worker")
+        for user in (self.home_a, self.home_b, self.home_c):
+            UserProfile.objects.create(user=user, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        UserProfile.objects.create(user=self.worker, role=UserProfile.ROLE_WORKER, verification_status="verified")
+        self.aircon = self._job(self.home_a, "Aircon repair", date(2026, 11, 8), date(2026, 11, 9))
+        self.garden = self._job(self.home_b, "Gardening", date(2026, 11, 9), date(2026, 11, 9))
+        self.later = self._job(self.home_c, "Laundry", date(2026, 11, 12), date(2026, 11, 12))
+        self.undated = self._job(self.home_c, "Cooking", None, None)
+
+    def _job(self, household, title, start, end, working_days=None, schedule_type="One-Time"):
+        return JobPosting.objects.create(
+            household=household,
+            title=title,
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="One-Time",
+            schedule_type=schedule_type,
+            job_start_date=start,
+            job_end_date=end,
+            estimated_working_days=working_days,
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+        )
+
+    def _hire_on(self, job):
+        application, _ = JobApplication.objects.get_or_create(job=job, worker=self.worker)
+        self.client.force_authenticate(user=job.household)
+        return self.client.patch(
+            reverse("job-application-status", args=[application.id]), {"status": "hired"}, format="json"
+        )
+
+    def test_a_job_on_the_same_days_is_closed_to_the_worker(self):
+        self.assertEqual(self._hire_on(self.aircon).status_code, 200)
+        self.client.force_authenticate(user=self.worker)
+
+        detail = self.client.get(reverse("job-detail", args=[self.garden.id])).data
+        self.assertFalse(detail["can_apply"])
+        self.assertEqual(detail["apply_blocked_title"], "Already hired on these days.")
+        self.assertEqual(
+            detail["apply_blocked_reason"],
+            "You're already hired for Aircon repair (Emman Aviles) on Sun, Nov 8 \u2013 Mon, Nov 9, 2026. "
+            "You can apply to jobs on other days.",
+        )
+        response = self.client.post(reverse("job-apply", args=[self.garden.id]), {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("You're already hired for Aircon repair", response.data["detail"])
+
+        # Other days, and a job without dates, stay open.
+        for job in (self.later, self.undated):
+            open_job = self.client.get(reverse("job-detail", args=[job.id])).data
+            self.assertTrue(open_job["can_apply"], job.title)
+            self.assertEqual(open_job["apply_blocked_title"], "")
+
+    def test_being_hired_closes_open_applications_on_the_same_days_only(self):
+        same_day = JobApplication.objects.create(job=self.garden, worker=self.worker)
+        other_day = JobApplication.objects.create(job=self.later, worker=self.worker)
+
+        self.assertEqual(self._hire_on(self.aircon).status_code, 200)
+
+        same_day.refresh_from_db()
+        other_day.refresh_from_db()
+        self.assertEqual(same_day.status, JobApplication.STATUS_CLOSED)
+        self.assertEqual(other_day.status, JobApplication.STATUS_PENDING)
+        notice = Notification.objects.get(recipient=self.home_b, title="Application closed")
+        self.assertEqual(
+            notice.message,
+            "Wil Worker was hired for another job on the same days and is no longer available. "
+            "Their application for Gardening has been closed.",
+        )
+        self.assertNotIn("Emman", notice.message)
+        self.assertFalse(Notification.objects.filter(recipient=self.home_c, title="Application closed").exists())
+
+    def test_other_households_cannot_invite_or_hire_them_for_those_days(self):
+        self._hire_on(self.aircon)
+        self.client.force_authenticate(user=self.home_b)
+
+        invite = self.client.post(
+            reverse("job-hire-request", args=[self.garden.id]), {"worker_id": self.worker.id}, format="json"
+        )
+        self.assertEqual(invite.status_code, 400)
+        self.assertEqual(
+            invite.data["detail"],
+            "Wil Worker is already hired for another job on Sun, Nov 8 \u2013 Mon, Nov 9, 2026, "
+            "so they can't be invited or hired for these days.",
+        )
+        stray = JobApplication.objects.create(job=self.garden, worker=self.worker)
+        hire = self.client.patch(reverse("job-application-status", args=[stray.id]), {"status": "hired"}, format="json")
+        self.assertEqual(hire.status_code, 400)
+        stray.refresh_from_db()
+        self.assertEqual(stray.status, JobApplication.STATUS_PENDING)
+
+        # A different day is fine.
+        self.client.force_authenticate(user=self.home_c)
+        self.assertEqual(self._hire_on(self.later).status_code, 200)
+
+    def test_a_worker_invited_for_the_same_days_cannot_accept(self):
+        invite = JobApplication.objects.create(
+            job=self.garden, worker=self.worker, status=JobApplication.STATUS_HIRE_REQUESTED
+        )
+        # Hired elsewhere for those days while the invite was open (the
+        # invite closes with it), so a fresh invite from before is refused.
+        self._hire_on(self.aircon)
+        invite.refresh_from_db()
+        self.assertEqual(invite.status, JobApplication.STATUS_CLOSED)
+
+        self.client.force_authenticate(user=self.worker)
+        self.assertFalse(self.client.get(reverse("job-detail", args=[self.garden.id])).data["can_accept_hire_request"])
+
+    def test_they_drop_out_of_matching_for_those_days_until_done(self):
+        from apps.jobs.services import workers_held_from
+        from apps.matching.tasks import eligible_workers
+
+        self._hire_on(self.aircon)
+        self.assertIn(self.worker.id, workers_held_from(self.garden))
+        self.assertNotIn(self.worker.id, workers_held_from(self.later))
+        self.assertNotIn(self.worker.id, workers_held_from(self.undated))
+        self.assertNotIn(self.worker.id, workers_held_from(self.aircon))
+        self.assertFalse(eligible_workers(self.garden).filter(user=self.worker).exists())
+        self.assertTrue(eligible_workers(self.later).filter(user=self.worker).exists())
+
+        complete_job(self.aircon, actor=self.home_a)
+        self.assertNotIn(self.worker.id, workers_held_from(self.garden))
+
+    def test_a_job_without_an_end_date_runs_for_its_working_days(self):
+        from apps.jobs.services import format_job_days, job_days
+
+        one_day = self._job(self.home_a, "One day", date(2026, 11, 8), None, working_days=1)
+        three_days = self._job(self.home_a, "Three days", date(2026, 11, 8), None, working_days=3)
+        self.assertEqual(job_days(one_day), (date(2026, 11, 8), date(2026, 11, 8)))
+        self.assertEqual(job_days(three_days), (date(2026, 11, 8), date(2026, 11, 10)))
+        self.assertIsNone(job_days(self.undated))
+        self.assertEqual(format_job_days(job_days(one_day)), "Sun, Nov 8, 2026")
+        self.assertEqual(
+            format_job_days((date(2026, 12, 31), date(2027, 1, 1))), "Thu, Dec 31, 2026 \u2013 Fri, Jan 1, 2027"
+        )
+
+        self._hire_on(three_days)
+        self.client.force_authenticate(user=self.worker)
+        later_same_week = self._job(self.home_b, "Ironing", date(2026, 11, 10), date(2026, 11, 10))
+        self.assertFalse(self.client.get(reverse("job-detail", args=[later_same_week.id])).data["can_apply"])

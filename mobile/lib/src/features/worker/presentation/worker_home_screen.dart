@@ -1686,7 +1686,10 @@ class _AvailableJobCard extends StatelessWidget {
                 ],
                 if (job.applyBlockedReason.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  ApplyBlockedNote(reason: job.applyBlockedReason),
+                  ApplyBlockedNote(
+                    lead: job.applyBlockedTitle,
+                    reason: job.applyBlockedReason,
+                  ),
                 ],
                 const SizedBox(height: 16),
                 Row(
@@ -2676,7 +2679,7 @@ class _WorkerJobDetailsCard extends StatelessWidget {
           if (job.applyBlockedReason.isNotEmpty) ...[
             const SizedBox(height: 16),
             ApplyBlockedNote(
-              lead: "You can't apply right now.",
+              lead: job.applyBlockedTitle,
               reason: job.applyBlockedReason,
             ),
           ],

@@ -264,7 +264,7 @@ export default function WorkerJobDetailView({
                         )}
                         {job.applyBlockedReason && (
                           <p className="job-blocked-note">
-                            <span><strong>You can't apply right now.</strong> {job.applyBlockedReason}</span>
+                            <span><strong>{job.applyBlockedTitle || "You can't apply right now."}</strong> {job.applyBlockedReason}</span>
                           </p>
                         )}
                         <div className="worker-job-actions">

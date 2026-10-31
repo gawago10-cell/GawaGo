@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 
 /// Why the worker can't apply right now, in the backend's own words (on a
-/// full-time job until that household marks it done) -- the mobile twin of
-/// the web's .job-blocked-note.
+/// full-time job until that household marks it done, or already hired on
+/// these days) -- the mobile twin of the web's .job-blocked-note.
 class ApplyBlockedNote extends StatelessWidget {
-  const ApplyBlockedNote({
-    super.key,
-    required this.reason,
-    this.lead = 'On a full-time job.',
-  });
+  const ApplyBlockedNote({super.key, required this.reason, this.lead = ''});
 
   final String reason;
+
+  /// The backend's short lead; a generic one when it sent none.
   final String lead;
 
   @override
@@ -40,7 +38,8 @@ class ApplyBlockedNote extends StatelessWidget {
               TextSpan(
                 children: [
                   TextSpan(
-                    text: '$lead ',
+                    text:
+                        '${lead.isEmpty ? "You can't apply right now." : lead} ',
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                   TextSpan(text: reason),

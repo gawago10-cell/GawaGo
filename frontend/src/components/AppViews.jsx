@@ -2424,7 +2424,7 @@ export default function AppViews({
                             </div>
                             {job.applyBlockedReason ? (
                               <p className="job-blocked-note">
-                                <span><strong>On a full-time job.</strong> {job.applyBlockedReason}</span>
+                                <span><strong>{job.applyBlockedTitle || "You can't apply right now."}</strong> {job.applyBlockedReason}</span>
                               </p>
                             ) : (
                               !job.canApply &&

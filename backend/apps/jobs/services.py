@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -32,12 +35,13 @@ class HiringWorkerSuspendedError(HiringError):
     pass
 
 
-class HiringWorkerOnFullTimeJobError(HiringError):
-    """The worker is already hired on a full-time job that is under way."""
+class HiringWorkerUnavailableError(HiringError):
+    """Another job holds the worker: a full-time one under way, or one on the
+    same days (see ``worker_hold``)."""
 
-    def __init__(self, full_time_job):
-        super().__init__(full_time_job)
-        self.full_time_job = full_time_job
+    def __init__(self, hold):
+        super().__init__(hold)
+        self.hold = hold
 
 
 # Job types that take all of a worker's time. While one is in progress the
@@ -49,14 +53,58 @@ UNDERWAY_JOB_STATUSES = (JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETIO
 
 
 def is_full_time_job(job) -> bool:
-    return (job.schedule_type or "").strip().lower() in FULL_TIME_SCHEDULE_TYPES
+    return _is_full_time(job.schedule_type)
 
 
-def active_full_time_job(worker, exclude_job_id=None):
-    """The full-time job this worker is hired on and that is still under way,
-    or None. ``exclude_job_id`` leaves out the job being acted on, so being
-    hired on a job never blocks that same job."""
-    jobs = (
+def _is_full_time(schedule_type) -> bool:
+    return (schedule_type or "").strip().lower() in FULL_TIME_SCHEDULE_TYPES
+
+
+def _days(start, end, working_days):
+    if not start:
+        return None
+    if end and end >= start:
+        return start, end
+    return start, start + timedelta(days=max(working_days or 1, 1) - 1)
+
+
+def job_days(job):
+    """The first and last calendar day a job takes, or None without a start
+    date. With no end date it runs for its working days from the start, so a
+    one-day job ends the day it starts."""
+    return _days(job.job_start_date, job.job_end_date, job.estimated_working_days)
+
+
+def days_overlap(first, second) -> bool:
+    return bool(first and second and first[0] <= second[1] and second[0] <= first[1])
+
+
+def format_job_days(days) -> str:
+    """"Sun, Nov 8 – Mon, Nov 9, 2026", or one day when the job is a day long."""
+    start, end = days
+
+    def day(value, with_year=True):
+        text = f"{value:%a}, {value:%b} {value.day}"
+        return f"{text}, {value.year}" if with_year else text
+
+    if start == end:
+        return day(start)
+    return f"{day(start, with_year=start.year != end.year)} – {day(end)}"
+
+
+@dataclass(frozen=True)
+class WorkerHold:
+    """Why a worker can't take a job: ``job`` is the hired job holding them."""
+
+    kind: str
+    job: JobPosting
+
+    FULL_TIME = "full_time"
+    SAME_DAYS = "same_days"
+
+
+def hired_jobs_under_way(worker):
+    return list(
         JobPosting.objects.filter(
             applications__worker=worker,
             applications__status=JobApplication.STATUS_HIRED,
@@ -65,39 +113,76 @@ def active_full_time_job(worker, exclude_job_id=None):
         .select_related("household")
         .order_by("job_start_date", "id")
     )
-    if exclude_job_id is not None:
-        jobs = jobs.exclude(pk=exclude_job_id)
-    return next((job for job in jobs if is_full_time_job(job)), None)
 
 
-def workers_on_full_time_jobs(exclude_job_id=None):
-    """Ids of every worker currently held by a full-time job under way."""
-    rows = JobApplication.objects.filter(
-        status=JobApplication.STATUS_HIRED, job__status__in=UNDERWAY_JOB_STATUSES
+def hold_on(job, hired_jobs):
+    """Which of these hired jobs keeps the worker from ``job``, or None.
+
+    A full-time job under way holds them from everything; any other job
+    holds them from jobs sharing one of its days, whatever the job type,
+    since jobs have dates but no hours (panel review, 2026-11-01). A job
+    without a start date can't be checked for days, so only full-time holds
+    apply to it. ``job`` itself never counts."""
+    others = [held for held in hired_jobs if held.id != job.id]
+    full_time = next((held for held in others if is_full_time_job(held)), None)
+    if full_time:
+        return WorkerHold(WorkerHold.FULL_TIME, full_time)
+    days = job_days(job)
+    same_days = next((held for held in others if days_overlap(days, job_days(held))), None)
+    return WorkerHold(WorkerHold.SAME_DAYS, same_days) if same_days else None
+
+
+def worker_hold(worker, job):
+    return hold_on(job, hired_jobs_under_way(worker))
+
+
+def workers_held_from(job):
+    """Ids of workers another hired job keeps from ``job`` (``hold_on`` for
+    every worker at once)."""
+    days = job_days(job)
+    rows = (
+        JobApplication.objects.filter(status=JobApplication.STATUS_HIRED, job__status__in=UNDERWAY_JOB_STATUSES)
+        .exclude(job_id=job.id)
+        .values_list(
+            "worker_id", "job__schedule_type", "job__job_start_date", "job__job_end_date", "job__estimated_working_days"
+        )
     )
-    if exclude_job_id is not None:
-        rows = rows.exclude(job_id=exclude_job_id)
     return {
         worker_id
-        for worker_id, schedule_type in rows.values_list("worker_id", "job__schedule_type")
-        if (schedule_type or "").strip().lower() in FULL_TIME_SCHEDULE_TYPES
+        for worker_id, schedule_type, start, end, working_days in rows
+        if _is_full_time(schedule_type) or days_overlap(days, _days(start, end, working_days))
     }
 
 
-def full_time_apply_message(full_time_job) -> str:
-    """For the worker: why they can't take other work right now."""
-    household = get_user_display_name(full_time_job.household)
+def hold_title(hold) -> str:
+    """The short lead the clients put before ``hold_apply_message``."""
+    return "On a full-time job." if hold.kind == WorkerHold.FULL_TIME else "Already hired on these days."
+
+
+def hold_apply_message(hold) -> str:
+    """For the worker: why they can't take this job. It is their own job, so
+    the household is named."""
+    household = get_user_display_name(hold.job.household)
+    if hold.kind == WorkerHold.FULL_TIME:
+        return (
+            f"You're on a full-time job ({hold.job.title}) until {household} marks it done. "
+            "You can apply to other jobs after that."
+        )
     return (
-        f"You're on a full-time job ({full_time_job.title}) until {household} marks it done. "
-        "You can apply to other jobs after that."
+        f"You're already hired for {hold.job.title} ({household}) on {format_job_days(job_days(hold.job))}. "
+        "You can apply to jobs on other days."
     )
 
 
-def full_time_hire_message(worker) -> str:
-    """For another household: why this worker can't be invited or hired."""
+def hold_hire_message(worker, hold) -> str:
+    """For another household: why this worker can't be invited or hired. The
+    household holding the worker is never named."""
+    name = get_user_display_name(worker)
+    if hold.kind == WorkerHold.FULL_TIME:
+        return f"{name} is on a full-time job, so they can't be invited or hired until that job is done."
     return (
-        f"{get_user_display_name(worker)} is on a full-time job, so they can't be invited or hired "
-        "until that job is done."
+        f"{name} is already hired for another job on {format_job_days(job_days(hold.job))}, "
+        "so they can't be invited or hired for these days."
     )
 
 
@@ -183,9 +268,9 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
         # path already refuses them, and an instant accept must too.
         if worker_profile.refresh_block_status():
             raise HiringWorkerSuspendedError
-        full_time_job = active_full_time_job(application.worker, exclude_job_id=job.id)
-        if full_time_job:
-            raise HiringWorkerOnFullTimeJobError(full_time_job)
+        hold = worker_hold(application.worker, job)
+        if hold:
+            raise HiringWorkerUnavailableError(hold)
 
         hired_count = job.applications.filter(status=JobApplication.STATUS_HIRED).exclude(
             pk=application.pk
@@ -218,34 +303,40 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
             crowded_out = close_open_applications(
                 job, actor=actor, note="Closed automatically: job reached its worker limit."
             )
-        # A full-time hire takes the worker off the market, so their other
-        # open applications and invites close now rather than linger.
-        released = (
-            close_worker_open_applications(
-                application.worker,
-                exclude_job_id=job.id,
-                actor=actor,
-                note="Closed automatically: the worker took a full-time job.",
-            )
-            if is_full_time_job(job)
-            else []
+        # The worker's other open applications and invites that this hire
+        # rules out close now rather than linger: all of them for a
+        # full-time job, those sharing one of its days otherwise.
+        full_time = is_full_time_job(job)
+        released = close_worker_open_applications(
+            application.worker,
+            exclude_job_id=job.id,
+            all_jobs=full_time,
+            days=job_days(job),
+            actor=actor,
+            note=(
+                "Closed automatically: the worker took a full-time job."
+                if full_time
+                else "Closed automatically: the worker was hired for another job on the same days."
+            ),
         )
 
     notify_closed_applicants(job, crowded_out, "was filled by another worker")
-    notify_households_worker_unavailable(released)
+    notify_households_worker_unavailable(released, full_time=full_time)
     return application
 
 
-def close_worker_open_applications(worker, exclude_job_id=None, actor=None, note=""):
-    """Close every application of this worker still waiting on a decision
-    (pending or invited) on other jobs, and return them."""
+def close_worker_open_applications(worker, exclude_job_id=None, all_jobs=False, days=None, actor=None, note=""):
+    """Close this worker's applications still waiting on a decision (pending
+    or invited) on other jobs, and return them: all of them with
+    ``all_jobs``, otherwise only those on jobs sharing one of ``days`` (none
+    when ``days`` is None, and never a job without dates)."""
     open_applications = JobApplication.objects.select_related("job", "job__household", "worker").filter(
         worker=worker,
         status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED],
     )
     if exclude_job_id is not None:
         open_applications = open_applications.exclude(job_id=exclude_job_id)
-    closed = list(open_applications)
+    closed = [other for other in open_applications if all_jobs or days_overlap(days, job_days(other.job))]
     for other in closed:
         previous_status = other.status
         other.status = JobApplication.STATUS_CLOSED
@@ -254,9 +345,11 @@ def close_worker_open_applications(worker, exclude_job_id=None, actor=None, note
     return closed
 
 
-def notify_households_worker_unavailable(applications):
-    """Tell each household whose applicant or invitee took a full-time job.
-    The other household is never named."""
+def notify_households_worker_unavailable(applications, full_time=False):
+    """Tell each household whose applicant or invitee was hired elsewhere,
+    on a full-time job or on the same days. The other household is never
+    named."""
+    taken = "took a full-time job" if full_time else "was hired for another job on the same days"
     for application in applications:
         worker_name = get_user_display_name(application.worker)
         create_notification(
@@ -264,7 +357,7 @@ def notify_households_worker_unavailable(applications):
             notification_type=Notification.TYPE_APPLICATION,
             title="Application closed",
             message=(
-                f"{worker_name} took a full-time job and is no longer available. "
+                f"{worker_name} {taken} and is no longer available. "
                 f"Their application for {application.job.title} has been closed."
             ),
             actor=application.worker,

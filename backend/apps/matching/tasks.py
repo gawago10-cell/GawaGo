@@ -19,7 +19,7 @@ from django.db import IntegrityError, transaction
 
 from apps.accounts.models import UserProfile
 from apps.jobs.models import JobPosting
-from apps.jobs.services import workers_on_full_time_jobs
+from apps.jobs.services import workers_held_from
 from apps.matching.recommendations import _within_radius, score_pair_with_distance
 from apps.matching.services import get_road_route_for_match, straight_line_distance_km
 from apps.notifications.models import Notification
@@ -32,13 +32,13 @@ logger = logging.getLogger(__name__)
 JOB_MATCH_TASK_TIMEOUT_SECONDS = 600
 
 
-def eligible_workers():
+def eligible_workers(job):
     return (
         UserProfile.objects.select_related("user")
         .filter(role=UserProfile.ROLE_WORKER, user__is_staff=False, user__is_active=True)
         .not_suspended()
         # No "a job near you" alert for a job they can't apply to.
-        .exclude(user_id__in=workers_on_full_time_jobs())
+        .exclude(user_id__in=workers_held_from(job))
     )
 
 
@@ -94,7 +94,7 @@ def run_job_match_notifications(job_id):
     )
     scored = sent = fallbacks = failed = 0
 
-    for profile in eligible_workers():
+    for profile in eligible_workers(job):
         if profile.user_id in already_notified or not profile.has_location:
             continue
         # The road is never shorter than the straight line, so a worker

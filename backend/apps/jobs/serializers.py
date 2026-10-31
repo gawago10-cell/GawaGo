@@ -19,7 +19,13 @@ from apps.jobs.privacy import (
 )
 from apps.matching.recommendations import score_pair_with_distance
 from apps.matching.services import get_cached_road_route, get_road_route_for_match, smart_match_sort_key
-from apps.jobs.services import active_full_time_job, full_time_apply_message, job_not_started_message
+from apps.jobs.services import (
+    hired_jobs_under_way,
+    hold_apply_message,
+    hold_on,
+    hold_title,
+    job_not_started_message,
+)
 from apps.jobs.statuses import get_application_stage, get_job_stage, get_stage_label
 
 
@@ -401,6 +407,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
     workers_needed = serializers.IntegerField(source="worker_slots", read_only=True)
     can_apply = serializers.SerializerMethodField()
     apply_blocked_reason = serializers.SerializerMethodField()
+    apply_blocked_title = serializers.SerializerMethodField()
     can_accept_hire_request = serializers.SerializerMethodField()
     can_request_completion = serializers.SerializerMethodField()
     can_mark_done = serializers.SerializerMethodField()
@@ -476,6 +483,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "workers_needed",
             "can_apply",
             "apply_blocked_reason",
+            "apply_blocked_title",
             "can_accept_hire_request",
             "can_request_completion",
             "can_mark_done",
@@ -679,17 +687,17 @@ class JobPostingSerializer(serializers.ModelSerializer):
             return False, None, None
         return True, user, profile
 
-    def _worker_full_time_job(self, obj):
-        """The requesting worker's full-time job under way, unless it is this
-        one. Looked up once per request: a list serializes many jobs."""
+    def _worker_hold(self, obj):
+        """The requesting worker's hired job that keeps them from this one (a
+        full-time job under way, or one on the same days), or None. Their
+        hired jobs are looked up once per request: a list serializes many."""
         is_worker, user, _profile = self.is_authenticated_worker()
         if not is_worker:
             return None
-        cache = self.context.setdefault("_full_time_jobs", {})
+        cache = self.context.setdefault("_hired_jobs_under_way", {})
         if user.id not in cache:
-            cache[user.id] = active_full_time_job(user)
-        full_time_job = cache[user.id]
-        return full_time_job if full_time_job and full_time_job.id != obj.id else None
+            cache[user.id] = hired_jobs_under_way(user)
+        return hold_on(obj, cache[user.id])
 
     def _could_apply(self, obj, user, profile):
         if profile.verification_status != "verified":
@@ -704,18 +712,26 @@ class JobPostingSerializer(serializers.ModelSerializer):
 
     def get_can_apply(self, obj):
         is_worker, user, profile = self.is_authenticated_worker()
-        if not is_worker or self._worker_full_time_job(obj):
+        if not is_worker or self._worker_hold(obj):
             return False
         return self._could_apply(obj, user, profile)
 
-    def get_apply_blocked_reason(self, obj):
-        """Why a job the worker could otherwise apply to is closed to them:
-        a full-time job of theirs is under way. "" otherwise."""
+    def _blocking_hold(self, obj):
+        """The hold, but only on a job the worker could otherwise apply to."""
         is_worker, user, profile = self.is_authenticated_worker()
-        full_time_job = self._worker_full_time_job(obj) if is_worker else None
-        if not full_time_job or not self._could_apply(obj, user, profile):
-            return ""
-        return full_time_apply_message(full_time_job)
+        hold = self._worker_hold(obj) if is_worker else None
+        return hold if hold and self._could_apply(obj, user, profile) else None
+
+    def get_apply_blocked_reason(self, obj):
+        """Why a job the worker could otherwise apply to is closed to them
+        (another job of theirs holds them), or ""."""
+        hold = self._blocking_hold(obj)
+        return hold_apply_message(hold) if hold else ""
+
+    def get_apply_blocked_title(self, obj):
+        """The short lead shown before apply_blocked_reason, or ""."""
+        hold = self._blocking_hold(obj)
+        return hold_title(hold) if hold else ""
 
     def get_can_accept_hire_request(self, obj):
         application = self.get_current_worker_application_obj(obj)
@@ -723,7 +739,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             return False
         if obj.status in [JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED]:
             return False
-        if self._worker_full_time_job(obj):
+        if self._worker_hold(obj):
             return False
         return self.get_hired_count(obj) < obj.worker_slots
 
