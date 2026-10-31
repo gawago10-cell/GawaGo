@@ -9,8 +9,10 @@ function localFormatDistance(distanceKm) {
   if (!Number.isFinite(numericDistance) || numericDistance < 0) {
     return "Distance not available";
   }
+  // The backend's distance_label wording, so one card never says both
+  // "1 meters away" and "Within 1 km".
   if (numericDistance < 1) {
-    return `${Math.max(1, Math.round(numericDistance * 1000))} meters away`;
+    return "Within 1 km";
   }
   return `${numericDistance.toFixed(1)} km away`;
 }

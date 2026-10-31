@@ -1500,6 +1500,11 @@ export function useGawaGoActions({
       window.alert("Please complete the service type, job start date, and number of workers needed.");
       return;
     }
+    // A job pays something (spec II.B); the backend refuses less than PHP 1.
+    if (!(Number(householdJobForm.offeredRate) >= 1)) {
+      window.alert("Enter an offered rate of at least PHP 1.00.");
+      return;
+    }
     // The job site is a pin the household confirmed (a device fix, or a
     // spot pinned or dragged to on the map). Falling back to a geocoded
     // address or the profile's point used to post jobs up to 13 km from the
@@ -1595,7 +1600,7 @@ export function useGawaGoActions({
             description: "",
             barangay: savedLocation.barangay,
             streetAddress: savedLocation.streetAddress,
-            offeredRate: "0.00",
+            offeredRate: "",
             rateType: "Per Day",
             workersNeeded: "1",
             jobStartDate: "",

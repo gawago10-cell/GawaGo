@@ -216,7 +216,9 @@ def _build_pricing_trends():
     return [
         {
             "month": calendar.month_abbr[month],
-            "averageRate": monthly_rates.get((year, month), {}).get("averageRate", 0),
+            # No posts that month means no rate, not a rate of PHP 0; the
+            # charts leave a gap instead of plunging to zero.
+            "averageRate": monthly_rates.get((year, month), {}).get("averageRate"),
             "postings": monthly_rates.get((year, month), {}).get("postings", 0),
         }
         for year, month in _last_six_months()

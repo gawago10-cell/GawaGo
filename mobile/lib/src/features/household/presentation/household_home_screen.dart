@@ -800,6 +800,15 @@ class _InProcessJobCard extends StatelessWidget {
         .where((application) => application.status == 'hire_requested')
         .length;
     final awaitingReply = !hasApplicants && requestedCount > 0;
+    final expired = !isAssigned && job.expiredNote.isNotEmpty;
+    final hiredNames = job.applications
+        .where(
+          (application) =>
+              application.status == 'hired' ||
+              application.status == 'completed',
+        )
+        .map((application) => application.workerName)
+        .toList();
 
     final tone = isAssigned || awaitingReply
         ? _ProcessTone.assigned
@@ -828,7 +837,9 @@ class _InProcessJobCard extends StatelessWidget {
         ? GawaGoColors.leafDeep
         : GawaGoColors.primary;
 
-    final statusLabel = isAssigned
+    final statusLabel = expired
+        ? 'Start date passed \u2014 nobody was hired'
+        : isAssigned
         ? [
             'In progress',
             if (job.workerSlots > 1)
@@ -938,7 +949,11 @@ class _InProcessJobCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      assignedApp != null ? workerName : 'No worker hired yet',
+                      hiredNames.length > 1
+                          ? hiredNames.join(', ')
+                          : assignedApp != null
+                          ? workerName
+                          : 'No worker hired yet',
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 13.5,
@@ -949,7 +964,11 @@ class _InProcessJobCard extends StatelessWidget {
                     ),
                     if (assignedApp != null)
                       Text(
-                        isVerified ? 'Verified' : 'Not Yet Verified',
+                        hiredNames.length > 1
+                            ? '${hiredNames.length} of ${job.workerSlots} hired'
+                            : isVerified
+                            ? 'Verified'
+                            : 'Not Yet Verified',
                         style: const TextStyle(
                           fontSize: 11.5,
                           color: GawaGoColors.textMuted,
@@ -1043,6 +1062,23 @@ class _InProcessJobCard extends StatelessWidget {
                 ),
               ),
             ],
+          ] else if (expired) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3DF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFECD2A2)),
+              ),
+              child: Text(
+                job.expiredNote,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  color: Color(0xFF7A5216),
+                ),
+              ),
+            ),
           ] else ...[
             SizedBox(
               width: double.infinity,
@@ -1602,8 +1638,12 @@ class _PostJobState extends State<_PostJob> {
         _startDate == null ||
         _location.text.trim().isEmpty ||
         _pin == null ||
-        (double.tryParse(_rate.text) ?? 0) <= 0) {
+        _rate.text.trim().isEmpty) {
       _message('Complete all required job, schedule, rate, and map fields.');
+      return;
+    }
+    if ((double.tryParse(_rate.text.trim()) ?? 0) < 1) {
+      _message('Enter an offered rate of at least PHP 1.00.');
       return;
     }
     if (_startDate != null &&
@@ -2057,7 +2097,7 @@ class _PostJobFields extends StatelessWidget {
           right: _PostJobInput(
             label: 'Offered Rate',
             controller: rate,
-            hint: '0.00',
+            hint: 'e.g. 600.00',
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
         ),
@@ -2072,6 +2112,12 @@ class _PostJobFields extends StatelessWidget {
               onChanged: onRateTypeChanged,
             ),
           ),
+        ),
+        _RateGuideHint(
+          skill: serviceType != null && isOtherSkillChoice(serviceType!)
+              ? customService.text
+              : serviceType,
+          rateType: rateType,
         ),
         _PostJobTwoColumn(
           left: _PostJobPickerField(
@@ -3550,8 +3596,8 @@ class _EditJobDialogState extends State<_EditJobDialog> {
       setState(() => _error = 'Give the job a title.');
       return;
     }
-    if (rate == null || rate <= 0) {
-      setState(() => _error = 'Enter an offered rate above zero.');
+    if (rate == null || rate < 1) {
+      setState(() => _error = 'Enter an offered rate of at least PHP 1.00.');
       return;
     }
     if (slots == null || slots < 1 || slots > 50) {
@@ -8197,6 +8243,74 @@ class _WorkerLocationPrivatePanel extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// What households usually offer for the chosen service, worded by the
+/// backend (jobs/rate-guide/), under the rate so a new post starts from a
+/// fair figure (spec II.B) -- the twin of the web's RateGuideHint.
+class _RateGuideHint extends StatefulWidget {
+  const _RateGuideHint({required this.skill, required this.rateType});
+
+  final String? skill;
+  final String rateType;
+
+  @override
+  State<_RateGuideHint> createState() => _RateGuideHintState();
+}
+
+class _RateGuideHintState extends State<_RateGuideHint> {
+  String _label = '';
+  int _request = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_RateGuideHint old) {
+    super.didUpdateWidget(old);
+    if (old.skill != widget.skill || old.rateType != widget.rateType) _load();
+  }
+
+  Future<void> _load() async {
+    final skill = (widget.skill ?? '').trim();
+    final request = ++_request;
+    if (skill.isEmpty) {
+      if (mounted) setState(() => _label = '');
+      return;
+    }
+    final rateType = switch (widget.rateType) {
+      'Per Hour' => 'per_hour',
+      'Fixed Rate' => 'fixed',
+      _ => 'per_day',
+    };
+    try {
+      final guide = await GawaGoApi.get(
+        Uri(
+          path: '/jobs/rate-guide/',
+          queryParameters: {'skill': skill, 'rate_type': rateType},
+        ).toString(),
+      );
+      if (!mounted || request != _request) return;
+      setState(() => _label = (guide['label'] ?? '').toString());
+    } catch (_) {
+      if (mounted && request == _request) setState(() => _label = '');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_label.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      child: Text(
+        _label,
+        style: const TextStyle(fontSize: 12.5, color: GawaGoColors.textMuted),
       ),
     );
   }

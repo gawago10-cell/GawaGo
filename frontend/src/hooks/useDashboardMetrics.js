@@ -153,9 +153,10 @@ function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorke
       const date = new Date(job?.createdAt || job?.created_at || job?.jobStartDate || Date.now());
       return !Number.isNaN(date.getTime()) && date.toLocaleString("en-US", { month: "short" }) === item.month;
     });
+    // No posts that month means no rate (a gap in the chart), not PHP 0.
     const averageRate = monthJobs.length
       ? monthJobs.reduce((sum, job) => sum + Number(job.offeredRate || 0), 0) / monthJobs.length
-      : 0;
+      : null;
     return {
       month: item.month,
       averageRate,

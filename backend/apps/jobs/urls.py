@@ -7,11 +7,13 @@ from apps.jobs.views import (
     JobApplicationView,
     JobCompletionRequestView,
     JobHireRequestView,
+    JobRateGuideView,
     JobViewSet,
 )
 
 urlpatterns = [
     path("", JobViewSet.as_view({"get": "list", "post": "create"}), name="job-list"),
+    path("rate-guide/", JobRateGuideView.as_view(), name="job-rate-guide"),
     path("<int:pk>/", JobViewSet.as_view({"get": "retrieve", "patch": "partial_update", "put": "update", "delete": "destroy"}), name="job-detail"),
     path("<int:job_id>/apply/", JobApplicationView.as_view(), name="job-apply"),
     path("<int:job_id>/hire-request/", JobHireRequestView.as_view(), name="job-hire-request"),

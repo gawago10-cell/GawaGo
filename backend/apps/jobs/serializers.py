@@ -24,7 +24,9 @@ from apps.jobs.services import (
     hold_apply_message,
     hold_on,
     hold_title,
+    job_has_lapsed,
     job_not_started_message,
+    lapsed_note,
 )
 from apps.jobs.statuses import get_application_stage, get_job_stage, get_stage_label
 
@@ -55,6 +57,14 @@ def applicant_sort_key(application, distance_km):
     return (inactive, 0, smart_match_sort_key(application.job, profile, distance_km))
 
 logger = logging.getLogger(__name__)
+
+def validate_offered_rate(value):
+    """A job pays something: PHP 0.00 or PHP 0.11 posts made the agreed rate
+    meaningless (spec II.B; system scan, 2026-11-01)."""
+    if value is not None and value < 1:
+        raise serializers.ValidationError("Enter a rate of at least PHP 1.00.")
+    return value
+
 
 def _reject_past_dates(attrs):
     """A job can't be scheduled, started or ended in the past -- on create or
@@ -409,6 +419,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
     apply_blocked_reason = serializers.SerializerMethodField()
     apply_blocked_title = serializers.SerializerMethodField()
     accepting_applications = serializers.SerializerMethodField()
+    expired_note = serializers.SerializerMethodField()
     can_accept_hire_request = serializers.SerializerMethodField()
     can_request_completion = serializers.SerializerMethodField()
     can_mark_done = serializers.SerializerMethodField()
@@ -486,6 +497,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "apply_blocked_reason",
             "apply_blocked_title",
             "accepting_applications",
+            "expired_note",
             "can_accept_hire_request",
             "can_request_completion",
             "can_mark_done",
@@ -522,9 +534,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
         ]
 
     def validate_service_rate(self, value):
-        if value < 0:
-            raise serializers.ValidationError("Ensure this value is greater than or equal to 0.")
-        return value
+        return validate_offered_rate(value)
 
     def validate_worker_slots(self, value):
         if value < 1:
@@ -705,9 +715,20 @@ class JobPostingSerializer(serializers.ModelSerializer):
         """Still in the market: open, or under way with openings left.
         Mirrors JobApplicationView -- a multi-worker job keeps taking
         applicants after its first hire, until every opening is filled."""
+        if job_has_lapsed(obj):
+            return False
         if obj.status == JobPosting.STATUS_OPEN:
             return True
         return obj.status == JobPosting.STATUS_ASSIGNED and self.get_hired_count(obj) < obj.worker_slots
+
+    def get_expired_note(self, obj):
+        """For the household: its open job's day passed with nobody hired."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        is_owner = bool(user and user.is_authenticated and (user.id == obj.household_id or user.is_staff))
+        if not is_owner or obj.status != JobPosting.STATUS_OPEN or not job_has_lapsed(obj):
+            return ""
+        return lapsed_note(obj)
 
     def _could_apply(self, obj, user, profile):
         if profile.verification_status != "verified" or not self.get_accepting_applications(obj):
@@ -872,6 +893,9 @@ class JobCreateSerializer(serializers.Serializer):
         required=False, default=1.0, min_value=0.1, max_value=UNLIMITED_DISTANCE_KM
     )
     geographic_boundary = serializers.ChoiceField(choices=JobPosting.DISTANCE_CHOICES, required=False, default='1km')
+
+    def validate_service_rate(self, value):
+        return validate_offered_rate(value)
 
     def validate(self, attrs):
         if not attrs.get("schedule") and not attrs.get("job_start_date"):

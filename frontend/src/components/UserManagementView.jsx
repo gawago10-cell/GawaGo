@@ -8,20 +8,34 @@ import SuspendAccountDialog from "./SuspendAccountDialog";
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
+  { value: "pending", label: "Pending review" },
+  { value: "unverified", label: "Not verified" },
   { value: "suspended", label: "Suspended" },
-  { value: "pending", label: "Pending" },
 ];
 
 const STATUS_LABEL = {
   active: "Active",
   suspended: "Suspended",
-  pending: "Pending",
+  pending: "Pending review",
+  unverified: "Not verified",
+  rejected: "Rejected",
 };
 
+// verification_stage from the backend: every account starts "pending", so
+// the raw status called nine households "Pending" with one in the queue.
 function accountStatus(user) {
   if (user.isBlocked) return "suspended";
-  if (user.verification === "Under Review") return "pending";
-  return "active";
+  if (user.verificationStage === "pending_review") return "pending";
+  if (user.verificationStage === "rejected") return "rejected";
+  if (user.verification === "Verified" || user.verificationStage === "verified") return "active";
+  return "unverified";
+}
+
+function matchesStatusFilter(user, filter) {
+  if (filter === "all") return true;
+  // A rejected account still isn't verified; it sits with the unverified ones.
+  if (filter === "unverified") return user.status === "unverified" || user.status === "rejected";
+  return user.status === filter;
 }
 
 function formatDate(value) {
@@ -136,13 +150,14 @@ export default function UserManagementView({
       active: activeRows.filter((user) => user.status === "active").length,
       suspended: activeRows.filter((user) => user.status === "suspended").length,
       pending: activeRows.filter((user) => user.status === "pending").length,
+      unverified: activeRows.filter((user) => matchesStatusFilter(user, "unverified")).length,
     }),
     [activeRows],
   );
 
   const searchTerm = search.trim().toLowerCase();
   const visibleRows = activeRows.filter((user) => {
-    if (statusFilter !== "all" && user.status !== statusFilter) {
+    if (!matchesStatusFilter(user, statusFilter)) {
       return false;
     }
     if (!searchTerm) {

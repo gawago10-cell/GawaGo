@@ -78,6 +78,7 @@ class HouseholdJob {
     required this.canReview,
     this.canMarkDone = false,
     this.markDoneNote = '',
+    this.expiredNote = '',
     required this.applications,
     required this.images,
     required this.jobStartDate,
@@ -113,6 +114,10 @@ class HouseholdJob {
 
   /// Why "Mark as done" isn't available yet, e.g. the start date; "" if it is.
   final String markDoneNote;
+
+  /// The backend's note when this open job's day passed with nobody hired:
+  /// workers no longer see it until the dates change.
+  final String expiredNote;
   final List<HouseholdApplication> applications;
   final List<JobImage> images;
   final String? jobStartDate;
@@ -144,6 +149,7 @@ class HouseholdJob {
       canReview: json['can_review'] == true,
       canMarkDone: json['can_mark_done'] == true,
       markDoneNote: _text(json['mark_done_note'] ?? ''),
+      expiredNote: _text(json['expired_note'] ?? ''),
       applications: _list(
         json['applications'],
       ).map((item) => HouseholdApplication.fromJson(_map(item))).toList(),

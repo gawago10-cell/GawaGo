@@ -195,6 +195,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     user_type = serializers.CharField(source="role", read_only=True)
     verification_request = serializers.SerializerMethodField()
+    verification_stage = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
     availability_windows = serializers.SerializerMethodField()
     date_joined = serializers.DateTimeField(source="user.date_joined", read_only=True)
@@ -240,6 +241,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "reputation_tier",
             "rating_trend",
             "verification_request",
+            "verification_stage",
             "availability_windows",
             "date_joined",
             "is_blocked",
@@ -258,6 +260,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return obj.user.get_full_name().strip() or obj.user.username
+
+    def get_verification_stage(self, obj):
+        """Where the account stands: verified, pending_review (documents in the
+        queue), rejected, or not_submitted. verification_status reads
+        "pending" both before anything is sent and while it waits for review,
+        which is how admins saw nine "Pending" households with one in the
+        queue (system scan, 2026-11-01)."""
+        status = (obj.verification_status or "").lower()
+        if status in ("verified", "rejected"):
+            return status
+        latest = obj.user.verification_requests.order_by("-submitted_at").first()
+        return "pending_review" if latest and latest.status == "pending" else "not_submitted"
 
     def get_verification_request(self, obj):
         request_obj = obj.user.verification_requests.order_by("-submitted_at").first()

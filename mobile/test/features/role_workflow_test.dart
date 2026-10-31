@@ -427,6 +427,38 @@ void main() {
     },
   );
 
+  testWidgets(
+    'household cards list every hired worker and say when a job lapsed',
+    (tester) async {
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'household-token', role: 'household'),
+      );
+      GawaGoApi.setClient(MockClient(_scanFixResponses));
+
+      await tester.pumpWidget(
+        MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Louise Reyes, Mery Santos'), findsOneWidget);
+      expect(find.text('2 of 3 hired'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('Start date passed \u2014 nobody was hired'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        find.text(
+          'This job was set for Tue, Oct 20, 2026. Workers no longer see it. '
+          'Edit the dates to post it again, or cancel it.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Browse Workers'), findsNothing);
+    },
+  );
+
   testWidgets('household My Jobs shows the finished job history', (
     tester,
   ) async {
@@ -954,6 +986,71 @@ Future<http.Response> _openingsLeftResponses(http.Request request) async {
             'status': 'pending',
           },
         ],
+        'images': [],
+      },
+    ]);
+  }
+  return _householdDashboardResponses(request);
+}
+
+Future<http.Response> _scanFixResponses(http.Request request) async {
+  final path = request.url.path;
+  if (path.endsWith('/jobs/')) {
+    return _json([
+      {
+        'id': 31,
+        'household_username': 'juan',
+        'title': 'Aircon repair',
+        'job_type': 'Aircon Repair',
+        'required_skill': 'Aircon Repair',
+        'schedule': '',
+        'description': '',
+        'location_label': 'Calumpang',
+        'latitude': 13.95,
+        'longitude': 121.59,
+        'service_rate': '600.00',
+        'workers_needed': 3,
+        'hired_count': 2,
+        'status': 'assigned',
+        'can_review': false,
+        'applications': [
+          {
+            'id': 51,
+            'worker_username': 'louise',
+            'worker_name': 'Louise Reyes',
+            'status': 'hired',
+          },
+          {
+            'id': 52,
+            'worker_username': 'mery',
+            'worker_name': 'Mery Santos',
+            'status': 'hired',
+          },
+        ],
+        'images': [],
+      },
+      {
+        'id': 32,
+        'household_username': 'juan',
+        'title': 'Window washing',
+        'job_type': 'House Cleaning',
+        'required_skill': 'House Cleaning',
+        'schedule': '',
+        'description': '',
+        'location_label': 'Calumpang',
+        'latitude': 13.95,
+        'longitude': 121.59,
+        'service_rate': '500.00',
+        'workers_needed': 1,
+        'hired_count': 0,
+        'status': 'open',
+        'job_start_date': '2026-10-20',
+        'job_end_date': '2026-10-20',
+        'expired_note':
+            'This job was set for Tue, Oct 20, 2026. Workers no longer see it. '
+            'Edit the dates to post it again, or cancel it.',
+        'can_review': false,
+        'applications': [],
         'images': [],
       },
     ]);

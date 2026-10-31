@@ -23,6 +23,7 @@ from apps.jobs.serializers import (
 from apps.jobs.services import (
     HiringApplicationStateError,
     HiringCapacityReached,
+    HiringJobLapsedError,
     HiringJobStateError,
     HiringWorkerSuspendedError,
     HiringWorkerUnavailableError,
@@ -33,7 +34,13 @@ from apps.jobs.services import (
     hold_apply_message,
     hold_hire_message,
     job_not_started_message,
+    job_has_lapsed,
+    job_term_snapshot,
     jobs_accepting_applications,
+    lapsed_apply_message,
+    lapsed_hire_message,
+    notify_applicants_of_changed_terms,
+    rate_guide,
     record_application_status_event,
     record_job_status_event,
     worker_hold,
@@ -315,7 +322,10 @@ class JobViewSet(viewsets.ModelViewSet):
                         raise PermissionDenied("Your household account must be verified before you can complete a job.")
             previous_status = current_status
             serializer.instance.status = current_status
+            terms_before = job_term_snapshot(serializer.instance)
             job = serializer.save()
+            if job.status == previous_status:
+                notify_applicants_of_changed_terms(job, terms_before)
             status_changed = previous_status != job.status
             if should_complete:
                 complete_job(job, actor=actor, previous_status=previous_status)
@@ -404,6 +414,16 @@ class JobViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+class JobRateGuideView(APIView):
+    """GET ?skill=House Cleaning&rate_type=per_day: what households usually
+    offer for that service, worded for the Post a Job form."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(rate_guide(request.query_params.get("skill", ""), request.query_params.get("rate_type", "")))
+
+
 class JobApplicationView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -417,6 +437,8 @@ class JobApplicationView(APIView):
             return Response({"detail": "Only workers can apply to jobs."}, status=status.HTTP_403_FORBIDDEN)
         if profile.verification_status != "verified":
             return Response({"detail": "Only verified workers can apply to jobs."}, status=status.HTTP_403_FORBIDDEN)
+        if job_has_lapsed(job):
+            return Response({"detail": lapsed_apply_message(job)}, status=status.HTTP_400_BAD_REQUEST)
         hold = worker_hold(worker, job)
         if hold:
             return Response({"detail": hold_apply_message(hold)}, status=status.HTTP_400_BAD_REQUEST)
@@ -579,6 +601,8 @@ class JobApplicationStatusView(APIView):
                     {"detail": hold_hire_message(application.worker, unavailable.hold)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            except HiringJobLapsedError:
+                return Response({"detail": lapsed_hire_message(application.job)}, status=status.HTTP_400_BAD_REQUEST)
             except HiringJobStateError:
                 return Response({"detail": "Applications cannot be updated for completed or cancelled jobs."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringApplicationStateError:
@@ -605,6 +629,8 @@ class JobApplicationStatusView(APIView):
             hired_count = application.job.applications.filter(status=JobApplication.STATUS_HIRED).count()
             if hired_count >= application.job.worker_slots:
                 return Response({"detail": "This job already has enough hired workers."}, status=status.HTTP_400_BAD_REQUEST)
+            if job_has_lapsed(application.job):
+                return Response({"detail": lapsed_hire_message(application.job)}, status=status.HTTP_400_BAD_REQUEST)
             hold = worker_hold(application.worker, application.job)
             if hold:
                 return Response(
@@ -680,6 +706,8 @@ class JobHireRequestView(APIView):
             return Response({"detail": "Only verified workers can receive hire requests."}, status=status.HTTP_400_BAD_REQUEST)
         if worker_profile.refresh_block_status():
             return Response({"detail": "This worker is not available for hire."}, status=status.HTTP_400_BAD_REQUEST)
+        if job_has_lapsed(job):
+            return Response({"detail": lapsed_hire_message(job)}, status=status.HTTP_400_BAD_REQUEST)
         hold = worker_hold(worker, job)
         if hold:
             return Response({"detail": hold_hire_message(worker, hold)}, status=status.HTTP_400_BAD_REQUEST)
@@ -769,6 +797,8 @@ class JobApplicationDecisionView(APIView):
                     {"detail": hold_apply_message(unavailable.hold)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            except HiringJobLapsedError:
+                return Response({"detail": lapsed_apply_message(application.job)}, status=status.HTTP_400_BAD_REQUEST)
             except HiringJobStateError:
                 return Response({"detail": "This job is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringApplicationStateError:

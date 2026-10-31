@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Count, F, OuterRef, Q, Subquery
+from django.db.models import Avg, Count, F, OuterRef, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -37,6 +37,10 @@ class HiringWorkerSuspendedError(HiringError):
     pass
 
 
+class HiringJobLapsedError(HiringError):
+    """The job's days have passed, so nobody new can be hired for it."""
+
+
 class HiringWorkerUnavailableError(HiringError):
     """Another job holds the worker: a full-time one under way, or one on the
     same days (see ``worker_hold``)."""
@@ -66,10 +70,140 @@ def jobs_accepting_applications(queryset):
         .annotate(total=Count("pk"))
         .values("total")
     )
-    return queryset.annotate(hired_so_far=Coalesce(Subquery(hired), 0)).filter(
-        Q(status=JobPosting.STATUS_OPEN)
-        | Q(status=JobPosting.STATUS_ASSIGNED, hired_so_far__lt=F("worker_slots"))
+    return (
+        queryset.annotate(hired_so_far=Coalesce(Subquery(hired), 0))
+        .filter(
+            Q(status=JobPosting.STATUS_OPEN)
+            | Q(status=JobPosting.STATUS_ASSIGNED, hired_so_far__lt=F("worker_slots"))
+        )
+        .exclude(pk__in=lapsed_job_ids())
     )
+
+
+def job_has_lapsed(job, today=None) -> bool:
+    """The job's last day is behind us (system scan, 2026-11-01). A job that
+    lapses with nobody hired leaves the market: workers can't apply or be
+    hired for a day that has gone. A job without a start date never lapses."""
+    days = job_days(job)
+    return bool(days) and days[1] < (today or timezone.localdate())
+
+
+def lapsed_job_ids():
+    """Ids of open or under-way jobs whose last day has passed. Only jobs
+    that started before today can qualify, so the scan stays small."""
+    today = timezone.localdate()
+    rows = JobPosting.objects.filter(
+        status__in=[JobPosting.STATUS_OPEN, JobPosting.STATUS_ASSIGNED], job_start_date__lt=today
+    ).values_list("id", "job_start_date", "job_end_date", "estimated_working_days")
+    return [job_id for job_id, start, end, working_days in rows if _days(start, end, working_days)[1] < today]
+
+
+def lapsed_note(job) -> str:
+    """For the household: an open job whose day passed with nobody hired."""
+    return (
+        f"This job was set for {format_job_days(job_days(job))}. Workers no longer see it. "
+        "Edit the dates to post it again, or cancel it."
+    )
+
+
+def lapsed_apply_message(job) -> str:
+    return f"This job was set for {format_job_days(job_days(job))}, which has passed, so it isn't taking applicants."
+
+
+def lapsed_hire_message(job) -> str:
+    if job.status == JobPosting.STATUS_OPEN:
+        return (
+            f"This job was set for {format_job_days(job_days(job))}, which has passed. "
+            "Edit the dates before hiring for it."
+        )
+    return f"This job's days ({format_job_days(job_days(job))}) have passed, so no one new can be hired for it."
+
+
+# Terms a worker agreed to by applying. Changing one while they wait gets
+# them a notice saying what changed (system scan, 2026-11-01).
+JOB_TERM_LABELS = {
+    "service_rate": "rate",
+    "rate_type": "rate type",
+    "job_start_date": "start date",
+    "job_end_date": "end date",
+    "estimated_working_days": "working days",
+    "schedule_type": "schedule type",
+}
+
+
+def _term_text(job, field):
+    value = getattr(job, field)
+    if value in (None, ""):
+        return "not set"
+    if field == "service_rate":
+        return f"PHP {value:,.2f}"
+    if field == "rate_type":
+        return job.get_rate_type_display()
+    if field in ("job_start_date", "job_end_date"):
+        return f"{value:%a}, {value:%b} {value.day}, {value.year}"
+    return str(value)
+
+
+def job_term_snapshot(job):
+    return {field: _term_text(job, field) for field in JOB_TERM_LABELS}
+
+
+def notify_applicants_of_changed_terms(job, before):
+    """Tell everyone still waiting on this job (pending or invited) which of
+    its terms the household just changed."""
+    after = job_term_snapshot(job)
+    changes = [
+        f"{label} {before[field]} \u2192 {after[field]}"
+        for field, label in JOB_TERM_LABELS.items()
+        if before[field] != after[field]
+    ]
+    if not changes:
+        return []
+    waiting = list(
+        job.applications.select_related("worker").filter(
+            status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED]
+        )
+    )
+    household = get_user_display_name(job.household)
+    summary = "; ".join(changes)
+    for application in waiting:
+        still = "The invitation" if application.status == JobApplication.STATUS_HIRE_REQUESTED else "Your application"
+        create_notification(
+            recipient=application.worker,
+            notification_type=Notification.TYPE_APPLICATION,
+            title="Job details changed",
+            message=f"{household} changed {job.title}: {summary}. {still} is still open.",
+            actor=job.household,
+            related_job_id=job.id,
+            related_application_id=application.id,
+            action_type=Notification.ACTION_JOB_DETAIL,
+            action_url=f"/worker/jobs/{job.id}",
+        )
+    return waiting
+
+
+def rate_guide(skill, rate_type):
+    """What households usually offer for a service, from posts that weren't
+    cancelled, so a new post starts from a fair figure (spec II.B). Worded
+    here so web and mobile say the same thing; "" with too little data."""
+
+    rate_type = rate_type if rate_type in dict(JobPosting.RATE_TYPE_CHOICES) else JobPosting.RATE_PER_DAY
+    row = (
+        JobPosting.objects.exclude(status=JobPosting.STATUS_CANCELLED)
+        .filter(required_skill__iexact=(skill or "").strip(), rate_type=rate_type, service_rate__gt=0)
+        .aggregate(average=Avg("service_rate"), posts=Count("id"))
+    )
+    posts = row["posts"] or 0
+    average = float(row["average"] or 0)
+    unit = {
+        JobPosting.RATE_PER_DAY: "day",
+        JobPosting.RATE_PER_HOUR: "hour",
+    }.get(rate_type)
+    label = ""
+    if posts >= 2 and average > 0:
+        per = f" / {unit}" if unit else " for the job"
+        label = f"{skill.strip()} usually posts at about PHP {average:,.0f}{per}."
+    return {"skill": (skill or "").strip(), "rate_type": rate_type, "average_rate": round(average, 2), "posts": posts, "label": label}
 
 
 def is_full_time_job(job) -> bool:
@@ -269,6 +403,8 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
 
         if job.status in {JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED}:
             raise HiringJobStateError
+        if job_has_lapsed(job):
+            raise HiringJobLapsedError
         if application.status != expected_status:
             if (
                 application.status == JobApplication.STATUS_CLOSED
@@ -340,7 +476,9 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
             ),
         )
 
-    notify_closed_applicants(job, crowded_out, "was filled by another worker")
+    notify_closed_applicants(
+        job, crowded_out, "Position filled", f"{job.title} was filled by another worker. Your application has been closed."
+    )
     notify_households_worker_unavailable(released, full_time=full_time)
     return application
 
@@ -405,13 +543,13 @@ def close_open_applications(job, actor=None, note=""):
     return closed
 
 
-def notify_closed_applicants(job, applications, reason):
+def notify_closed_applicants(job, applications, title, message):
     for other in applications:
         create_notification(
             recipient=other.worker,
             notification_type=Notification.TYPE_REJECTION,
-            title="Position filled",
-            message=f"{job.title} {reason}. Your application has been closed.",
+            title=title,
+            message=message,
             actor=job.household,
             related_job_id=job.id,
             related_application_id=other.id,
@@ -463,7 +601,13 @@ def complete_job(job: JobPosting, actor=None, previous_status=None) -> JobPostin
     job.save(update_fields=["status", "completed_at"])
     record_job_status_event(job, previous_job_status, job.status, actor=actor)
     leftover = close_open_applications(job, actor=actor, note="Closed automatically: job was completed.")
-    notify_closed_applicants(job, leftover, "has been completed by another worker")
+    # The household marked it done; nobody else "completed" it.
+    notify_closed_applicants(
+        job,
+        leftover,
+        "Job closed",
+        f"{get_user_display_name(job.household)} marked {job.title} as done. Your application has been closed.",
+    )
 
     hired_applications = list(
         job.applications.select_related("worker").filter(status=JobApplication.STATUS_HIRED)

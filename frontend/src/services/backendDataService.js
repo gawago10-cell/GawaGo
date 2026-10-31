@@ -333,6 +333,18 @@ export async function fetchRecommendedWorkers(jobId, rank) {
   return Array.isArray(data?.results) ? data.results : [];
 }
 
+export async function fetchRateGuide(skill, rateType) {
+  const query = new URLSearchParams({ skill, rate_type: rateType }).toString();
+  const response = await apiRequest(`jobs/rate-guide/?${query}`, {
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  if (!response.ok) {
+    return null;
+  }
+  return readResponseData(response);
+}
+
 export async function fetchRecommendedJobs() {
   const response = await apiRequest("matching/recommended-jobs/", {
     auth: true,

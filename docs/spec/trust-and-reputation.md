@@ -18,6 +18,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
 ### B. Price Transparency
 - Workers must disclose service rates on profiles (hourly and/or daily).
 - Households must see agreed rates before worker confirmation.
+- A job pays at least PHP 1.00 (PHP 0.00 and PHP 0.11 posts made the agreed rate meaningless; system scan, 2026-11-01). Under the offered rate, Post a Job shows what households usually offer for that service and rate type (`GET /jobs/rate-guide/`, worded by the backend, shown once two or more posts exist). While a job is open its terms can still be edited; everyone pending or invited then gets "Job details changed" listing the old and new rate, rate type, dates, working days or schedule type.
 
 ### C. Worker Portfolio and Credibility
 - Workers can build a public portfolio with:

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gawago_mobile/src/features/admin/data/admin_models.dart';
 import 'package:gawago_mobile/src/features/household/data/household_models.dart';
 
 void main() {
@@ -214,5 +215,21 @@ void main() {
     expect(entry.skillRatings.single.skillName, 'Laundry');
     expect(entry.skillRatings.single.rating, 4.5);
     expect(unrated.skillRatings, isEmpty);
+  });
+
+  test('an admin rate row for a month with no posts has no rate', () {
+    final empty = AdminAnalyticsItem.fromJson({
+      'month': 'Nov',
+      'averageRate': null,
+      'postings': 0,
+    });
+    final full = AdminAnalyticsItem.fromJson({
+      'month': 'Oct',
+      'averageRate': 683.08,
+      'postings': 13,
+    });
+    expect(empty.noData, isTrue);
+    expect(full.noData, isFalse);
+    expect(full.value, 683.08);
   });
 }

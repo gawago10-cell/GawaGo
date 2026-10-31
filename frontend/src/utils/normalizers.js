@@ -155,6 +155,8 @@ export function normalizeBackendWorker(currentUser) {
     yearsExperience: profile.years_experience ?? currentUser.yearsExperience ?? "0",
     skills: profile.skills || currentUser.skills || [],
     verification: profile.verification_status === "verified" ? "Verified" : profile.verification_status === "pending" ? "Under Review" : profile.verification_status === "rejected" ? "Rejected" : "Not Yet Verified",
+    // The backend's split of "pending": not_submitted vs pending_review.
+    verificationStage: profile.verification_stage || "",
     rating: profile.display_rating || "No ratings yet",
     reviewsDone: profile.rating_count || 0,
     reputationTier: profile.reputation_tier || "new",
@@ -219,6 +221,7 @@ export function normalizeProfileRecord(profile) {
     dailyRate: profile.daily_rate ?? "",
     yearsExperience: profile.years_experience ?? "0",
     verification: getWorkerVerificationLabel(profile.verification_status),
+    verificationStage: profile.verification_stage || "",
     rating: profile.display_rating || "No ratings yet",
     reviewsDone: profile.rating_count || 0,
     latitude: profile.latitude,
@@ -418,6 +421,8 @@ export function normalizeBackendJob(job) {
     applyBlockedTitle: job.apply_blocked_title ?? job.applyBlockedTitle ?? "",
     // Still in the market: open, or under way with openings left.
     acceptingApplications: Boolean(job.accepting_applications ?? job.acceptingApplications ?? false),
+    // For the household: its open job's day passed with nobody hired.
+    expiredNote: job.expired_note ?? job.expiredNote ?? "",
     canAcceptHireRequest: Boolean(job.can_accept_hire_request ?? job.canAcceptHireRequest ?? false),
     canRequestCompletion: Boolean(job.can_request_completion ?? job.canRequestCompletion ?? false),
     canMarkDone: Boolean(job.can_mark_done ?? job.canMarkDone ?? false),

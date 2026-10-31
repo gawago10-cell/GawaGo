@@ -17,6 +17,7 @@ import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import RequiredMark, { hasAnswer } from "./RequiredMark";
 import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
+import RateGuideHint from "./RateGuideHint";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import {
@@ -170,7 +171,6 @@ export default function AppViews({
   placeHouseholdJobPin,
   selectedJob,
   selectedMatchedWorkers,
-  selectedVerificationRequest,
   selectedVerificationRequestId,
   selectedWorker,
   selectedWorkerPhoto,
@@ -2050,7 +2050,7 @@ export default function AppViews({
                 <div className="worker-dashboard-stats">
                   <div className="metric-card">
                     <p className="metric-label mb-1">Open Jobs</p>
-                    <p className="metric-value mb-0">{workerVisibleJobs.length}</p>
+                    <p className="metric-value mb-0">{workerVisibleJobs.filter((job) => job.canApply).length}</p>
                   </div>
                   <div className="metric-card">
                     <p className="metric-label mb-1">Skill Matches</p>
@@ -2058,7 +2058,13 @@ export default function AppViews({
                   </div>
                   <div className="metric-card">
                     <p className="metric-label mb-1">Your Rating</p>
-                    <p className="metric-value worker-rating-value mb-0">{currentWorker?.rating || "No ratings yet"}</p>
+                    {Number.isFinite(Number(currentWorker?.rating)) ? (
+                      <p className="metric-value mb-0">
+                        {currentWorker.rating} <span className="worker-rating-star" aria-hidden="true">&#9733;</span>
+                      </p>
+                    ) : (
+                      <p className="metric-value worker-rating-value mb-0">No ratings yet</p>
+                    )}
                   </div>
                   <div className="metric-card">
                     <p className="metric-label mb-1">Verification</p>
@@ -2213,10 +2219,21 @@ export default function AppViews({
                           </p>
                         </div>
                         <div className="worker-ai-hero-stat">
-                          <div className="worker-ai-hero-stat-num">{filteredWorkerVisibleJobs.length}</div>
-                          <div className="worker-ai-hero-stat-label">
-                            {filteredWorkerVisibleJobs.length === 1 ? "open job nearby" : "open jobs nearby"}
-                          </div>
+                          {(() => {
+                            // Applied and held-from jobs stay listed, but only the ones
+                            // the worker can still apply to count as open to them.
+                            const openToApply = filteredWorkerVisibleJobs.filter((job) => job.canApply).length;
+                            const applied = filteredWorkerVisibleJobs.filter((job) => job.applicationStatus === "Pending").length;
+                            return (
+                              <>
+                                <div className="worker-ai-hero-stat-num">{openToApply}</div>
+                                <div className="worker-ai-hero-stat-label">
+                                  {openToApply === 1 ? "job you can apply to" : "jobs you can apply to"}
+                                  {applied > 0 && <span className="worker-ai-hero-stat-sub">{applied} already applied</span>}
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                       {aiRecommendationsLoading ? (
@@ -3969,7 +3986,7 @@ export default function AppViews({
                     </p>
                   ) : (
                   <div className="table-responsive">
-                    <table className="table align-middle mb-0">
+                    <table className="table align-middle mb-0 worker-applications-table">
                       <thead>
                         <tr>
                           <th>Job</th>
@@ -3988,13 +4005,13 @@ export default function AppViews({
                                 <div className="fw-semibold">{job.jobTitle || job.serviceType}</div>
                                 <div className="small text-muted">{job.serviceType || "Service not specified"}</div>
                                 {job.description && (
-                                  <div className="small text-muted">
+                                  <div className="small text-muted worker-application-description">
                                     {job.description.length > 90 ? `${job.description.slice(0, 90)}...` : job.description}
                                   </div>
                                 )}
                               </td>
-                              <td>{job.householdName || "Household"}</td>
-                              <td>
+                              <td data-label="Household">{job.householdName || "Household"}</td>
+                              <td data-label="Schedule">
                                 {(() => {
                                   const label = formatScheduleLabel(job.scheduleType) || "";
                                   return (
@@ -4009,10 +4026,10 @@ export default function AppViews({
                                   );
                                 })()}
                               </td>
-                              <td>{formatLocation(job.barangay, job.streetAddress)}</td>
-                              <td>{formatRate(job.offeredRate, job.rateType)}</td>
-                              <td>{getWorkerApplicationDisplayStatus(job)}</td>
-                              <td>{formatDateTime(job.appliedAt)}</td>
+                              <td data-label="Location">{formatLocation(job.barangay, job.streetAddress)}</td>
+                              <td data-label="Rate">{formatRate(job.offeredRate, job.rateType)}</td>
+                              <td data-label="Status">{getWorkerApplicationDisplayStatus(job)}</td>
+                              <td data-label="Applied">{formatDateTime(job.appliedAt)}</td>
                             </tr>
                           ))}
                       </tbody>
@@ -4784,54 +4801,6 @@ export default function AppViews({
                           onChange={setAdminVerificationRoleFilter}
                         />
                       </div>
-                      {selectedVerificationRequest && (
-                        <div className="p-3 border-bottom bg-light">
-                          <div className="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                            <div>
-                              <h3 className="h6 mb-1">{selectedVerificationRequest.workerName}</h3>
-                              <p className="small text-muted mb-0">@{selectedVerificationRequest.workerUsername}</p>
-                              <span className="badge text-bg-secondary mt-2 text-capitalize">
-                                {selectedVerificationRequest.accountRole}
-                              </span>
-                            </div>
-                            <span
-                              className={`badge ${selectedVerificationRequest.status === "Approved" ? "text-bg-success" : selectedVerificationRequest.status === "Rejected" ? "text-bg-danger" : "text-bg-warning"}`}
-                            >
-                              {selectedVerificationRequest.status}
-                            </span>
-                          </div>
-                          <div className="row g-2 mt-2">
-                            {selectedVerificationRequest.primaryIdPreview && (
-                              <div className="col-md-6">
-                                <div className="verification-note h-100">
-                                  <p className="small fw-semibold mb-2">Primary ID</p>
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline-primary btn-sm"
-                                    onClick={() => openFilePreview(selectedVerificationRequest.primaryIdPreview)}
-                                  >
-                                    Open Primary ID
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                            {selectedVerificationRequest.secondaryDocPreview && (
-                              <div className="col-md-6">
-                                <div className="verification-note h-100">
-                                  <p className="small fw-semibold mb-2">Supporting Document</p>
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline-primary btn-sm"
-                                    onClick={() => openFilePreview(selectedVerificationRequest.secondaryDocPreview)}
-                                  >
-                                    Open Supporting Document
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
                       <div className="p-3 d-grid gap-3">
                         {visibleAdminVerificationRequests.length > 0 ? (
                           visibleAdminVerificationRequests.map((request) => (
@@ -4882,12 +4851,36 @@ export default function AppViews({
                                   <div className="verification-note h-100">
                                     <p className="small fw-semibold mb-1">Primary ID</p>
                                     <p className="mb-0 small">{request.primaryIdName}</p>
+                                    {request.primaryIdPreview && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-primary btn-sm mt-2"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openFilePreview(request.primaryIdPreview);
+                                        }}
+                                      >
+                                        Open Primary ID
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="col-md-4">
                                   <div className="verification-note h-100">
                                     <p className="small fw-semibold mb-1">Supporting Doc</p>
                                     <p className="mb-0 small">{request.secondaryDocName}</p>
+                                    {request.secondaryDocPreview && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-primary btn-sm mt-2"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openFilePreview(request.secondaryDocPreview);
+                                        }}
+                                      >
+                                        Open Supporting Document
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="col-md-4">
@@ -5141,9 +5134,23 @@ export default function AppViews({
                           min="0"
                           step="0.01"
                           name="offeredRate"
-                          className="form-control"
+                          placeholder="e.g. 600.00"
+                          className={`form-control ${
+                            householdJobForm.offeredRate !== "" && Number(householdJobForm.offeredRate) < 1 ? "is-invalid" : ""
+                          }`}
                           value={householdJobForm.offeredRate}
                           onChange={handleHouseholdJobChange}
+                        />
+                        {householdJobForm.offeredRate !== "" && Number(householdJobForm.offeredRate) < 1 && (
+                          <div className="invalid-feedback d-block">Enter a rate of at least PHP 1.00.</div>
+                        )}
+                        <RateGuideHint
+                          skill={
+                            householdJobForm.serviceType === "Other"
+                              ? householdJobForm.customServiceType
+                              : householdJobForm.serviceType
+                          }
+                          rateType={householdJobForm.rateType}
                         />
                       </div>
                       <div className="col-md-6">
@@ -5292,7 +5299,7 @@ export default function AppViews({
               </aside>
               <div className="worker-content">
                 <main className="profile-container" aria-labelledby="household-profile-title">
-                  <h1 className="household-profile-page-title">My Profile Household</h1>
+                  <h1 className="household-profile-page-title">My Profile</h1>
                   <div className="profile-row">
                   <section className="profile-column" aria-labelledby="household-profile-title">
                     <div className="profile-card profile-summary-card">
@@ -5704,7 +5711,7 @@ export default function AppViews({
               </aside>
               <div className="worker-content">
                 <main className="household-feedback-all-container">
-                  <p className="household-feedback-eyebrow">View all Reviews Household</p>
+                  <p className="household-feedback-eyebrow">Your reviews</p>
                   <section className="household-feedback-hero">
                     <div>
                       <h1>All Reviews you Submitted</h1>
@@ -6892,6 +6899,15 @@ export default function AppViews({
                       // every opening is filled (the backend closes the rest then).
                       const hasApplicants = pendingCount > 0;
                       const awaitingReply = !hasApplicants && requestedCount > 0;
+                      // The backend's note when the job's day passed with nobody
+                      // hired: workers no longer see it until the dates change.
+                      const expired = !isAssigned && Boolean(job.expiredNote);
+                      const hiredApplications = (job.applications || []).filter((application) =>
+                        ["Hired", "Completed"].includes(application.status),
+                      );
+                      const hiredNames = hiredApplications.map(
+                        (application) => application.workerName || application.workerUsername || "Worker",
+                      );
                       const workersNeeded = getWorkersNeeded(job);
                       const progressText = [
                         "In progress",
@@ -6901,7 +6917,9 @@ export default function AppViews({
                       ]
                         .filter(Boolean)
                         .join(" · ");
-                      const toneClass = isAssigned
+                      const toneClass = expired
+                        ? "expired"
+                        : isAssigned
                         ? "assigned"
                         : hasApplicants
                           ? "applicants"
@@ -6935,7 +6953,9 @@ export default function AppViews({
                               <h3>{job.jobTitle || job.serviceType}</h3>
                               <span className={`household-process-status-line ${toneClass}`}>
                                 <i aria-hidden="true" />
-                                {isAssigned
+                                {expired
+                                    ? "Start date passed — nobody was hired"
+                                    : isAssigned
                                     ? progressText
                                     : hasApplicants
                                       ? `${pendingCount} applicant${pendingCount === 1 ? "" : "s"} waiting`
@@ -6945,15 +6965,33 @@ export default function AppViews({
                               </span>
                             </div>
                           </div>
-                          <div className={`household-process-worker-row ${worker ? "" : "empty"}`}>
-                            <div className="household-process-mini-avatar">
-                              {worker ? String(workerName).slice(0, 2).toUpperCase() : "?"}
+                          {hiredNames.length > 1 ? (
+                            <div className="household-process-worker-row">
+                              <div className="household-process-avatar-stack">
+                                {hiredNames.slice(0, 3).map((name) => (
+                                  <div key={name} className="household-process-mini-avatar">
+                                    {String(name).slice(0, 2).toUpperCase()}
+                                  </div>
+                                ))}
+                              </div>
+                              <div>
+                                <span>{hiredNames.join(", ")}</span>
+                                <small>
+                                  {hiredNames.length} of {workersNeeded} hired
+                                </small>
+                              </div>
                             </div>
-                            <div>
-                              <span>{worker ? workerName : "No worker hired yet"}</span>
-                              {worker && <small>{worker.verification || "Verified"}</small>}
+                          ) : (
+                            <div className={`household-process-worker-row ${worker ? "" : "empty"}`}>
+                              <div className="household-process-mini-avatar">
+                                {worker ? String(workerName).slice(0, 2).toUpperCase() : "?"}
+                              </div>
+                              <div>
+                                <span>{worker ? workerName : "No worker hired yet"}</span>
+                                {worker && <small>{worker.verification || "Verified"}</small>}
+                              </div>
                             </div>
-                          </div>
+                          )}
                           <p className="household-process-meta">
                             {formatRate(job.offeredRate, job.rateType)} &middot; {job.barangay || "Location not set"}
                           </p>
@@ -6961,7 +6999,9 @@ export default function AppViews({
                             startDate={job.jobStartDate}
                             endDate={job.jobEndDate}
                             workingDays={job.estimatedWorkingDays}
+                            finished={expired}
                           />
+                          {expired && <div className="household-process-note is-expired">{job.expiredNote}</div>}
                           {isAssigned && (
                             <button
                               type="button"
@@ -6973,7 +7013,7 @@ export default function AppViews({
                                 }
                                 if (
                                   window.confirm(
-                                    `Mark this job as done? ${workerName || "The worker"} will be notified and you can both leave a review. This can't be undone.`,
+                                    `Mark this job as done? ${hiredNames.length > 1 ? hiredNames.join(", ") : workerName || "The worker"} will be notified and you can both leave a review. This can't be undone.`,
                                   )
                                 ) {
                                   handleConfirmJobCompleted(job.id);
@@ -7009,7 +7049,7 @@ export default function AppViews({
                               {isAssigned ? `View Applicants (${pendingCount || requestedCount})` : "View Applicants"}
                             </button>
                           )}
-                          {!isAssigned && (
+                          {!isAssigned && !expired && (
                             <button
                               type="button"
                               className="household-process-outline-cta"
@@ -7022,7 +7062,7 @@ export default function AppViews({
                               Browse Workers
                             </button>
                           )}
-                          {!isAssigned && pendingCount === 0 && (
+                          {!isAssigned && !expired && pendingCount === 0 && (
                             <div className="household-process-note">
                               {awaitingReply
                                 ? "We’ll let you know as soon as they accept or decline."

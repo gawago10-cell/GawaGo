@@ -424,7 +424,7 @@ class _WorkerDashboard extends StatelessWidget {
                 metrics: [
                   _WebsiteMetric(
                     label: 'Open Jobs',
-                    value: '${openJobs.length}',
+                    value: '${openJobs.where((job) => job.canApply).length}',
                     highlighted: true,
                   ),
                   _WebsiteMetric(
@@ -1186,7 +1186,8 @@ class _WorkerJobsState extends State<_WorkerJobs> {
             padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
             children: [
               _WorkerAiHero(
-                openJobCount: jobs.length,
+                // Applied and held-from jobs stay listed but aren't open to them.
+                openJobCount: jobs.where((job) => job.canApply).length,
                 aiMode: _aiMode,
                 loading: _aiLoading,
                 onFindForMe: _runAiMatching,
@@ -1356,7 +1357,9 @@ class _WorkerAiHero extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    openJobCount == 1 ? 'open job nearby' : 'open jobs nearby',
+                    openJobCount == 1
+                        ? 'job you can apply to'
+                        : 'jobs you can apply to',
                     style: const TextStyle(
                       color: GawaGoColors.mutedText,
                       fontSize: 11,

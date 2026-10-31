@@ -2794,3 +2794,173 @@ class OpeningsLeftTests(TestCase):
         self.assertNotIn(self.three.id, self._listed(accepting="true"))
         self.assertFalse(self.client.get(reverse("job-detail", args=[self.three.id])).data["accepting_applications"])
 
+
+class SystemScanFixTests(TestCase):
+    """Fixes from the system scan of 2026-11-01: lapsed jobs leave the market,
+    a job pays at least PHP 1, applicants hear about changed terms, leftover
+    applicants are told the household finished the job, and admins can tell
+    "never submitted" from "waiting for review"."""
+
+    def setUp(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        self.today = timezone.localdate()
+        self.client = APIClient()
+        self.home = User.objects.create_user(username="sc-home", password="password", first_name="Emman", last_name="Aviles")
+        UserProfile.objects.create(user=self.home, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        self.worker = User.objects.create_user(username="sc-worker", password="password", first_name="Mery", last_name="Cruz")
+        UserProfile.objects.create(user=self.worker, role=UserProfile.ROLE_WORKER, verification_status="verified")
+        self.lapsed = self._job("Aircon cleaning", self.today - timedelta(days=12), self.today - timedelta(days=12))
+        self.future = self._job("Garden help", self.today + timedelta(days=7), self.today + timedelta(days=8))
+
+    def _job(self, title, start, end, **extra):
+        return JobPosting.objects.create(
+            household=self.home,
+            title=title,
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="One-Time",
+            schedule_type="One-Time",
+            job_start_date=start,
+            job_end_date=end,
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate=extra.pop("service_rate", "700.00"),
+            **extra,
+        )
+
+    def _post_payload(self, **overrides):
+        payload = {
+            "title": "Window washing",
+            "job_type": "House Cleaning",
+            "required_skill": "House Cleaning",
+            "schedule_type": "One-Time",
+            "job_start_date": (self.today.replace(year=self.today.year + 1)).isoformat(),
+            "location_label": "Isabang, Tayabas",
+            "latitude": "13.9622745",
+            "longitude": "121.5632841",
+            "service_rate": "500.00",
+            "worker_slots": 1,
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_a_lapsed_open_job_leaves_the_market(self):
+        self.client.force_authenticate(user=self.worker)
+        listed = {row["id"] for row in self.client.get(reverse("job-list"), {"accepting": "true"}).data["results"]}
+        self.assertNotIn(self.lapsed.id, listed)
+        self.assertIn(self.future.id, listed)
+
+        detail = self.client.get(reverse("job-detail", args=[self.lapsed.id])).data
+        self.assertFalse(detail["can_apply"])
+        self.assertFalse(detail["accepting_applications"])
+        self.assertEqual(detail["expired_note"], "")  # the note is the household's
+
+        response = self.client.post(reverse("job-apply", args=[self.lapsed.id]), {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("which has passed, so it isn't taking applicants", response.data["detail"])
+
+    def test_the_household_is_told_and_cannot_hire_until_it_edits_the_dates(self):
+        from datetime import timedelta
+
+        stray = JobApplication.objects.create(job=self.lapsed, worker=self.worker)
+        self.client.force_authenticate(user=self.home)
+        detail = self.client.get(reverse("job-detail", args=[self.lapsed.id])).data
+        self.assertIn("Workers no longer see it. Edit the dates to post it again, or cancel it.", detail["expired_note"])
+
+        hire = self.client.patch(reverse("job-application-status", args=[stray.id]), {"status": "hired"}, format="json")
+        self.assertEqual(hire.status_code, 400)
+        self.assertIn("Edit the dates before hiring", hire.data["detail"])
+        invite = self.client.post(
+            reverse("job-hire-request", args=[self.lapsed.id]), {"worker_id": self.worker.id}, format="json"
+        )
+        self.assertEqual(invite.status_code, 400)
+
+        new_start = self.today + timedelta(days=3)
+        edit = self.client.patch(
+            reverse("job-detail", args=[self.lapsed.id]),
+            {"job_start_date": new_start.isoformat(), "job_end_date": new_start.isoformat()},
+            format="json",
+        )
+        self.assertEqual(edit.status_code, 200)
+        self.assertEqual(edit.data["expired_note"], "")
+        self.assertTrue(edit.data["accepting_applications"])
+
+    def test_a_job_pays_at_least_one_peso(self):
+        self.client.force_authenticate(user=self.home)
+        for rate in ("0.00", "0.11"):
+            response = self.client.post(reverse("job-list"), self._post_payload(service_rate=rate), format="json")
+            self.assertEqual(response.status_code, 400, rate)
+            self.assertIn("at least PHP 1.00", str(response.data["service_rate"]))
+        self.assertEqual(
+            self.client.post(reverse("job-list"), self._post_payload(), format="json").status_code, 201
+        )
+        edit = self.client.patch(reverse("job-detail", args=[self.future.id]), {"service_rate": "0"}, format="json")
+        self.assertEqual(edit.status_code, 400)
+
+    def test_the_rate_guide_words_the_going_rate(self):
+        self._job("Kitchen clean", self.today, self.today, service_rate="800.00")
+        self.client.force_authenticate(user=self.home)
+        guide = self.client.get(reverse("job-rate-guide"), {"skill": "House Cleaning", "rate_type": "per_day"}).data
+        self.assertEqual(guide["posts"], 3)
+        self.assertEqual(guide["label"], "House Cleaning usually posts at about PHP 733 / day.")
+        none = self.client.get(reverse("job-rate-guide"), {"skill": "Welding", "rate_type": "per_day"}).data
+        self.assertEqual(none["label"], "")
+
+    def test_applicants_hear_when_the_terms_change(self):
+        JobApplication.objects.create(job=self.future, worker=self.worker)
+        self.client.force_authenticate(user=self.home)
+        response = self.client.patch(reverse("job-detail", args=[self.future.id]), {"service_rate": "500.00"}, format="json")
+        self.assertEqual(response.status_code, 200)
+
+        notice = Notification.objects.get(recipient=self.worker, title="Job details changed")
+        self.assertEqual(
+            notice.message,
+            "Emman Aviles changed Garden help: rate PHP 700.00 \u2192 PHP 500.00. Your application is still open.",
+        )
+        # A change that leaves the terms alone sends nothing more.
+        self.client.patch(reverse("job-detail", args=[self.future.id]), {"description": "Bring gloves."}, format="json")
+        self.assertEqual(Notification.objects.filter(recipient=self.worker, title="Job details changed").count(), 1)
+
+    def test_leftover_applicants_hear_the_household_finished_the_job(self):
+        from apps.jobs.services import complete_job
+
+        hired = User.objects.create_user(username="sc-hired", password="password")
+        UserProfile.objects.create(user=hired, role=UserProfile.ROLE_WORKER, verification_status="verified")
+        self.future.worker_slots = 2
+        self.future.status = JobPosting.STATUS_ASSIGNED
+        self.future.save()
+        JobApplication.objects.create(job=self.future, worker=hired, status=JobApplication.STATUS_HIRED)
+        JobApplication.objects.create(job=self.future, worker=self.worker)
+
+        complete_job(self.future, actor=self.home)
+
+        notice = Notification.objects.get(recipient=self.worker, title="Job closed")
+        self.assertEqual(notice.message, "Emman Aviles marked Garden help as done. Your application has been closed.")
+
+    def test_verification_stage_tells_never_submitted_from_waiting(self):
+        from apps.accounts.serializers import UserProfileSerializer
+        from apps.common.models import VerificationRequest
+
+        never = User.objects.create_user(username="sc-never", password="password")
+        never_profile = UserProfile.objects.create(user=never, role=UserProfile.ROLE_HOUSEHOLD)
+        waiting = User.objects.create_user(username="sc-waiting", password="password")
+        waiting_profile = UserProfile.objects.create(user=waiting, role=UserProfile.ROLE_HOUSEHOLD)
+        VerificationRequest.objects.create(worker=waiting, status="pending")
+
+        stage = lambda profile: UserProfileSerializer(profile).data["verification_stage"]
+        self.assertEqual(stage(never_profile), "not_submitted")
+        self.assertEqual(stage(waiting_profile), "pending_review")
+        self.assertEqual(stage(self.home.profile), "verified")
+
+    def test_rate_trends_leave_a_gap_for_months_without_posts(self):
+        from apps.analytics.services import _build_pricing_trends
+
+        months = _build_pricing_trends()
+        self.assertEqual(len(months), 6)
+        empty = [month for month in months if month["postings"] == 0]
+        self.assertTrue(all(month["averageRate"] is None for month in empty))
+        self.assertTrue(all(month["averageRate"] > 0 for month in months if month["postings"]))
+

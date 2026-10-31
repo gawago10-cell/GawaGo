@@ -128,8 +128,10 @@ export function formatDistance(distanceKm, fallbackLabel = "") {
   }
   const numericDistance = Number(distanceKm);
   if (Number.isFinite(numericDistance) && numericDistance >= 0) {
+    // Same words as the backend's distance_label, which used to disagree
+    // ("1 meters away" beside "Within 1 km" on one card).
     if (numericDistance < 1) {
-      return `${Math.max(1, Math.round(numericDistance * 1000))} meters away`;
+      return "Within 1 km";
     }
     return `${numericDistance.toFixed(1)} km away`;
   }

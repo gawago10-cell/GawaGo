@@ -6,6 +6,7 @@ import {
   setComplaintRespondentBlocked,
   updateComplaintAdmin,
 } from "../services/backendDataService";
+import { formatJobDate } from "../utils/formatters";
 import { parseLocationLabel } from "../utils/locationUtils";
 import AdminUserHistorySection from "./AdminUserHistorySection";
 import AuthImage from "./AuthImage";
@@ -390,7 +391,7 @@ export default function AdminComplaintsQueue({
                       <PartyCell username={complaint.respondentUsername} detail={complaint.respondentDetail} />
                     </td>
                     <td className="text-muted">{complaint.jobName || complaint.jobTitle || "—"}</td>
-                    <td className="text-muted">{complaint.createdAt?.slice(0, 10)}</td>
+                    <td className="text-muted admin-reports-date">{formatJobDate(complaint.createdAt?.slice(0, 10))}</td>
                     <td>
                       <StatusPill status={complaint.status} />
                     </td>
@@ -438,7 +439,7 @@ export default function AdminComplaintsQueue({
                   <h3>{selected.jobName || selected.jobTitle || "Job not available"}</h3>
                   <p className="admin-report-info-meta">
                     <span>📍 {selected.jobBarangay || "Location not set"}</span>
-                    <span>🗓️ Filed {selected.createdAt?.slice(0, 10)}</span>
+                    <span>🗓️ Filed {formatJobDate(selected.createdAt?.slice(0, 10))}</span>
                   </p>
                 </div>
                 <div className="admin-report-info-card">

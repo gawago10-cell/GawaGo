@@ -15467,7 +15467,9 @@ a,
 .register-page .register-card .form-control.is-invalid:focus,
 .register-page .register-card .form-select.is-invalid:focus,
 .login-section .register-card .form-control.is-invalid,
-.login-section .register-card .form-select.is-invalid {
+.login-section .register-card .form-select.is-invalid,
+.household-job-form-shell .form-control.is-invalid,
+.household-job-form-shell .form-control.is-invalid:focus {
   border-color: #c44747 !important;
   background-image: none;
   box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22) !important;
@@ -16297,3 +16299,68 @@ a,
     font-weight: 700;
   }
 }
+
+/* System scan fixes, 2026-11-01. */
+
+/* My Applications: one card per application on a phone instead of a
+   seven-column table squeezed to one word per line. */
+@media (max-width: 640px) {
+  .worker-applications-table thead { display: none; }
+  .worker-applications-table,
+  .worker-applications-table tbody,
+  .worker-applications-table tr,
+  .worker-applications-table td { display: block; width: 100%; }
+  .worker-applications-table tr { padding: 14px 16px; border-bottom: 1px solid var(--gg-line, #e3d6b4); }
+  .worker-applications-table td {
+    border: 0 !important;
+    padding: 4px 0 !important;
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .worker-applications-table td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6b6f5c;
+    padding-top: 2px;
+  }
+  .worker-applications-table td:first-child { display: block; padding-bottom: 6px !important; }
+  .worker-applications-table td:first-child::before { display: none; }
+  .worker-applications-table .worker-application-description { display: none; }
+}
+
+/* Household card: every hired worker on a multi-worker job. */
+.household-process-avatar-stack { display: flex; flex-shrink: 0; }
+.household-process-avatar-stack .household-process-mini-avatar + .household-process-mini-avatar {
+  margin-left: -10px;
+  box-shadow: 0 0 0 2px var(--gg-surface, #fbf8ee);
+}
+
+/* Household card: the job's day passed with nobody hired. */
+.household-process-status-line.expired { color: #8a5a1c; }
+.household-process-status-line.expired i { background: #c0772b; }
+.household-process-status-icon.expired { background: #f7e7cc; color: #8a5a1c; }
+.household-process-note.is-expired { background: #fff3df; border: 1px solid #ecd2a2; color: #7a5216; }
+
+/* Post a Job: what households usually offer for the chosen service. */
+.rate-guide-hint { color: #5d6450; font-size: 12.5px; margin-top: 4px; }
+
+/* Worker dashboard: the rating's star. */
+.worker-rating-star { font-size: 0.55em; color: #c99a2e; vertical-align: middle; }
+
+/* Find Jobs counter: how many of the listed jobs were already applied to. */
+.worker-ai-hero-stat-sub { display: block; opacity: 0.75; font-size: 0.92em; }
+
+/* Admin complaints: dates and names stay on one line. */
+.admin-reports-date,
+.admin-report-party-cell span { white-space: nowrap; }
+
+/* User Management: accounts that never sent documents. */
+.admin-user-status-badge.unverified,
+.admin-user-status-badge.rejected { background: #ece9df; color: #5d6450; }
+.worker-dashboard .admin-user-status-badge.unverified,
+.worker-dashboard .admin-user-status-badge.rejected { background: #ece9df; color: #5d6450; }
+

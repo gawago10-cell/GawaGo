@@ -1110,6 +1110,7 @@ export default function SuperAdminDashboardView({
                       <div className="profile-card-head">Service Rate Trends</div>
                       <p className="analytics-chart-note">
                         The average rate households offered on new job posts each month over the last six months.
+                        {pricingTrends.some((item) => item.averageRate == null) && " Months with no posts yet are left blank."}
                       </p>
                       <div className="analytics-chart-wrap">
                         <ResponsiveContainer width="100%" height={260}>
@@ -1139,7 +1140,7 @@ export default function SuperAdminDashboardView({
                             />
                             <Tooltip
                               formatter={(value, name) => [
-                                name === "averageRate" ? formatCurrency(value) : value,
+                                name === "averageRate" ? (value == null ? "No posts yet" : formatCurrency(value)) : value,
                                 name === "averageRate" ? "Average Rate" : "Postings",
                               ]}
                             />

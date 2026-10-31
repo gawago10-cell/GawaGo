@@ -102,11 +102,15 @@ class AdminAnalyticsItem {
     required this.label,
     required this.value,
     required this.unit,
+    this.noData = false,
   });
 
   final String label;
   final double value;
   final String unit;
+
+  /// A rate row for a month with no posts: there is no rate to show.
+  final bool noData;
 
   /// Reads every row shape the dashboard sends: barangay counts, rate rows
   /// (`skill`/`averageRate`), rating buckets (`stars`/`count`), monthly rows
@@ -138,6 +142,7 @@ class AdminAnalyticsItem {
       label: label,
       value: _number(rawValue) ?? 0,
       unit: unit,
+      noData: json.containsKey('averageRate') && json['averageRate'] == null,
     );
   }
 }

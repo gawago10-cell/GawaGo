@@ -467,7 +467,9 @@ class _AnalyticsList extends StatelessWidget {
                           ),
                           const SizedBox(width: 12),
                           Text(
-                            item.unit == 'PHP'
+                            item.noData
+                                ? 'No posts yet'
+                                : item.unit == 'PHP'
                                 ? 'PHP ${item.value.toStringAsFixed(2)}'
                                 : item.value.toStringAsFixed(
                                     item.value % 1 == 0 ? 0 : 1,

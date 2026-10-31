@@ -305,7 +305,7 @@ function App() {
     description: "",
     barangay: "",
     streetAddress: "",
-    offeredRate: "0.00",
+    offeredRate: "",
     rateType: "Per Day",
     workersNeeded: "1",
     jobStartDate: "",
