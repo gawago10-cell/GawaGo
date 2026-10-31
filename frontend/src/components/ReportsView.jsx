@@ -166,17 +166,19 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
       {tab === "jobs" ? (
         <div className="admin-reports-table-card">
           <div className="table-responsive">
-            <table className="admin-reports-table">
+            {/* Short headers: their width sets the column's, and long ones left
+                the title ~100px and pushed Status off the card. */}
+            <table className="admin-reports-table admin-reports-list">
               <thead>
                 <tr>
                   <th>Job ID</th>
                   <th>Title</th>
                   <th>Posted By</th>
-                  <th>Service Type</th>
+                  <th>Service</th>
                   <th>Barangay</th>
-                  <th>Date Posted</th>
+                  <th>Posted</th>
                   <th>Budget</th>
-                  <th>Applicants</th>
+                  <th>Applied</th>
                   <th>Hired</th>
                   <th>Status</th>
                 </tr>
@@ -192,15 +194,15 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
                   filteredJobs.map((job) => (
                     <tr key={job.id}>
                       <td className="admin-reports-id">{jobCode(job.id)}</td>
-                      <td>{job.jobTitle}</td>
-                      <td>
+                      <td className="admin-reports-wrap admin-reports-title">{job.jobTitle}</td>
+                      <td className="admin-reports-wrap">
                         <div className="admin-report-party-cell">
                           <span className="admin-report-party-avatar">{initials(job.householdName)}</span>
                           <span>{job.householdName}</span>
                         </div>
                       </td>
-                      <td className="text-muted">{job.serviceType}</td>
-                      <td className="text-muted">{job.barangay || "—"}</td>
+                      <td className="text-muted admin-reports-wrap">{job.serviceType}</td>
+                      <td className="text-muted admin-reports-wrap">{job.barangay || "—"}</td>
                       <td className="text-muted">{job.createdAt?.slice(0, 10)}</td>
                       <td>{formatMoney(job.offeredRate)}</td>
                       <td className="text-muted">{(job.applications || []).length}</td>
@@ -220,7 +222,7 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
       ) : (
         <div className="admin-reports-table-card">
           <div className="table-responsive">
-            <table className="admin-reports-table">
+            <table className="admin-reports-table admin-reports-list">
               <thead>
                 <tr>
                   <th>App ID</th>
@@ -229,8 +231,8 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
                   <th>Job ID</th>
                   <th>Job Title</th>
                   <th>Barangay</th>
-                  <th>Date Applied</th>
-                  <th>Offered Rate</th>
+                  <th>Applied</th>
+                  <th>Rate</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -248,7 +250,7 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
                     return (
                       <tr key={application.id}>
                         <td className="admin-reports-id">{appCode(application.id)}</td>
-                        <td>
+                        <td className="admin-reports-wrap">
                           <div className="admin-report-party-cell">
                             <span className="admin-report-party-avatar">{initials(application.workerName)}</span>
                             <span>{application.workerName}</span>
@@ -262,8 +264,8 @@ export default function ReportsView({ postedJobs = [], registeredWorkers = [] })
                           )}
                         </td>
                         <td className="admin-reports-id">{jobCode(application.job?.id)}</td>
-                        <td>{application.job?.jobTitle}</td>
-                        <td className="text-muted">{application.job?.barangay || "—"}</td>
+                        <td className="admin-reports-wrap admin-reports-title">{application.job?.jobTitle}</td>
+                        <td className="text-muted admin-reports-wrap">{application.job?.barangay || "—"}</td>
                         <td className="text-muted">{application.appliedAt?.slice(0, 10)}</td>
                         <td>{formatMoney(application.job?.offeredRate)}</td>
                         <td>

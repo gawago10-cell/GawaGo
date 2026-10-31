@@ -12342,6 +12342,41 @@ a,
   background: var(--gg-tayabas-bg);
 }
 
+/* Posted Jobs / Worker Applications: ten columns share a laptop-wide card.
+   Tighter cells; dates, money and counts on one line while titles, names,
+   service and barangay wrap; and Status pinned to the right so it stays in
+   view when a narrow screen has to scroll the table. */
+.admin-reports-list th,
+.admin-reports-list td {
+  padding: 0.75rem 0.8rem;
+  white-space: nowrap;
+}
+
+.admin-reports-list td.admin-reports-wrap {
+  min-width: 7rem;
+  white-space: normal;
+}
+
+.admin-reports-list td.admin-reports-title {
+  min-width: 11rem;
+}
+
+.admin-reports-list :is(th, td):last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--gg-card, #fbf7eb);
+  box-shadow: -10px 0 12px -10px rgba(31, 42, 25, 0.35);
+}
+
+.admin-reports-list thead th:last-child {
+  background: var(--gg-card-muted, #f1e7cc);
+}
+
+.admin-reports-list tbody tr:hover td:last-child {
+  background: linear-gradient(var(--gg-leaf-tint), var(--gg-leaf-tint)), var(--gg-card, #fbf7eb);
+}
+
 .admin-reports-id {
   font-weight: 800;
   color: var(--gg-primary-strong);
@@ -15135,11 +15170,16 @@ a,
   box-shadow: 0 6px 14px rgba(31, 42, 25, 0.3);
 }
 
+/* Top-right, under "Show all jobs / Near me": pinned to the bottom it sat
+   below the fold on a laptop, where only its title peeked in. */
 .worker-jobs-map-panel {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
+  top: 60px;
+  right: 12px;
   z-index: 600;
+  /* Room for the phone top bar and the chat button when it's scrolled into
+     view (WorkerJobsMap scrollIntoView). */
+  scroll-margin: 16px 0 88px;
   width: min(360px, calc(100% - 24px));
   max-height: calc(100% - 72px);
   display: flex;

@@ -74,9 +74,20 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
   const layerRef = useRef(null);
   const frameRef = useRef(null);
   const markersRef = useRef(new Map());
+  const panelRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState("");
   const [selectedKey, setSelectedKey] = useState(null);
+
+  // The panel opens at the top of the map; if the page is scrolled past
+  // that, slide just enough to bring it on screen.
+  useEffect(() => {
+    if (!selectedKey || !panelRef.current) {
+      return;
+    }
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    panelRef.current.scrollIntoView?.({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+  }, [selectedKey]);
 
   // The parent recomputes the job list on every render, so keying on the
   // array itself rebuilt every pin (and dropped keyboard focus on one) each
@@ -235,7 +246,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
           </button>
         </div>
         {selectedGroup && (
-          <div className="worker-jobs-map-panel" role="dialog" aria-label="Jobs posted in this area">
+          <div className="worker-jobs-map-panel" role="dialog" aria-label="Jobs posted in this area" ref={panelRef}>
             <div className="worker-jobs-map-panel-head">
               <span>
                 {selectedGroup.jobs.length === 1
