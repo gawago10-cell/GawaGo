@@ -16,6 +16,7 @@ import EditJobDialog from "./EditJobDialog";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import RequiredMark, { hasAnswer } from "./RequiredMark";
+import JobScheduleBox from "./JobScheduleBox";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
@@ -3695,12 +3696,12 @@ export default function AppViews({
                               <small>{formatLocation(job.barangay, job.streetAddress)}</small>
                             </div>
                           </div>
-                          <p className="household-process-meta">
-                            {formatRate(job.offeredRate, job.rateType)}
-                            {job.jobStartDate
-                              ? ` · ${job.jobStartDate > todayIsoDate ? "Starts" : "Started"} ${formatJobDate(job.jobStartDate)}`
-                              : ""}
-                          </p>
+                          <p className="household-process-meta">{formatRate(job.offeredRate, job.rateType)}</p>
+                          <JobScheduleBox
+                            startDate={job.jobStartDate}
+                            endDate={job.jobEndDate}
+                            workingDays={job.estimatedWorkingDays}
+                          />
                           {/* The household marks a job done (AGENTS.md I.A). */}
                           <div className="household-process-note">
                             {job.householdName || job.householdUsername || "The household"} will mark this job as
@@ -3749,6 +3750,12 @@ export default function AppViews({
                               ? `Rating received: ${Number(review.overallRating ?? review.rating).toFixed(1)} / 5`
                               : "No rating yet"}
                           </p>
+                          <JobScheduleBox
+                            startDate={job.jobStartDate}
+                            endDate={job.jobEndDate}
+                            workingDays={job.estimatedWorkingDays}
+                            finished
+                          />
                           {hasRatedHouseholdForJob(job.id) ? (
                             <div className="household-process-note">You rated this household.</div>
                           ) : (
@@ -6183,10 +6190,14 @@ export default function AppViews({
                               </span>
                             </div>
                             <p className="household-history-meta">
-                              {job.serviceType} &middot; {formatJobDate(job.jobStartDate) || "Date not set"}
-                              {" "}&middot;{" "}
-                              {job.barangay || "Location not set"}
+                              {job.serviceType} &middot; {job.barangay || "Location not set"}
                             </p>
+                            <JobScheduleBox
+                              startDate={job.jobStartDate}
+                              endDate={job.jobEndDate}
+                              workingDays={job.estimatedWorkingDays}
+                              finished={job.status === "Completed"}
+                            />
 
                             {isCancelled ? (
                               <div className="household-history-cancelled-note">
@@ -6912,13 +6923,12 @@ export default function AppViews({
                           </div>
                           <p className="household-process-meta">
                             {formatRate(job.offeredRate, job.rateType)} &middot; {job.barangay || "Location not set"}
-                            {job.jobStartDate && (
-                              <>
-                                {" "}&middot; {formatJobDate(job.jobStartDate)}
-                                {job.jobEndDate ? ` to ${formatJobDate(job.jobEndDate)}` : ""}
-                              </>
-                            )}
                           </p>
+                          <JobScheduleBox
+                            startDate={job.jobStartDate}
+                            endDate={job.jobEndDate}
+                            workingDays={job.estimatedWorkingDays}
+                          />
                           {isAssigned && (
                             <button
                               type="button"

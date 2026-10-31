@@ -17,6 +17,7 @@ import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
+import '../../../shared/widgets/job_schedule_box.dart';
 import '../../../shared/widgets/list_map_view_toggle.dart';
 import '../../../shared/widgets/location_route_map.dart';
 import '../../../shared/widgets/notification_badge.dart';
@@ -956,16 +957,21 @@ class _InProcessJobCard extends StatelessWidget {
               job.locationLabel.trim().isEmpty
                   ? 'Location not set'
                   : _barangay(job),
-              if ((job.jobStartDate ?? '').isNotEmpty)
-                job.jobEndDate != null && job.jobEndDate!.isNotEmpty
-                    ? '${formatJobDate(job.jobStartDate)} to ${formatJobDate(job.jobEndDate)}'
-                    : formatJobDate(job.jobStartDate),
             ].join(' · '),
             style: const TextStyle(
               fontSize: 12.5,
               color: GawaGoColors.textMuted,
             ),
           ),
+          if ((job.jobStartDate ?? '').isNotEmpty ||
+              (job.jobEndDate ?? '').isNotEmpty) ...[
+            const SizedBox(height: 10),
+            JobScheduleBox(
+              startDate: job.jobStartDate,
+              endDate: job.jobEndDate,
+              workingDays: job.estimatedWorkingDays,
+            ),
+          ],
           const SizedBox(height: 12),
           if (isAssigned) ...[
             // The household marks a job done (AGENTS.md I.A); the backend
@@ -3027,10 +3033,29 @@ class _HistoryJobCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '${job.jobType} · ${_jobScheduleDisplay(job)} · '
+            '${job.jobType} · '
             '${job.locationLabel.trim().isEmpty ? "Location not set" : _barangay(job)}',
             style: const TextStyle(fontSize: 12, color: GawaGoColors.textMuted),
           ),
+          if ((job.jobStartDate ?? '').isNotEmpty ||
+              (job.jobEndDate ?? '').isNotEmpty) ...[
+            const SizedBox(height: 10),
+            JobScheduleBox(
+              startDate: job.jobStartDate,
+              endDate: job.jobEndDate,
+              workingDays: job.estimatedWorkingDays,
+              finished: _normalizedJobStatus(job.status) == 'completed',
+            ),
+          ] else ...[
+            const SizedBox(height: 2),
+            Text(
+              _jobScheduleDisplay(job),
+              style: const TextStyle(
+                fontSize: 12,
+                color: GawaGoColors.textMuted,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (isCancelled)
             Row(

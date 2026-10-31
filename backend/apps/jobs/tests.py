@@ -603,6 +603,21 @@ class JobPermissionTests(TestCase):
         self.assertEqual(response.data["results"][0]["job_id"], self.job.id)
         self.assertEqual(response.data["results"][0]["job_title"], self.job.title)
 
+    def test_worker_application_carries_the_job_schedule(self):
+        # My Jobs shows the start, end and working days from the application.
+        from datetime import date
+
+        JobPosting.objects.filter(pk=self.job.pk).update(
+            job_start_date=date(2030, 6, 2), job_end_date=date(2030, 6, 4), estimated_working_days=3
+        )
+        self.client.force_authenticate(user=self.worker)
+
+        result = self.client.get(reverse("job-application-list")).data["results"][0]
+
+        self.assertEqual(result["job_start_date"], "2030-06-02")
+        self.assertEqual(result["job_end_date"], "2030-06-04")
+        self.assertEqual(result["job_estimated_working_days"], 3)
+
     def test_household_application_list_only_includes_owned_jobs(self):
         other_job = JobPosting.objects.create(
             household=self.other_household,

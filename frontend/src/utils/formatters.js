@@ -45,6 +45,20 @@ export function formatJobDate(value) {
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** A job date with its day of the week: "2026-10-30" as "Fri, Oct 30, 2026".
+ * The job schedule box shows this so both sides see which day work starts. */
+export function formatJobDay(value) {
+  const trimmed = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return formatJobDate(trimmed);
+  }
+  const parsed = new Date(`${trimmed}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return trimmed;
+  }
+  return parsed.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
 export function formatScheduleLabel(scheduleType) {
   if (typeof scheduleType !== "string") {
     return "";

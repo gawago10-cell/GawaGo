@@ -109,6 +109,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     job_schedule_type = serializers.CharField(source="job.schedule_type", read_only=True)
     job_start_date = serializers.DateField(source="job.job_start_date", read_only=True)
     job_end_date = serializers.DateField(source="job.job_end_date", read_only=True)
+    job_estimated_working_days = serializers.IntegerField(source="job.estimated_working_days", read_only=True)
     job_description = serializers.CharField(source="job.description", read_only=True)
     household_username = serializers.CharField(source="job.household.username", read_only=True)
     household_name = serializers.SerializerMethodField()
@@ -184,6 +185,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "job_schedule_type",
             "job_start_date",
             "job_end_date",
+            "job_estimated_working_days",
             "job_description",
             "household_username",
             "household_name",

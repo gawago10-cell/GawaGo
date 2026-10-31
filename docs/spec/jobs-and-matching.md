@@ -7,7 +7,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
 ### A. Job Posting and Application
 - Households can post job requests including:
   - Job type
-  - Schedule, plus an optional job start date, end date, and estimated number of working days
+  - Schedule, plus an optional job start date, end date, and estimated number of working days. Both sides see them the same way on My Jobs and the household dashboard: a Start and an End with the day of the week ("Fri, Oct 30, 2026"), worded Starts/Started and Ends/Ended, and the working days under them; a one-day job with no end date ends the day it starts (panel review, 2026-10-31)
   - Location
   - Service rate
   - A geographic search radius for matching (`1 km`, `2 km`, `5 km`, `10 km`, or `unlimited`; defaults to `1 km`)

@@ -469,6 +469,7 @@ class WorkerApplication {
     required this.jobScheduleType,
     required this.jobStartDate,
     required this.jobEndDate,
+    this.jobEstimatedWorkingDays,
     required this.jobDescription,
     required this.householdUsername,
     required this.householdName,
@@ -498,6 +499,7 @@ class WorkerApplication {
   final String jobScheduleType;
   final String jobStartDate;
   final String jobEndDate;
+  final int? jobEstimatedWorkingDays;
   final String jobDescription;
   final String householdUsername;
   final String householdName;
@@ -538,6 +540,9 @@ class WorkerApplication {
       jobScheduleType: _text(json['job_schedule_type']),
       jobStartDate: _text(json['job_start_date'] ?? ''),
       jobEndDate: _text(json['job_end_date'] ?? ''),
+      jobEstimatedWorkingDays: _optionalInteger(
+        json['job_estimated_working_days'],
+      ),
       jobDescription: _text(json['job_description']),
       householdUsername: _text(json['household_username']),
       householdName: _text(json['household_name']),

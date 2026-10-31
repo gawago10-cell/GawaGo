@@ -76,6 +76,18 @@ String formatJobDate(String? value, {String fallback = 'Not set'}) {
   return '${_month(local.month)} ${local.day}, ${local.year}';
 }
 
+/// A job date with its day of the week: "2026-10-30" as "Fri, Oct 30, 2026",
+/// matching the web's formatJobDay.
+String formatJobDay(String? value, {String fallback = 'Not set'}) {
+  final normalized = (value ?? '').trim();
+  if (normalized.isEmpty) return fallback;
+  final date = DateTime.tryParse(normalized);
+  if (date == null) return normalized;
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return '${weekdays[date.weekday - 1]}, ${_month(date.month)} ${date.day}, '
+      '${date.year}';
+}
+
 String formatDateOrText(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty) return 'Not specified';

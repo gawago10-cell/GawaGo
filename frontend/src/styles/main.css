@@ -3354,6 +3354,68 @@ body {
   background: #f3f7ff;
 }
 
+/* A job's start and end with the day of the week (JobScheduleBox). */
+.job-schedule-box {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0.15rem 0 0.6rem;
+  border: 1px solid var(--gg-line, #e3dccb);
+  border-radius: 12px;
+  background: #fbf8f1;
+  overflow: hidden;
+}
+
+.job-schedule-box > div {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+}
+
+.job-schedule-box > div + div {
+  border-left: 1px solid var(--gg-line, #e3dccb);
+}
+
+.job-schedule-box span {
+  color: var(--gg-ink-muted, #565e4e);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.job-schedule-box strong {
+  color: var(--gg-ink, #1f2a19);
+  font-size: 0.9rem;
+}
+
+.job-schedule-box .is-unset strong {
+  color: var(--gg-ink-muted, #565e4e);
+  font-weight: 600;
+}
+
+.job-schedule-box > .job-schedule-days {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--gg-line, #e3dccb);
+  border-left: 0;
+  padding: 0.4rem 0.75rem;
+  background: #f1f4e6;
+  color: var(--gg-leaf-text, #4a632a);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* History cards pad their children, not the card itself. */
+.household-history-card .job-schedule-box {
+  margin: 0.65rem 29px 0.4rem;
+}
+
+@media (max-width: 767px) {
+  .household-history-card .job-schedule-box {
+    margin-inline: 1rem;
+  }
+}
+
 /* Household / Worker tag on each verification request. */
 .verification-role-pill {
   display: inline-block;

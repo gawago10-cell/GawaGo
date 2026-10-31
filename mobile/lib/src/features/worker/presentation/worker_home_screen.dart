@@ -16,6 +16,7 @@ import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
 import '../../../shared/widgets/job_image_gallery.dart';
+import '../../../shared/widgets/job_schedule_box.dart';
 import '../../../shared/widgets/list_map_view_toggle.dart';
 import '../../../shared/widgets/location_route_map.dart';
 import '../../../shared/widgets/my_complaints_view.dart';
@@ -3362,6 +3363,14 @@ class _WorkerInProgressJobCard extends StatelessWidget {
             'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
           ),
+          if (job.jobStartDate.isNotEmpty || job.jobEndDate.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            JobScheduleBox(
+              startDate: job.jobStartDate,
+              endDate: job.jobEndDate,
+              workingDays: job.jobEstimatedWorkingDays,
+            ),
+          ],
           const SizedBox(height: 12),
           // The household marks a job done (AGENTS.md I.A).
           Text(
@@ -3453,6 +3462,15 @@ class _WorkerCompletedJobCard extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
+            if (job.jobStartDate.isNotEmpty || job.jobEndDate.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              JobScheduleBox(
+                startDate: job.jobStartDate,
+                endDate: job.jobEndDate,
+                workingDays: job.jobEstimatedWorkingDays,
+                finished: true,
+              ),
+            ],
           ],
         ),
       ),
