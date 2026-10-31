@@ -1,5 +1,5 @@
 // Shared formatting/status-tone helpers between the admin Reports page
-// (Posted Jobs / Worker Applications) and the Reported Issues queue's
+// (Posted Jobs / Worker Applications) and the Complaints queue's
 // per-user profile & history panel, so IDs and status colors stay
 // consistent wherever a job or application shows up in the admin UI.
 

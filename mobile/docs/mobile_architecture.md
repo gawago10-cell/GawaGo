@@ -107,7 +107,8 @@ Mobile should display backend-provided fields such as:
 - `workers_needed`
 - `can_apply`
 - `can_accept_hire_request`
-- `can_request_completion`
+- `can_request_completion` (always false now: the household marks jobs done)
+- `can_mark_done` / `mark_done_note` (household: whether "Mark as done" is available, and why not yet)
 - `can_review`
 - `route_distance_km`
 - `route_points`

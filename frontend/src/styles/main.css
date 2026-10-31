@@ -3354,6 +3354,29 @@ body {
   background: #f3f7ff;
 }
 
+/* Household / Worker tag on each verification request. */
+.verification-role-pill {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  background: var(--gg-accent-2, #e6efd3);
+  color: var(--gg-leaf-text, #4a632a);
+}
+
+.verification-role-pill.role-household {
+  background: #f3e6c8;
+  color: #7a5a17;
+}
+
+.verification-role-tabs {
+  margin-bottom: 0.25rem;
+}
+
 .superadmin-verification-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -8932,6 +8955,12 @@ a,
   .superadmin-dashboard .table {
     min-width: 720px;
   }
+
+  /* The analytics tables have three short columns that fit any width; held
+     at 720px they ran past their card and cut off the demand bars. */
+  .superadmin-dashboard .table.analytics-table {
+    min-width: 0;
+  }
 }
 
 @media (max-width: 767px) {
@@ -11870,7 +11899,7 @@ a,
   }
 }
 
-/* My Reports (complaint tracker) */
+/* My Complaints (complaint tracker) */
 
 .my-reports-header {
   display: flex;
@@ -12114,7 +12143,7 @@ a,
   line-height: 1.5;
 }
 
-/* Admin: Reported Issues queue */
+/* Admin: Complaints queue */
 
 .admin-reports-page {
   margin-top: 1rem;
@@ -14333,7 +14362,7 @@ a,
   color: var(--gg-ink) !important;
 }
 
-/* ---- My Reports ---------------------------------------------------------- */
+/* ---- My Complaints ---------------------------------------------------------- */
 .worker-dashboard .my-reports-header-icon {
   background: rgba(158, 191, 94, 0.18);
   color: var(--gg-leaf-deep);

@@ -138,6 +138,24 @@ def _build_barangay_analytics(counter, value_key):
     )[:8]
 
 
+def _build_barangay_demand_vs_supply(job_counts, worker_counts, limit=10):
+    """Job requests and available workers side by side for the barangays with
+    the most demand -- one list for the Geographic Analytics line chart. The
+    two top-8 lists above rank separately, so a barangay in one would read 0
+    in the other even when it has some."""
+    rows = [
+        {
+            "barangay": barangay,
+            "jobs": job_counts.get(barangay, 0),
+            "workers": worker_counts.get(barangay, 0),
+        }
+        for barangay in set(job_counts) | set(worker_counts)
+        if barangay and (job_counts.get(barangay, 0) or worker_counts.get(barangay, 0))
+    ]
+    rows.sort(key=lambda row: (-row["jobs"], -row["workers"], row["barangay"]))
+    return rows[:limit]
+
+
 def _round_half_up(value):
     """Python's round() rounds half-to-even (4.5 -> 4, 2.5 -> 2), which
     bucket a rating distribution's boundary values the wrong way. Clamped to
@@ -264,6 +282,7 @@ def build_dashboard_metrics():
     )
     barangay_demand = _build_barangay_analytics(job_barangay_counts, "jobs")
     worker_availability = _build_barangay_analytics(worker_barangay_counts, "workers")
+    demand_vs_supply = _build_barangay_demand_vs_supply(job_barangay_counts, worker_barangay_counts)
 
     average_rates_by_category = _build_average_rates_by_category()
     pricing_trends = _build_pricing_trends()
@@ -361,6 +380,7 @@ def build_dashboard_metrics():
             "geographicAnalytics": {
                 "barangayDemand": barangay_demand,
                 "workerAvailability": worker_availability,
+                "demandVsSupply": demand_vs_supply,
             },
             "barangayJobAnalytics": barangay_demand,
             "barangayWorkerAnalytics": worker_availability,

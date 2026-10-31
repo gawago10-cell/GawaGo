@@ -506,7 +506,7 @@ export async function createComplaint({ jobId, respondentId, complaintType, desc
   });
   const data = await readResponseData(response);
   if (!response.ok) {
-    throw new Error(getApiErrorMessage(data, "Unable to submit this report."));
+    throw new Error(getApiErrorMessage(data, "Unable to submit this complaint."));
   }
   return normalizeBackendComplaint(data);
 }
@@ -538,7 +538,7 @@ export async function updateComplaintAdmin(complaintId, { status: nextStatus, re
   });
   const data = await readResponseData(response);
   if (!response.ok) {
-    throw new Error(getApiErrorMessage(data, "Unable to update this report."));
+    throw new Error(getApiErrorMessage(data, "Unable to update this complaint."));
   }
   return normalizeBackendComplaint(data);
 }
@@ -610,6 +610,26 @@ export async function downloadPlatformReportCsv(period) {
   const link = document.createElement("a");
   link.href = url;
   link.download = "gawago-platform-report.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
+/** The superadmin complaints queue as CSV, with the same status filter. */
+export async function downloadComplaintsCsv({ status: statusFilter } = {}) {
+  const params = new URLSearchParams({ export: "csv" });
+  if (statusFilter) params.set("status", statusFilter);
+  const response = await apiRequest(`complaints/admin/?${params.toString()}`, { auth: true });
+  if (!response.ok) {
+    throw new Error("Unable to download the complaints.");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `gawago-complaints${statusFilter ? `-${statusFilter}` : ""}.csv`;
   document.body.appendChild(link);
   link.click();
   link.remove();

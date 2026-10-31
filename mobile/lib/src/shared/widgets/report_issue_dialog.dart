@@ -16,7 +16,7 @@ class ReportApplicantOption {
   final String label;
 }
 
-/// "Report an Issue" -- always tied to one job. A household picks which
+/// "File a Complaint" -- always tied to one job. A household picks which
 /// applicant the report is about; a worker's report always targets that
 /// job's household, so no picker is shown.
 ///
@@ -116,7 +116,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
   Future<void> _submit() async {
     if (_submitting) return;
     if (_complaintType == null) {
-      setState(() => _error = 'Please select a report type.');
+      setState(() => _error = 'Please select a complaint type.');
       return;
     }
     if (_description.text.trim().isEmpty) {
@@ -124,7 +124,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
       return;
     }
     if (widget.isHousehold && _respondentId == null) {
-      setState(() => _error = 'Select which worker this report is about.');
+      setState(() => _error = 'Select which worker this complaint is about.');
       return;
     }
 
@@ -197,7 +197,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // Web's "Report an Issue" modal (ComplaintModal.jsx) is a plain white
+    // Web's "File a Complaint" modal (ComplaintModal.jsx) is a plain white
     // Bootstrap modal. This dialog used to inherit whatever dark ambient
     // theme happened to be active at the call site, which clashed with the
     // rest of the app -- forcing a light theme here keeps it consistent
@@ -232,7 +232,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
           children: [
             const Expanded(
               child: Text(
-                'Report an Issue',
+                'File a Complaint',
                 style: TextStyle(
                   color: GawaGoColors.ink,
                   fontWeight: FontWeight.w900,
@@ -255,7 +255,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Reporting on "${widget.jobTitle}". Your report goes directly '
+                'About "${widget.jobTitle}". Your complaint goes directly '
                 'to our admin team for review.',
                 style: const TextStyle(
                   color: GawaGoColors.textMuted,
@@ -293,7 +293,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                   ),
                 const SizedBox(height: 14),
               ],
-              _requiredLabel('Report Type'),
+              _requiredLabel('Complaint Type'),
               DropdownButtonFormField<String>(
                 initialValue: _complaintType,
                 decoration: const InputDecoration(hintText: 'Select a type...'),
@@ -452,9 +452,9 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                             ),
                             TextSpan(
                               text:
-                                  'Reports are reviewed by our admin team and '
-                                  'handled confidentially. The person you '
-                                  'report is not notified that a report was '
+                                  'Complaints are reviewed by our admin team and '
+                                  'handled confidentially. The person named '
+                                  'is not notified that a complaint was '
                                   'filed.',
                             ),
                           ],
@@ -498,7 +498,7 @@ class _ReportIssueDialogState extends State<_ReportIssueDialog> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
-                  child: Text(_submitting ? 'Submitting...' : 'Submit Report'),
+                  child: Text(_submitting ? 'Submitting...' : 'Submit Complaint'),
                 ),
               ),
             ],
@@ -547,7 +547,7 @@ class PickedEvidence {
     message: oversized.isNotEmpty
         ? '${oversized.join(', ')}: exceeds $megabytes MB and was not added.'
         : dropped
-        ? 'A report can carry up to $maxCount photos; only the first $maxCount were kept.'
+        ? 'A complaint can carry up to $maxCount photos; only the first $maxCount were kept.'
         : null,
   );
 }

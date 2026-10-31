@@ -146,6 +146,16 @@ class DashboardMetricsServiceTests(TestCase):
         self.assertEqual(analytics["serviceRateSummary"], rate_transparency["averageRatesByCategory"][:5])
         self.assertEqual(alitao_demand["jobs"], 1)
         self.assertEqual(alupay_workers["workers"], 2)
+        # The line chart's list carries both counts for each barangay, most
+        # demand first, so a barangay never reads 0 workers just for missing
+        # the separate worker ranking.
+        demand_vs_supply = geographic_analytics["demandVsSupply"]
+        self.assertLessEqual(len(demand_vs_supply), 10)
+        by_barangay = {row["barangay"]: row for row in demand_vs_supply}
+        self.assertEqual(by_barangay["Alitao"]["jobs"], 1)
+        self.assertEqual(by_barangay["Alupay"]["workers"], 2)
+        jobs_in_order = [row["jobs"] for row in demand_vs_supply]
+        self.assertEqual(jobs_in_order, sorted(jobs_in_order, reverse=True))
         self.assertEqual(cleaning_rate["count"], 1)
         self.assertEqual(cleaning_rate["averageRate"], 700.0)
         self.assertEqual(current_pricing_trend["postings"], 2)

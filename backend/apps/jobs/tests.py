@@ -517,7 +517,7 @@ class JobPermissionTests(TestCase):
         self.assertTrue(response.data["can_accept_hire_request"])
         self.assertFalse(response.data["can_request_completion"])
 
-    def test_hired_worker_can_request_completion_on_assigned_job(self):
+    def test_household_not_worker_is_offered_mark_done_on_assigned_job(self):
         self.job.status = JobPosting.STATUS_ASSIGNED
         self.job.save(update_fields=["status"])
         self.application.status = JobApplication.STATUS_HIRED
@@ -530,7 +530,13 @@ class JobPermissionTests(TestCase):
         self.assertEqual(response.data["hired_count"], 1)
         self.assertFalse(response.data["can_apply"])
         self.assertFalse(response.data["can_accept_hire_request"])
-        self.assertTrue(response.data["can_request_completion"])
+        self.assertFalse(response.data["can_request_completion"])
+        self.assertFalse(response.data["can_mark_done"])
+
+        self.client.force_authenticate(user=self.household)
+        household_view = self.client.get(reverse("job-detail", args=[self.job.id]))
+        self.assertTrue(household_view.data["can_mark_done"])
+        self.assertEqual(household_view.data["mark_done_note"], "")
 
     def test_completed_job_review_flags_clear_after_review(self):
         self.job.status = JobPosting.STATUS_COMPLETED
@@ -1478,7 +1484,7 @@ class JobLifecycleTransitionTests(TestCase):
         detail_response = self.client.get(reverse("job-detail", args=[self.job.id]))
         self.assertEqual(detail_response.data["hired_count"], 1)
         self.assertFalse(detail_response.data["can_accept_hire_request"])
-        self.assertTrue(detail_response.data["can_request_completion"])
+        self.assertFalse(detail_response.data["can_request_completion"])
 
     def test_worker_rejects_hire_request_transition(self):
         self.apply_as_worker(self.reject_worker)
@@ -1498,7 +1504,9 @@ class JobLifecycleTransitionTests(TestCase):
         self.assertFalse(detail_response.data["can_accept_hire_request"])
         self.assertFalse(detail_response.data["can_request_completion"])
 
-    def test_worker_requests_completion_transition(self):
+    def test_worker_can_no_longer_mark_a_job_done(self):
+        # The household marks a job done (AGENTS.md I.A); the old worker
+        # request answers installed app builds with a message and changes nothing.
         self.apply_as_worker()
         application = JobApplication.objects.get(job=self.job, worker=self.worker)
         self.send_hire_request(application)
@@ -1511,21 +1519,15 @@ class JobLifecycleTransitionTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("household marks the job done", response.data["detail"])
         application.refresh_from_db()
         self.job.refresh_from_db()
         self.assertEqual(application.status, JobApplication.STATUS_HIRED)
-        self.assertEqual(application.note, "Service completed.")
-        self.assertEqual(self.job.status, JobPosting.STATUS_COMPLETION_REQUESTED)
-        self.assertFalse(response.data["can_request_completion"])
-        notification = Notification.objects.get(
-            recipient=self.household,
-            notification_type=Notification.TYPE_COMPLETION,
-            title="Worker requested completion",
+        self.assertEqual(self.job.status, JobPosting.STATUS_ASSIGNED)
+        self.assertFalse(
+            Notification.objects.filter(recipient=self.household, title="Worker requested completion").exists()
         )
-        self.assertEqual(notification.related_job_id, self.job.id)
-        self.assertEqual(notification.related_application_id, application.id)
-        self.assertTrue(notification.requires_action)
 
     def test_a_job_cannot_be_completed_before_its_start_date(self):
         # AGENTS.md II.A: the review gate exists to stop ratings for work
@@ -1540,18 +1542,10 @@ class JobLifecycleTransitionTests(TestCase):
         tomorrow = timezone.localdate() + timezone.timedelta(days=1)
         JobPosting.objects.filter(pk=self.job.pk).update(job_start_date=tomorrow)
 
-        self.client.force_authenticate(user=self.worker)
-        detail = self.client.get(reverse("job-detail", args=[self.job.id]))
-        self.assertFalse(detail.data["can_request_completion"])
-        request = self.client.post(
-            reverse("job-request-completion", args=[self.job.id]),
-            {"note": "Done early."},
-            format="json",
-        )
-        self.assertEqual(request.status_code, 400)
-        self.assertIn("starts on", request.data["detail"])
-
         self.client.force_authenticate(user=self.household)
+        detail = self.client.get(reverse("job-detail", args=[self.job.id]))
+        self.assertFalse(detail.data["can_mark_done"])
+        self.assertIn("starts on", detail.data["mark_done_note"])
         confirm = self.client.patch(
             reverse("job-detail", args=[self.job.id]),
             {"status": JobPosting.STATUS_COMPLETED},
@@ -1561,23 +1555,18 @@ class JobLifecycleTransitionTests(TestCase):
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, JobPosting.STATUS_ASSIGNED)
 
-        # From the start date on, completion works as before.
+        # From the start date on, the household can mark it done.
         JobPosting.objects.filter(pk=self.job.pk).update(job_start_date=timezone.localdate())
-        self.client.force_authenticate(user=self.worker)
-        allowed = self.client.post(
-            reverse("job-request-completion", args=[self.job.id]),
-            {"note": "Done."},
-            format="json",
-        )
+        detail = self.client.get(reverse("job-detail", args=[self.job.id]))
+        self.assertTrue(detail.data["can_mark_done"])
+        allowed = self.complete_job_from_household()
         self.assertEqual(allowed.status_code, 200)
 
-    def test_household_confirms_completion_transition(self):
+    def test_household_marks_job_done_transition(self):
         self.apply_as_worker()
         application = JobApplication.objects.get(job=self.job, worker=self.worker)
         self.send_hire_request(application)
         self.decide_hire_request(application, "accept")
-        self.client.force_authenticate(user=self.worker)
-        self.client.post(reverse("job-request-completion", args=[self.job.id]), {}, format="json")
 
         response = self.complete_job_from_household()
 
@@ -1603,8 +1592,6 @@ class JobLifecycleTransitionTests(TestCase):
         self.assertEqual(worker_review_before.status_code, 400)
         self.assertFalse(Review.objects.exists())
 
-        self.client.force_authenticate(user=self.worker)
-        self.client.post(reverse("job-request-completion", args=[self.job.id]), {}, format="json")
         self.complete_job_from_household()
 
         self.client.force_authenticate(user=self.household)
@@ -1707,17 +1694,16 @@ class ApplicantInstantAcceptTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status_stage"], "in_progress")
 
-    def test_stage_tracks_the_completion_handshake(self):
+    def test_stage_moves_from_in_progress_to_completed(self):
         application = JobApplication.objects.create(
             job=self.job, worker=self.applicant, status=JobApplication.STATUS_PENDING
         )
         self.set_status(application, JobApplication.STATUS_HIRED)
 
         self.client.force_authenticate(user=self.applicant)
-        self.client.post(reverse("job-request-completion", args=[self.job.id]), {}, format="json")
-        awaiting = self.client.get(reverse("job-detail", args=[self.job.id]))
-        self.assertEqual(awaiting.data["status_stage"], "awaiting_confirmation")
-        self.assertEqual(awaiting.data["status_label"], "Awaiting confirmation")
+        in_progress = self.client.get(reverse("job-detail", args=[self.job.id]))
+        self.assertEqual(in_progress.data["status_stage"], "in_progress")
+        self.assertEqual(in_progress.data["status_label"], "In progress")
 
         self.client.force_authenticate(user=self.household)
         confirmed = self.client.patch(
@@ -1764,9 +1750,6 @@ class JobStatusEventTests(TestCase):
             {"status": JobApplication.STATUS_HIRED},
             format="json",
         )
-        self.client.force_authenticate(user=self.worker)
-        self.client.post(reverse("job-request-completion", args=[self.job.id]), {}, format="json")
-        self.client.force_authenticate(user=self.household)
         self.client.patch(
             reverse("job-detail", args=[self.job.id]),
             {"status": JobPosting.STATUS_COMPLETED},
@@ -1778,16 +1761,15 @@ class JobStatusEventTests(TestCase):
 
         self.assertIn(("application", "pending", "hired"), transitions)
         self.assertIn(("job", "open", "assigned"), transitions)
-        self.assertIn(("job", "assigned", "completion_requested"), transitions)
-        self.assertIn(("job", "completion_requested", "completed"), transitions)
+        self.assertIn(("job", "assigned", "completed"), transitions)
         self.assertIn(("application", "hired", "completed"), transitions)
 
         hire_event = next(event for event in events if event.to_status == "hired")
-        completion_request = next(
-            event for event in events if event.to_status == "completion_requested"
+        completion = next(
+            event for event in events if event.entity == "job" and event.to_status == "completed"
         )
         self.assertEqual(hire_event.actor, self.household)
-        self.assertEqual(completion_request.actor, self.worker)
+        self.assertEqual(completion.actor, self.household)
 
     def test_no_event_is_written_when_the_status_does_not_move(self):
         JobApplication.objects.create(

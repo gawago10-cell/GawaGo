@@ -691,61 +691,22 @@ class JobHireRequestView(APIView):
 
 
 class JobCompletionRequestView(APIView):
+    """POST /api/jobs/<id>/request-completion/ -- retired.
+
+    Workers used to mark a job done and wait for the household to confirm.
+    The household now marks it done itself (PATCH status=completed), so this
+    only answers app builds still on phones with a message they can show.
+    Jobs already waiting on a confirmation stay completable by the household.
+    """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request, job_id):
-        job = get_object_or_404(JobPosting.objects.select_related("household"), pk=job_id)
-        profile = getattr(request.user, "profile", None)
-        if not profile or profile.role != UserProfile.ROLE_WORKER:
-            return Response({"detail": "Only workers can request job completion."}, status=status.HTTP_403_FORBIDDEN)
-        if job.status not in {JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED}:
-            return Response(
-                {"detail": "Completion can only be requested for assigned jobs."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        application = job.applications.filter(worker=request.user, status=JobApplication.STATUS_HIRED).first()
-        if not application:
-            return Response(
-                {"detail": "Only the hired worker can request completion for this job."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        not_started = job_not_started_message(job)
-        if not_started:
-            return Response({"detail": not_started}, status=status.HTTP_400_BAD_REQUEST)
-
-        note = str(request.data.get("note", "")).strip()
-        if note:
-            application.note = note
-            application.save(update_fields=["note", "updated_at"])
-
-        newly_requested = job.status != JobPosting.STATUS_COMPLETION_REQUESTED
-        if newly_requested:
-            previous_status = job.status
-            job.status = JobPosting.STATUS_COMPLETION_REQUESTED
-            job.save(update_fields=["status"])
-            record_job_status_event(job, previous_status, job.status, actor=request.user)
-
-        # Only on the move into "awaiting confirmation", or when the worker
-        # adds a note worth passing on: repeating the request used to send the
-        # household another notification and email every time.
-        if newly_requested or note:
-            worker_name = request.user.get_full_name().strip() or request.user.username
-            message = f"{worker_name} marked {job.title} as done. Please confirm if the service was completed."
-            if note:
-                message = f"{message} Worker note: {note}"
-            create_notification(
-                recipient=job.household,
-                notification_type=Notification.TYPE_COMPLETION,
-                title="Worker requested completion",
-                message=message,
-                actor=request.user,
-                related_job_id=job.id,
-                related_application_id=application.id,
-                action_type=Notification.ACTION_JOB_DETAIL,
-                action_url=f"/household/jobs/{job.id}/completion",
-                requires_action=True,
-            )
-        return Response(JobPostingSerializer(job, context={"request": request}).data)
+        get_object_or_404(JobPosting, pk=job_id)
+        return Response(
+            {"detail": "The household marks the job done once the work is finished."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
 
 class JobApplicationDecisionView(APIView):

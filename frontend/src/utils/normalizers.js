@@ -413,6 +413,8 @@ export function normalizeBackendJob(job) {
     canApply: Boolean(job.can_apply ?? job.canApply ?? false),
     canAcceptHireRequest: Boolean(job.can_accept_hire_request ?? job.canAcceptHireRequest ?? false),
     canRequestCompletion: Boolean(job.can_request_completion ?? job.canRequestCompletion ?? false),
+    canMarkDone: Boolean(job.can_mark_done ?? job.canMarkDone ?? false),
+    markDoneNote: job.mark_done_note ?? job.markDoneNote ?? "",
     canReview: Boolean(job.can_review ?? job.canReview ?? false),
     applications,
     images,

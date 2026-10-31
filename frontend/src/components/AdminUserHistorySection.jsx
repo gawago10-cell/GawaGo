@@ -9,7 +9,7 @@ function HistoryStatusPill({ status, tone }) {
 
 /**
  * The "Portfolio" + job/application history block shown inside an admin's
- * per-user profile modal. Originally built only for the Reported Issues
+ * per-user profile modal. Originally built only for the Complaints
  * queue's "View profile & history" action (AdminComplaintsQueue.jsx);
  * shared here so User Management's per-user modal shows the same portfolio
  * and history instead of a second, thinner implementation.

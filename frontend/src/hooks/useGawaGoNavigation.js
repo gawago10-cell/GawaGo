@@ -228,7 +228,7 @@ export function useGawaGoNavigation({
     setView("household-notifications");
   }
 
-  // "My Reports" -- incidents the user filed or was reported in. The
+  // "My Complaints" -- incidents the user filed or was reported in. The
   // household/worker activity-summary report was removed; admin still has
   // its own Reports tab inside SuperAdminDashboardView.
   function openMyComplaints() {

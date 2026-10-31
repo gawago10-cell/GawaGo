@@ -62,13 +62,6 @@ class WorkerRepository {
     );
   }
 
-  Future<void> requestCompletion(int jobId, String note) async {
-    await GawaGoApi.post(
-      '/jobs/$jobId/request-completion/',
-      body: {'note': note},
-    );
-  }
-
   /// The four optional metrics mirror the web review form; each is 1-5 and
   /// the backend averages whichever are supplied into the overall rating.
   Future<void> reviewHousehold(

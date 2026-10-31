@@ -352,17 +352,10 @@ class JobApplicationSerializer(serializers.ModelSerializer):
         return obj.job.status not in [JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED]
 
     def get_can_request_completion(self, obj):
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
-        if not user or not user.is_authenticated or obj.worker_id != user.id:
-            return False
-        # Not before the start date: the request would be refused, so the
-        # clients should not offer it (see job_not_started_message).
-        return (
-            obj.status == JobApplication.STATUS_HIRED
-            and obj.job.status == JobPosting.STATUS_ASSIGNED
-            and not job_not_started_message(obj.job)
-        )
+        # The household marks a job done, not the worker (AGENTS.md I.A). The
+        # field stays, always false, so app builds already on phones hide
+        # their old "Mark as done" button instead of offering a refused call.
+        return False
 
     def get_can_review(self, obj):
         request = self.context.get("request")
@@ -407,6 +400,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
     can_apply = serializers.SerializerMethodField()
     can_accept_hire_request = serializers.SerializerMethodField()
     can_request_completion = serializers.SerializerMethodField()
+    can_mark_done = serializers.SerializerMethodField()
+    mark_done_note = serializers.SerializerMethodField()
     can_review = serializers.SerializerMethodField()
     images = JobImageSerializer(many=True, read_only=True)
     location_label = serializers.SerializerMethodField()
@@ -479,6 +474,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "can_apply",
             "can_accept_hire_request",
             "can_request_completion",
+            "can_mark_done",
+            "mark_done_note",
             "can_review",
             "job_start_date",
             "job_end_date",
@@ -701,10 +698,38 @@ class JobPostingSerializer(serializers.ModelSerializer):
         return self.get_hired_count(obj) < obj.worker_slots
 
     def get_can_request_completion(self, obj):
-        application = self.get_current_worker_application_obj(obj)
-        if not application or application.status != JobApplication.STATUS_HIRED:
+        # See JobApplicationSerializer.get_can_request_completion.
+        return False
+
+    def _household_can_finish(self, obj):
+        """The requesting household owns this job and it is in progress with
+        a hired worker -- the state where "Mark as done" belongs, whether or
+        not the start date has come yet."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated or obj.household_id != user.id:
             return False
-        return obj.status == JobPosting.STATUS_ASSIGNED and not job_not_started_message(obj)
+        if obj.status not in {JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED}:
+            return False
+        return self.get_hired_count(obj) > 0
+
+    def get_can_mark_done(self, obj):
+        if not self._household_can_finish(obj):
+            return False
+        profile = getattr(obj.household, "profile", None)
+        if not profile or profile.verification_status != "verified":
+            return False
+        return not job_not_started_message(obj)
+
+    def get_mark_done_note(self, obj):
+        """Why "Mark as done" is not available yet, for the household to read
+        beside the disabled button; "" when it is available or not theirs."""
+        if not self._household_can_finish(obj):
+            return ""
+        profile = getattr(obj.household, "profile", None)
+        if not profile or profile.verification_status != "verified":
+            return "Your household account must be verified before you can complete a job."
+        return job_not_started_message(obj)
 
     def get_can_review(self, obj):
         request = self.context.get("request")

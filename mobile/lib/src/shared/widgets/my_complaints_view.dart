@@ -5,7 +5,7 @@ import '../../features/complaints/data/complaint_models.dart';
 import '../../features/complaints/data/complaint_repository.dart';
 import 'async_state.dart';
 
-/// "My Reports" -- issues the signed-in user has filed. Reports about the
+/// "My Complaints" -- issues the signed-in user has filed. Reports about the
 /// user are never shown: a report stays confidential from the person it
 /// names, and the API only returns reports the caller filed.
 class MyComplaintsView extends StatefulWidget {
@@ -59,7 +59,7 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
                     const Padding(
                       padding: EdgeInsets.fromLTRB(18, 18, 18, 18),
                       child: Text(
-                        'My Reports',
+                        'My Complaints',
                         style: TextStyle(
                           fontFamily: GawaGoColors.fontHeading,
                           color: GawaGoColors.ink,
@@ -72,8 +72,8 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
                     const Divider(height: 1, color: GawaGoColors.border),
                     const AppEmptyState(
                       icon: Icons.flag_outlined,
-                      title: 'No reports yet',
-                      message: 'Reports you file will appear here.',
+                      title: 'No complaints yet',
+                      message: 'Complaints you file will appear here.',
                     ),
                   ],
                 ),
@@ -146,7 +146,7 @@ class _ComplaintCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '${complaint.jobTitle.isEmpty ? "Job report" : complaint.jobTitle} '
+            '${complaint.jobTitle.isEmpty ? "Job complaint" : complaint.jobTitle} '
             '· ${complaint.createdAt.length >= 10 ? complaint.createdAt.substring(0, 10) : complaint.createdAt}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
           ),

@@ -12,7 +12,7 @@ const COMPLAINT_TYPES = [
 ];
 
 /**
- * "Report an Issue" -- an incident filed against a specific job's other
+ * "File a Complaint" -- an incident filed against a specific job's other
  * party, reviewed by admin. Always tied to one job: a household reports
  * one of that job's applicants, a worker's report always targets the
  * job's household (unambiguous, so no picker is shown).
@@ -41,7 +41,7 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
 
   async function handleSubmit() {
     if (!complaintType) {
-      setError("Please select a report type.");
+      setError("Please select a complaint type.");
       return;
     }
     if (!description.trim()) {
@@ -49,7 +49,7 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
       return;
     }
     if (isHousehold && !respondentId) {
-      setError("Select which worker this report is about.");
+      setError("Select which worker this complaint is about.");
       return;
     }
 
@@ -66,7 +66,7 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
       onSubmitted?.();
       onClose();
     } catch (submitError) {
-      setError(submitError.message || "Unable to submit this report.");
+      setError(submitError.message || "Unable to submit this complaint.");
     } finally {
       setSubmitting(false);
     }
@@ -77,12 +77,12 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
       <div className="modal-dialog modal-dialog-centered">
         <div className="modal-content">
           <div className="modal-header">
-            <h5 className="modal-title">Report an Issue</h5>
+            <h5 className="modal-title">File a Complaint</h5>
             <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
           </div>
           <div className="modal-body">
             <p className="small text-muted mb-3">
-              Reporting on <strong>{job?.jobTitle || job?.serviceType || "this job"}</strong>. Your report goes
+              About <strong>{job?.jobTitle || job?.serviceType || "this job"}</strong>. Your complaint goes
               directly to our admin team for review.
             </p>
 
@@ -108,7 +108,7 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
             )}
 
             <div className="mb-3">
-              <label className="form-label fw-bold">Report Type *</label>
+              <label className="form-label fw-bold">Complaint Type *</label>
               <select
                 className="form-select"
                 value={complaintType}
@@ -184,8 +184,8 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
             {error && <div className="alert alert-danger small py-2 mb-0">{error}</div>}
 
             <div className="alert alert-info small mt-3 mb-0">
-              <strong>Your Privacy:</strong> Reports are reviewed by our admin team and handled confidentially. The
-              person you report is not notified that a report was filed.
+              <strong>Your Privacy:</strong> Complaints are reviewed by our admin team and handled confidentially.
+              The person named is not notified that a complaint was filed.
             </div>
           </div>
 
@@ -194,7 +194,7 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
               Cancel
             </button>
             <button type="button" className="btn btn-danger" onClick={handleSubmit} disabled={submitting}>
-              {submitting ? "Submitting..." : "Submit Report"}
+              {submitting ? "Submitting..." : "Submit Complaint"}
             </button>
           </div>
         </div>

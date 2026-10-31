@@ -186,6 +186,50 @@ class ComplaintAdminViewTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_superadmin_exports_complaints_as_csv(self):
+        import csv
+        import io
+
+        self.complaint.admin_notes = "Internal: called the worker."
+        self.complaint.resolution = "Refund arranged."
+        self.complaint.save(update_fields=["admin_notes", "resolution"])
+        Complaint.objects.create(
+            complainant=self.worker,
+            respondent=self.household,
+            complaint_type=Complaint.TYPE_PAYMENT_ISSUE,
+            description="=HYPERLINK(\"http://example.com\")",
+            status=Complaint.STATUS_UNDER_REVIEW,
+        )
+        authenticate(self.client, self.superadmin)
+
+        response = self.client.get(reverse("complaint-list-admin"), {"export": "csv"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("attachment;", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8"))))
+        self.assertEqual(rows[0][:3], ["Complaint ID", "Type", "Status"])
+        self.assertEqual(len(rows), 3)
+        by_type = {row[1]: row for row in rows[1:]}
+        no_show = by_type["No Show"]
+        self.assertEqual(no_show[0], f"CMP-{self.complaint.id:03d}")
+        self.assertEqual(no_show[3:7], ["admin-test-household", "Household", "admin-test-worker", "Worker"])
+        self.assertEqual(no_show[9], "Refund arranged.")
+        # Staff notes are internal to the review, and a description that
+        # starts like a formula is kept as plain text.
+        self.assertNotIn("Internal: called the worker.", response.content.decode("utf-8"))
+        self.assertTrue(by_type["Payment Issue"][8].startswith("'="))
+
+        filtered = self.client.get(reverse("complaint-list-admin"), {"export": "csv", "status": "under_review"})
+        self.assertEqual(len(list(csv.reader(io.StringIO(filtered.content.decode("utf-8"))))), 2)
+
+    def test_non_superadmin_cannot_export_complaints(self):
+        authenticate(self.client, self.household)
+
+        response = self.client.get(reverse("complaint-list-admin"), {"export": "csv"})
+
+        self.assertEqual(response.status_code, 403)
+
     def test_admin_can_resolve_a_complaint(self):
         authenticate(self.client, self.superadmin)
         url = reverse("complaint-update-admin", args=[self.complaint.id])
@@ -252,7 +296,7 @@ class ComplaintAdminViewTests(TestCase):
         authenticate(self.client, self.household)
         notifications = self.client.get(reverse("notification-list"))
         matching = [
-            item for item in notifications.data["results"] if "report" in item["message"].lower()
+            item for item in notifications.data["results"] if "complaint" in item["message"].lower()
         ]
         self.assertTrue(matching)
         # The web household notification list is an allowlist of types, so the

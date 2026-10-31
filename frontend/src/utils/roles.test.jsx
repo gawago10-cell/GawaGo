@@ -58,7 +58,7 @@ describe("view guard", () => {
     expect(resolveGuardedView(HOUSEHOLD, "worker-find-jobs")).toBe("household-dashboard");
   });
 
-  it("lets each role see its own views and the shared My Reports", () => {
+  it("lets each role see its own views and the shared My Complaints", () => {
     WORKER_VIEWS.forEach((view) => expect(canRoleAccessView("worker", view)).toBe(true));
     HOUSEHOLD_VIEWS.forEach((view) => expect(canRoleAccessView("household", view)).toBe(true));
     expect(canRoleAccessView("worker", "my-reports")).toBe(true);
@@ -92,11 +92,11 @@ describe("admin sidebar", () => {
     return { openAdminDashboard, openAdminWorkersHistory };
   }
 
-  it("lists only admin pages -- no My Reports", () => {
+  it("lists only admin pages -- no My Complaints", () => {
     renderAdminSidebar("verification");
     const labels = screen.getAllByRole("button").map((button) => button.textContent.trim());
     expect(labels).toEqual(["Verification Queue", "Workers History"]);
-    expect(screen.queryByText("My Reports")).toBeNull();
+    expect(screen.queryByText("My Complaints")).toBeNull();
   });
 
   it.each([

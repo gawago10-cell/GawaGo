@@ -76,6 +76,8 @@ class HouseholdJob {
     required this.status,
     this.statusLabel = '',
     required this.canReview,
+    this.canMarkDone = false,
+    this.markDoneNote = '',
     required this.applications,
     required this.images,
     required this.jobStartDate,
@@ -105,6 +107,12 @@ class HouseholdJob {
   /// The backend's own wording for `status` (it owns status labels).
   final String statusLabel;
   final bool canReview;
+
+  /// The household can mark this job done now (backend `can_mark_done`).
+  final bool canMarkDone;
+
+  /// Why "Mark as done" isn't available yet, e.g. the start date; "" if it is.
+  final String markDoneNote;
   final List<HouseholdApplication> applications;
   final List<JobImage> images;
   final String? jobStartDate;
@@ -134,6 +142,8 @@ class HouseholdJob {
       status: _text(json['status']),
       statusLabel: _text(json['status_label'] ?? ''),
       canReview: json['can_review'] == true,
+      canMarkDone: json['can_mark_done'] == true,
+      markDoneNote: _text(json['mark_done_note'] ?? ''),
       applications: _list(
         json['applications'],
       ).map((item) => HouseholdApplication.fromJson(_map(item))).toList(),

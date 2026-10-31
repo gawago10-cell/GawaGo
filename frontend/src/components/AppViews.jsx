@@ -14,6 +14,7 @@ import WorkerLocationPicker from "./WorkerLocationPicker";
 import WorkerSkillsDialog from "./WorkerSkillsDialog";
 import EditJobDialog from "./EditJobDialog";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
+import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
@@ -79,7 +80,6 @@ export default function AppViews({
   handleCancelJob,
   handleConfirmJobCompleted,
   handleHireWorker,
-  handleWorkerRequestCompletion,
   handleHouseholdChange,
   handleHouseholdJobChange,
   handleHouseholdJobSubmit,
@@ -230,6 +230,11 @@ export default function AppViews({
   const [workerJobTypeFilter, setWorkerJobTypeFilter] = useState("All Types");
   const [workerBarangayFilter, setWorkerBarangayFilter] = useState("");
   const [workerApplicationStatusFilter, setWorkerApplicationStatusFilter] = useState("All");
+  const [adminVerificationRoleFilter, setAdminVerificationRoleFilter] = useState("all");
+  const visibleAdminVerificationRequests = filterVerificationRequestsByRole(
+    verificationRequests || [],
+    adminVerificationRoleFilter,
+  );
   const [workerFindJobsView, setWorkerFindJobsView] = useState("list");
   const [matchedSkillFilter, setMatchedSkillFilter] = useState("All");
   const [householdMatchesView, setHouseholdMatchesView] = useState("list");
@@ -313,7 +318,6 @@ export default function AppViews({
   const [householdProfileEditing, setHouseholdProfileEditing] = useState(false);
   const [selectedWorkerRouteDistanceKm, setSelectedWorkerRouteDistanceKm] = useState(null);
   const [workerHireRequestPreview, setWorkerHireRequestPreview] = useState(null);
-  const [workerCompletionConfirmJob, setWorkerCompletionConfirmJob] = useState(null);
   const [workerRateHouseholdJob, setWorkerRateHouseholdJob] = useState(null);
   const [editingJob, setEditingJob] = useState(null);
   const [workerRateHouseholdDraft, setWorkerRateHouseholdDraft] = useState({ rating: "", feedback: "" });
@@ -1305,10 +1309,6 @@ export default function AppViews({
     () => householdJobs.filter((job) => job.status !== "Completed" && job.status !== "Cancelled"),
     [householdJobs],
   );
-  const needsConfirmationHouseholdJobs = useMemo(
-    () => inProcessHouseholdJobs.filter((job) => job.status === "Waiting for Household Confirmation"),
-    [inProcessHouseholdJobs],
-  );
   // A completed job still owes a review, so it also surfaces on the Dashboard
   // under "Completed" as a reminder until it's rated -- it doesn't leave My
   // Jobs though: that page is the complete record, rated or not.
@@ -2015,7 +2015,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2160,7 +2160,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2481,7 +2481,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2683,7 +2683,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -2810,7 +2810,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -3632,7 +3632,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -3673,23 +3673,13 @@ export default function AppViews({
                 ) : (
                   <div className="household-process-grid">
                     {workerInProgressJobs.map((job) => {
-                      const awaitingConfirmation = job.status === "Waiting for Household Confirmation";
                       return (
-                        <article
-                          className={`household-process-card ${awaitingConfirmation ? "needs-action" : ""}`}
-                          key={`worker-job-${job.id}`}
-                        >
+                        <article className="household-process-card" key={`worker-job-${job.id}`}>
                           <div className="household-process-card-top">
-                            <div
-                              className={`household-process-status-icon ${awaitingConfirmation ? "review" : "assigned"}`}
-                            >
-                              {navIcon("jobs")}
-                            </div>
+                            <div className="household-process-status-icon assigned">{navIcon("jobs")}</div>
                             <div className="household-process-card-top-text">
                               <h3>{job.jobTitle || job.serviceType}</h3>
-                              <span
-                                className={`household-process-status-line ${awaitingConfirmation ? "review" : "assigned"}`}
-                              >
+                              <span className="household-process-status-line assigned">
                                 <i aria-hidden="true" />
                                 {getWorkerApplicationDisplayStatus(job)}
                               </span>
@@ -3710,26 +3700,11 @@ export default function AppViews({
                               ? ` · ${job.jobStartDate > todayIsoDate ? "Starts" : "Started"} ${formatJobDate(job.jobStartDate)}`
                               : ""}
                           </p>
-                          {awaitingConfirmation ? (
-                            <div className="household-process-note">
-                              Marked complete &mdash; waiting for{" "}
-                              {job.householdName || job.householdUsername || "the household"} to confirm.
-                            </div>
-                          ) : job.jobStartDate && job.jobStartDate > todayIsoDate ? (
-                            // The backend refuses completion before the start
-                            // date: a review must follow work that happened.
-                            <div className="household-process-note">
-                              You can mark this job complete once it starts on {formatJobDate(job.jobStartDate)}.
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-success household-process-cta"
-                              onClick={() => setWorkerCompletionConfirmJob(job)}
-                            >
-                              Mark job as complete
-                            </button>
-                          )}
+                          {/* The household marks a job done (AGENTS.md I.A). */}
+                          <div className="household-process-note">
+                            {job.householdName || job.householdUsername || "The household"} will mark this job as
+                            done when the work is finished.
+                          </div>
                         </article>
                       );
                     })}
@@ -3879,54 +3854,6 @@ export default function AppViews({
                 </form>
               </div>
             )}
-            {workerCompletionConfirmJob && (
-              <div
-                className="gg-modal-backdrop"
-                role="dialog"
-                aria-modal="true"
-                onClick={() => setWorkerCompletionConfirmJob(null)}
-              >
-                <div className="gg-modal-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="gg-modal-head">
-                    <div>
-                      <p className="gg-modal-kicker">Mark as complete</p>
-                      <h2>
-                        {workerCompletionConfirmJob.jobTitle || workerCompletionConfirmJob.serviceType}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="gg-modal-body">
-                    <p className="mb-0">
-                      This lets{" "}
-                      {workerCompletionConfirmJob.householdName ||
-                        workerCompletionConfirmJob.householdUsername ||
-                        "the household"}{" "}
-                      know the job is finished, so they can review and confirm.
-                    </p>
-                  </div>
-                  <div className="gg-modal-foot">
-                    <button
-                      type="button"
-                      className="gg-modal-foot-btn"
-                      onClick={() => setWorkerCompletionConfirmJob(null)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-success"
-                      onClick={() => {
-                        const job = workerCompletionConfirmJob;
-                        setWorkerCompletionConfirmJob(null);
-                        handleWorkerRequestCompletion(job.id, "I have completed the service today.");
-                      }}
-                    >
-                      Confirm complete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </section>
         )}
         {view === "worker-applications" && (
@@ -3963,7 +3890,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -4094,7 +4021,7 @@ export default function AppViews({
                       </button>
                       <button className="worker-nav-item" onClick={openMyComplaints}>
                         {navIcon("flag")}
-                        <span>My Reports</span>
+                        <span>My Complaints</span>
                       </button>
                       <span className="worker-nav-section">Account</span>
                       <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -4129,7 +4056,7 @@ export default function AppViews({
                       </button>
                       <button className="worker-nav-item" onClick={openMyComplaints}>
                         {navIcon("flag")}
-                        <span>My Reports</span>
+                        <span>My Complaints</span>
                       </button>
                       <span className="worker-nav-section">Account</span>
                     </>
@@ -4397,7 +4324,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openWorkerGetVerified}>
@@ -4821,6 +4748,13 @@ export default function AppViews({
                         <h2 className="h6 mb-0 fw-bold">Account Verification Requests</h2>
                         <span className="small text-muted">{verificationRequests.length} total</span>
                       </div>
+                      <div className="px-3 pt-3">
+                        <VerificationRoleTabs
+                          requests={verificationRequests}
+                          value={adminVerificationRoleFilter}
+                          onChange={setAdminVerificationRoleFilter}
+                        />
+                      </div>
                       {selectedVerificationRequest && (
                         <div className="p-3 border-bottom bg-light">
                           <div className="d-flex justify-content-between align-items-start gap-3 flex-wrap">
@@ -4870,8 +4804,8 @@ export default function AppViews({
                         </div>
                       )}
                       <div className="p-3 d-grid gap-3">
-                        {verificationRequests.length > 0 ? (
-                          verificationRequests.map((request) => (
+                        {visibleAdminVerificationRequests.length > 0 ? (
+                          visibleAdminVerificationRequests.map((request) => (
                             <article
                               className={`verification-admin-card ${selectedVerificationRequestId === request.id ? "selected" : ""}`}
                               key={request.id}
@@ -4892,23 +4826,19 @@ export default function AppViews({
                                     <strong>Account:</strong> {request.accountRole}
                                   </p>
                                   <p className="small mb-1">
-                                    <strong>Status:</strong>
-                                    {request.status}
+                                    <strong>Status:</strong> {request.status}
                                   </p>
                                   <p className="small mb-1">
-                                    <strong>Submitted:</strong>
-                                    {formatTimestamp(request.submittedAt)}
+                                    <strong>Submitted:</strong> {formatTimestamp(request.submittedAt)}
                                   </p>
                                   {request.reviewedAt && (
                                     <p className="small mb-1">
-                                      <strong>Reviewed:</strong>
-                                      {formatTimestamp(request.reviewedAt)}
+                                      <strong>Reviewed:</strong> {formatTimestamp(request.reviewedAt)}
                                     </p>
                                   )}
                                   {request.reviewNote && (
                                     <p className="small mb-0">
-                                      <strong>Admin Note:</strong>
-                                      {request.reviewNote}
+                                      <strong>Admin Note:</strong> {request.reviewNote}
                                     </p>
                                   )}
                                 </div>
@@ -4961,7 +4891,11 @@ export default function AppViews({
                             </article>
                           ))
                         ) : (
-                          <div className="text-center text-muted py-4">No verification requests yet.</div>
+                          <div className="text-center text-muted py-4">
+                            {verificationRequests.length > 0
+                              ? `No ${adminVerificationRoleFilter === "household" ? "household" : "worker"} verification requests.`
+                              : "No verification requests yet."}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -5036,7 +4970,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -5306,7 +5240,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active">{navIcon("profile")}
@@ -5590,7 +5524,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active" onClick={openHouseholdProfile}>
@@ -5716,7 +5650,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item active" onClick={openHouseholdProfile}>
@@ -5860,7 +5794,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -6130,7 +6064,7 @@ export default function AppViews({
                     <span>My Jobs</span></button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -6265,7 +6199,7 @@ export default function AppViews({
                                       className="household-history-report-link"
                                       onClick={() => openDashboardReportModal(job)}
                                     >
-                                      Report an Issue
+                                      File a Complaint
                                     </button>
                                   )}
                                 </div>
@@ -6337,7 +6271,7 @@ export default function AppViews({
                                           <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
                                           <line x1="4" y1="22" x2="4" y2="15"></line>
                                         </svg>
-                                        Report an Issue
+                                        File a Complaint
                                       </button>
                                     </div>
                                   ) : (
@@ -6362,7 +6296,7 @@ export default function AppViews({
                                           <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
                                           <line x1="4" y1="22" x2="4" y2="15"></line>
                                         </svg>
-                                        Report an Issue
+                                        File a Complaint
                                       </button>
                                     </div>
                                   )}
@@ -6402,7 +6336,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -6459,7 +6393,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
 	                  <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -6704,7 +6638,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -6857,7 +6791,7 @@ export default function AppViews({
                   </button>
                   <button className="worker-nav-item" onClick={openMyComplaints}>
                     {navIcon("flag")}
-                    <span>My Reports</span>
+                    <span>My Complaints</span>
                   </button>
                   <span className="worker-nav-section">Account</span>
                   <button className="worker-nav-item" onClick={openHouseholdProfile}>
@@ -6892,23 +6826,6 @@ export default function AppViews({
                   </button>
                 </div>
 
-                {needsConfirmationHouseholdJobs.length > 0 && (
-                  <div className="household-process-action-banner" role="status">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="12" y1="8" x2="12" y2="12"></line>
-                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                    </svg>
-                    <span>
-                      {needsConfirmationHouseholdJobs.length === 1
-                        ? `1 job needs your attention — a worker marked "${
-                            needsConfirmationHouseholdJobs[0].jobTitle || needsConfirmationHouseholdJobs[0].serviceType
-                          }" as done.`
-                        : `${needsConfirmationHouseholdJobs.length} jobs need your attention — workers marked them as done.`}
-                    </span>
-                  </div>
-                )}
-
                 <p className="household-process-section-label">In Process &middot; {inProcessHouseholdJobs.length}</p>
 
                 {inProcessHouseholdJobs.length === 0 ? (
@@ -6933,33 +6850,24 @@ export default function AppViews({
                       const requestedCount = (job.applications || []).filter(
                         (application) => application.status === "Hire Request",
                       ).length;
-                      const needsConfirmation = job.status === "Waiting for Household Confirmation";
-                      const isAssigned = job.status === "Already found a worker";
-                      const hasApplicants = !needsConfirmation && !isAssigned && pendingCount > 0;
-                      const awaitingReply =
-                        !needsConfirmation && !isAssigned && !hasApplicants && requestedCount > 0;
-                      const toneClass = needsConfirmation
-                        ? "review"
-                        : isAssigned
-                          ? "assigned"
-                          : hasApplicants
-                            ? "applicants"
-                            : awaitingReply
-                              ? "assigned"
-                              : "open";
+                      // In progress, including jobs a worker marked done
+                      // before the household took over marking jobs done.
+                      const isAssigned =
+                        job.status === "Already found a worker" || job.status === "Waiting for Household Confirmation";
+                      const hasApplicants = !isAssigned && pendingCount > 0;
+                      const awaitingReply = !isAssigned && !hasApplicants && requestedCount > 0;
+                      const toneClass = isAssigned
+                        ? "assigned"
+                        : hasApplicants
+                          ? "applicants"
+                          : awaitingReply
+                            ? "assigned"
+                            : "open";
                       return (
-                        <article
-                          key={job.id}
-                          className={`household-process-card ${needsConfirmation ? "needs-action" : ""}`}
-                        >
+                        <article key={job.id} className="household-process-card">
                           <div className="household-process-card-top">
                             <div className={`household-process-status-icon ${toneClass}`}>
-                              {needsConfirmation ? (
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                  <path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path>
-                                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                                </svg>
-                              ) : isAssigned || awaitingReply ? (
+                              {isAssigned || awaitingReply ? (
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                   <circle cx="12" cy="12" r="10"></circle>
                                   <polyline points="12 6 12 12 16 14"></polyline>
@@ -6982,9 +6890,7 @@ export default function AppViews({
                               <h3>{job.jobTitle || job.serviceType}</h3>
                               <span className={`household-process-status-line ${toneClass}`}>
                                 <i aria-hidden="true" />
-                                {needsConfirmation
-                                  ? "Marked done — confirm to finish"
-                                  : isAssigned
+                                {isAssigned
                                     ? "In progress"
                                     : hasApplicants
                                       ? `${pendingCount} applicant${pendingCount === 1 ? "" : "s"} waiting`
@@ -7012,29 +6918,31 @@ export default function AppViews({
                               </>
                             )}
                           </p>
-                          {needsConfirmation && (
+                          {isAssigned && (
                             <button
                               type="button"
                               className="btn btn-success household-process-cta"
-                              disabled={isActionPending(`complete-${job.id}`)}
+                              disabled={!job.canMarkDone || isActionPending(`complete-${job.id}`)}
                               onClick={() => {
                                 if (isActionPending(`complete-${job.id}`)) {
                                   return;
                                 }
-                                if (window.confirm("Confirm this job as completed? This can't be undone.")) {
+                                if (
+                                  window.confirm(
+                                    `Mark this job as done? ${workerName || "The worker"} will be notified and you can both leave a review. This can't be undone.`,
+                                  )
+                                ) {
                                   handleConfirmJobCompleted(job.id);
                                 }
                               }}
                             >
-                              Confirm Completion
+                              Mark as done
                             </button>
                           )}
-                          {isAssigned && (
-                            <div className="household-process-note">
-                              You&rsquo;ll be notified once {workerName || "the worker"} marks this done.
-                            </div>
+                          {isAssigned && job.markDoneNote && (
+                            <div className="household-process-note">{job.markDoneNote}</div>
                           )}
-                          {worker && (isAssigned || needsConfirmation) && (
+                          {worker && isAssigned && (
                             <button
                               type="button"
                               className="household-process-outline-cta"
@@ -7057,7 +6965,7 @@ export default function AppViews({
                               View Applicants
                             </button>
                           )}
-                          {!needsConfirmation && !isAssigned && (
+                          {!isAssigned && (
                             <button
                               type="button"
                               className="household-process-outline-cta"
@@ -7070,7 +6978,7 @@ export default function AppViews({
                               Browse Workers
                             </button>
                           )}
-                          {!needsConfirmation && !isAssigned && pendingCount === 0 && (
+                          {!isAssigned && pendingCount === 0 && (
                             <div className="household-process-note">
                               {awaitingReply
                                 ? "We’ll let you know as soon as they accept or decline."
@@ -7086,7 +6994,7 @@ export default function AppViews({
                               Edit Job
                             </button>
                           )}
-                          {!needsConfirmation && !isAssigned && (
+                          {!isAssigned && (
                             <button
                               type="button"
                               className="household-process-cancel-link"
@@ -7109,7 +7017,7 @@ export default function AppViews({
                                 <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
                                 <line x1="4" y1="22" x2="4" y2="15"></line>
                               </svg>
-                              Report an Issue
+                              File a Complaint
                             </button>
                           )}
                         </article>
@@ -7487,7 +7395,7 @@ export default function AppViews({
           <ComplaintModal
             isOpen={showComplaintModal}
             onClose={() => setShowComplaintModal(false)}
-            onSubmitted={() => addToast("Report submitted. Our admin team will review it.", "success")}
+            onSubmitted={() => addToast("Complaint submitted. Our admin team will review it.", "success")}
             job={selectedJob}
             role="household"
             applicants={(selectedJob.applications || []).map((application) => ({

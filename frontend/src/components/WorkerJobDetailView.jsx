@@ -26,7 +26,6 @@ export default function WorkerJobDetailView({
   handleApplyToJob,
   handleLogout,
   handleWorkerHireDecision,
-  handleWorkerRequestCompletion,
   openWorkerApplications,
   openWorkerDashboard,
   openWorkerFindJobs,
@@ -54,7 +53,6 @@ export default function WorkerJobDetailView({
   const workerLongitude = currentWorker?.longitude ?? null;
   const jobDistanceKm = job?.routeDistanceKm ?? null;
   const [routeDistanceKm, setRouteDistanceKm] = useState(null);
-  const [completionNote, setCompletionNote] = useState("I have completed the service today.");
   // Prefer the backend's own wording, but only while showing the job's own
   // distance -- once a fresher live route comes back (routeDistanceKm),
   // format that value instead rather than showing a label computed from a
@@ -68,11 +66,9 @@ export default function WorkerJobDetailView({
   const hasRejectedHireRequest = currentWorkerApplicationStatus === "Rejected";
   const isAssignedWorker = ["Hired", "Completed"].includes(currentWorkerApplicationStatus);
   const verificationNavLabel = getVerificationNavLabel(currentWorker);
-  const isCompletionRequested = job?.status === "Waiting for Household Confirmation";
   const isCompletedJob = job?.status === "Completed";
   const canApply = Boolean(job?.canApply);
   const canAcceptHireRequest = Boolean(job?.canAcceptHireRequest);
-  const canRequestCompletion = Boolean(job?.canRequestCompletion);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showComplaintModal, setShowComplaintModal] = useState(false);
   useEffect(() => {
@@ -143,7 +139,7 @@ export default function WorkerJobDetailView({
                 },
                 {
                   id: "flag",
-                  label: "My Reports",
+                  label: "My Complaints",
                   onClick: openMyComplaints,
                 },
                 {
@@ -257,41 +253,13 @@ export default function WorkerJobDetailView({
                         {isAssignedWorker && (
                           <div className="worker-completion-request-card">
                             <div>
-                              <p className="small text-muted fw-semibold mb-1">Completion Request</p>
+                              <p className="small text-muted fw-semibold mb-1">Job Completion</p>
                               <p className="mb-0">
-                                {isCompletionRequested
-                                  ? "Completion request sent. The household has been notified to confirm the service."
-                                  : isCompletedJob
-                                    ? "This job is already completed."
-                                    : "When the service is done, notify the household so they can confirm completion."}
+                                {isCompletedJob
+                                  ? "The household marked this job as done."
+                                  : "The household will mark this job as done when the work is finished. You'll get a notification when they do."}
                               </p>
                             </div>
-                            {!isCompletionRequested && !isCompletedJob && (
-                              <>
-                                <label className="form-label fw-semibold" htmlFor="worker-completion-note">
-                                  Completion note
-                                </label>
-                                <textarea
-                                  className="form-control"
-                                  id="worker-completion-note"
-                                  rows="3"
-                                  value={completionNote}
-                                  onChange={(event) => setCompletionNote(event.target.value)}
-                                />
-                              </>
-                            )}
-                            <button
-                              className="btn btn-success btn-sm"
-                              type="button"
-                              disabled={!canRequestCompletion}
-                              onClick={() => handleWorkerRequestCompletion(job.id, completionNote)}
-                            >
-                              {isCompletionRequested
-                                ? "Waiting for Household Confirmation"
-                                : isCompletedJob
-                                  ? "Job Completed"
-                                  : "Request Completion"}
-                            </button>
                           </div>
                         )}
                         <div className="worker-job-actions">
@@ -357,7 +325,7 @@ export default function WorkerJobDetailView({
                               className="btn btn-outline-danger btn-sm"
                               onClick={() => setShowComplaintModal(true)}
                             >
-                              🚩 Report an Issue
+                              🚩 File a Complaint
                             </button>
                           </div>
                         )}
@@ -404,7 +372,7 @@ export default function WorkerJobDetailView({
                 <ComplaintModal
                   isOpen={showComplaintModal}
                   onClose={() => setShowComplaintModal(false)}
-                  onSubmitted={() => addToast?.("Report submitted. Our admin team will review it.", "success")}
+                  onSubmitted={() => addToast?.("Complaint submitted. Our admin team will review it.", "success")}
                   job={job}
                   role="worker"
                 />

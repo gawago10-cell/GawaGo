@@ -379,59 +379,6 @@ export function useGawaGoActions({
       }
     });
   }
-  function handleWorkerRequestCompletion(jobId, note = "") {
-    if (!currentWorker) {
-      window.alert("Please login as a worker first.");
-      return;
-    }
-    const job = postedJobs.find((item) => String(item.id) === String(jobId));
-    if (!job) {
-      window.alert("Job not found.");
-      return;
-    }
-    const application = (job.applications || []).find(
-      (item) =>
-        item.status === "Hired" &&
-        (String(item.workerId) === String(currentWorker.id) || item.workerUsername === currentWorker.username),
-    );
-    if (!application) {
-      window.alert("Only the hired worker can request completion for this job.");
-      return;
-    }
-    if (!isNumericIdentifier(job.id)) {
-      window.alert("This job is not synced with the backend yet. Please refresh jobs and try again.");
-      refreshJobsFromBackend();
-      return;
-    }
-    runExclusive(`request-completion-${jobId}`, async () => {
-      try {
-        const response = await apiRequest(`jobs/${job.id}/request-completion/`, {
-          method: "POST",
-          auth: true,
-          body: {
-            note: String(note || "").trim(),
-          },
-        });
-        const data = await readResponseData(response);
-        if (!response.ok) {
-          throw new Error(getApiErrorMessage(data, "Unable to request completion."));
-        }
-        const normalizedJob = normalizeBackendJob(data);
-        if (normalizedJob) {
-          setPostedJobs((prev) =>
-            prev.map((item) => (String(item.id) === String(normalizedJob.id) ? normalizedJob : item)),
-          );
-        }
-        await refreshJobsFromBackend();
-        await refreshNotificationsFromBackend();
-        window.alert("Completion request sent to the household.");
-      } catch (error) {
-        await refreshJobsFromBackend();
-        await refreshNotificationsFromBackend();
-        window.alert(error.message || "Unable to request completion. Please try again.");
-      }
-    });
-  }
   function handleRejectApplication(workerId = selectedWorker?.id, jobId = selectedJob?.id) {
     if (currentHousehold?.verification !== "Verified") {
       window.alert("Your household account must be verified before you can manage job applications.");
@@ -1876,7 +1823,6 @@ export function useGawaGoActions({
   return {
     handleApplyToJob,
     handleHireWorker,
-    handleWorkerRequestCompletion,
     handleWorkerHireDecision,
     handleRejectApplication,
     handleLoginSubmit,

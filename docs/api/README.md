@@ -699,7 +699,7 @@ Response:
 
 All three scopes share this envelope, so one client renderer covers every role. `summary` values may be `null`, meaning "no data yet" rather than zero. Money figures are the sum of offered `service_rate` across completed jobs — GawaGo does not process payments, so this is agreed rate, not a payment ledger.
 
-## Complaints ("Report an Issue")
+## Complaints ("File a Complaint")
 
 An incident report against a specific job's other party — a household reporting a worker, or a worker reporting a household (payment issue, quality of work, no-show, safety concern, inappropriate behavior, other) — reviewed and resolved by admin. Distinct from Reports above: this is a case to investigate, not a personal activity summary.
 
@@ -722,7 +722,7 @@ Every report must be tied to a job the filer has a real stake in, at **any** job
 ```
 `respondent` is required when the filer is the job's household; omit it as a worker (it's derived). Returns 403 if the filer has no relationship to the job (not its household, no application on it), 400 if `job` is missing or the named `respondent` has no application on that job.
 
-`GET /api/complaints/admin/?status=&type=` — Auth: `IsPlatformSuperAdmin`. Lists every report, optionally filtered.
+`GET /api/complaints/admin/?status=&type=` — Auth: `IsPlatformSuperAdmin`. Lists every complaint, optionally filtered. Add `export=csv` for the same set as a CSV download (complaint ID, type, status, complainant and respondent with roles, job, description, resolution, filed and updated times; staff notes are left out, and cells that start like a spreadsheet formula are prefixed with `'`).
 
 `PATCH /api/complaints/admin/<id>/` — Auth: `IsPlatformSuperAdmin`. Body: any of `status` (`submitted|under_review|resolved|closed`), `resolution`, `admin_notes`. Rejects an unrecognized `status` with 400. On a real status change, sends the complainant (not the respondent) a notification that their report was updated — confidentiality is preserved by never telling the respondent a report exists. The notification is typed `account_activity`.
 

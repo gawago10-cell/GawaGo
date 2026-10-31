@@ -73,7 +73,7 @@ describe("staff admin navigation", () => {
 
     await waitFor(() => expect(screen.getByText("Admin Panel")).toBeTruthy());
     expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History"]);
-    expect(screen.queryByText("My Reports")).toBeNull();
+    expect(screen.queryByText("My Complaints")).toBeNull();
     expect(screen.queryByText("Find Jobs")).toBeNull();
     expect(activeLabels()).toEqual(["Verification Queue"]);
   });

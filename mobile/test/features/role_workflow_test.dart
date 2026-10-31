@@ -329,7 +329,7 @@ void main() {
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
 
-    // The drawer's item list grew (Reports, My Reports), so the Account
+    // The drawer's item list grew (Reports, My Complaints), so the Account
     // section can sit below the initially-built viewport/cache extent --
     // scroll the sidebar's own ListView to bring it into the element tree.
     // The mocked profile is verified, so the item reads "Verified" like the
@@ -595,10 +595,9 @@ void main() {
   testWidgets(
     'worker My Jobs splits active work from finished history, matching web',
     (tester) async {
-      // Mobile only had a read-only "My Applications" list and a "Mark Work
-      // as Done" button buried in the job detail screen. This proves the
-      // dedicated My Jobs tab (In Progress / Completed, with a real Mark
-      // job as complete action) now exists on mobile too.
+      // The dedicated My Jobs tab (In Progress / Completed) exists on mobile
+      // too. The household marks a job done, so an active job tells the
+      // worker that instead of offering a button.
       await SessionStorage.save(
         const AuthSession(accessToken: 'worker-token', role: 'worker'),
       );
@@ -615,26 +614,15 @@ void main() {
       expect(find.text('In Progress · 1'), findsOneWidget);
       expect(find.text('Completed · 1'), findsOneWidget);
       expect(find.text('Active House Cleaning'), findsOneWidget);
-      expect(find.text('Mark job as complete'), findsOneWidget);
-      expect(find.text('Finished House Cleaning'), findsOneWidget);
-      expect(find.text('Rating received: 4.5 / 5'), findsOneWidget);
-
-      await tester.tap(find.text('Mark job as complete'));
-      await tester.pumpAndSettle();
-      expect(find.text('Mark as complete'), findsOneWidget);
       expect(
         find.text(
-          'This lets Maria Household know the job is finished, so they can review and confirm.',
+          'Maria Household will mark this job as done when the work is finished.',
         ),
         findsOneWidget,
       );
-
-      await tester.tap(find.text('Confirm complete'));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Marked complete. Waiting for Maria Household to confirm.'),
-        findsOneWidget,
-      );
+      expect(find.text('Mark job as complete'), findsNothing);
+      expect(find.text('Finished House Cleaning'), findsOneWidget);
+      expect(find.text('Rating received: 4.5 / 5'), findsOneWidget);
     },
   );
 }
@@ -1035,9 +1023,6 @@ Future<http.Response> _myJobsResponses(http.Request request) async {
         'created_at': '2026-06-10T09:30:00+08:00',
       },
     ]);
-  }
-  if (path.endsWith('/jobs/8/request-completion/')) {
-    return _json({'detail': 'ok'});
   }
   if (path.endsWith('/jobs/') || path.endsWith('/notifications/')) {
     return _json([]);

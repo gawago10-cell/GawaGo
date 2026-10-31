@@ -69,7 +69,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       if (widget.isSuperAdmin)
         GawaGoDrawerDestination(
           icon: Icons.flag_outlined,
-          label: 'Reported Issues',
+          label: 'Complaints',
           selected: _page == _AdminPage.complaints,
           onTap: () => setState(() => _page = _AdminPage.complaints),
         ),
@@ -251,6 +251,9 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Applications per Month',
+                description:
+                    'How many job applications workers sent each month over '
+                    'the last six months.',
                 emptyMessage: 'No applications yet.',
                 items: metrics.applicationTrend,
                 icon: Icons.timeline,
@@ -259,6 +262,9 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Job Postings per Month',
+                description:
+                    'How many jobs households posted each month over the '
+                    'last six months.',
                 emptyMessage: 'No job postings yet.',
                 items: metrics.monthlyJobPostings,
                 icon: Icons.calendar_month_outlined,
@@ -267,6 +273,8 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Jobs by Service Type',
+                description:
+                    'How many jobs households posted for each type of service.',
                 emptyMessage: 'No job postings yet.',
                 items: metrics.serviceDistribution,
                 icon: Icons.category_outlined,
@@ -275,6 +283,8 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Barangay Job Demand',
+                description:
+                    'The barangays where households posted the most jobs.',
                 emptyMessage: 'No job demand data is available yet.',
                 items: metrics.barangayDemand,
                 icon: Icons.location_on_outlined,
@@ -282,6 +292,7 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Worker Availability by Barangay',
+                description: 'The barangays where the most workers are based.',
                 emptyMessage: 'No worker availability data is available yet.',
                 items: metrics.workerAvailability,
                 icon: Icons.groups_outlined,
@@ -289,14 +300,19 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Average Service Rates',
+                description:
+                    'The average rate households offer for each service.',
                 emptyMessage: 'No service-rate data is available yet.',
                 items: metrics.averageRates,
                 icon: Icons.payments_outlined,
               ),
               const SizedBox(height: 16),
               _AnalyticsList(
-                title: 'Average Pricing Trend',
-                emptyMessage: 'No pricing data is available yet.',
+                title: 'Service Rate Trends',
+                description:
+                    'The average rate households offered on new job posts '
+                    'each month over the last six months.',
+                emptyMessage: 'No rate data is available yet.',
                 items: metrics.pricingTrends,
                 icon: Icons.show_chart,
                 maxItems: 6,
@@ -304,6 +320,7 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               const SizedBox(height: 16),
               _AnalyticsList(
                 title: 'Worker Rating Distribution',
+                description: 'How many workers have each star rating.',
                 emptyMessage: 'No worker ratings are available yet.',
                 items: metrics.ratingDistribution,
                 icon: Icons.star_outline,
@@ -378,6 +395,7 @@ class _MetricCard extends StatelessWidget {
 class _AnalyticsList extends StatelessWidget {
   const _AnalyticsList({
     required this.title,
+    required this.description,
     required this.emptyMessage,
     required this.items,
     required this.icon,
@@ -385,6 +403,9 @@ class _AnalyticsList extends StatelessWidget {
   });
 
   final String title;
+
+  /// One line saying what the list shows (panel review 2026-10-31).
+  final String description;
   final String emptyMessage;
   final List<AdminAnalyticsItem> items;
   final IconData icon;
@@ -412,6 +433,15 @@ class _AnalyticsList extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              description,
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 12.5,
+                height: 1.35,
+              ),
             ),
             const SizedBox(height: 12),
             if (items.isEmpty)
@@ -471,6 +501,13 @@ class _VerificationQueueState extends State<_VerificationQueue> {
   late Future<List<AdminVerificationRequest>> _future = widget.repository
       .getVerificationRequests();
   String _filter = 'pending';
+  String _roleFilter = 'all';
+
+  static const _roleTabs = {
+    'all': 'All',
+    'household': 'Households',
+    'worker': 'Workers',
+  };
 
   void _reload() {
     setState(() {
@@ -478,11 +515,22 @@ class _VerificationQueueState extends State<_VerificationQueue> {
     });
   }
 
+  List<AdminVerificationRequest> _byRole(
+    List<AdminVerificationRequest> items,
+    String role,
+  ) {
+    if (role == 'all') return items;
+    return items
+        .where((item) => item.accountRole.trim().toLowerCase() == role)
+        .toList();
+  }
+
   List<AdminVerificationRequest> _visible(
     List<AdminVerificationRequest> items,
   ) {
-    if (_filter == 'all') return items;
-    return items
+    final byRole = _byRole(items, _roleFilter);
+    if (_filter == 'all') return byRole;
+    return byRole
         .where((item) => item.status.trim().toLowerCase() == _filter)
         .toList();
   }
@@ -554,6 +602,27 @@ class _VerificationQueueState extends State<_VerificationQueue> {
                 style: TextStyle(color: GawaGoColors.textMuted),
               ),
               const SizedBox(height: 14),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _roleTabs.entries
+                      .map(
+                        (tab) => Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(
+                              '${tab.value} ${_byRole(snapshot.data!, tab.key).length}',
+                            ),
+                            selected: _roleFilter == tab.key,
+                            onSelected: (_) =>
+                                setState(() => _roleFilter = tab.key),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+              const SizedBox(height: 8),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(

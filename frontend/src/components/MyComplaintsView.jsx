@@ -112,7 +112,7 @@ function buildHouseholdNavItems({
     { id: "dashboard", label: "Dashboard", onClick: openHouseholdDashboard },
     { id: "post-job", label: "Post a Job", onClick: openHouseholdPostJob },
     { id: "jobs", label: "My Jobs", onClick: openHouseholdMyJobs },
-    { id: "flag", label: "My Reports", active: true },
+    { id: "flag", label: "My Complaints", active: true },
     { id: "profile", label: "My Profile", section: "Account", onClick: openHouseholdProfile },
     { id: "verified", label: verificationNavLabel, onClick: openHouseholdGetVerified },
     { id: "notifications", label: "Notifications", onClick: openHouseholdNotifications },
@@ -136,14 +136,14 @@ function buildWorkerNavItems({
     { id: "profile", label: "My Profile", onClick: openWorkerProfile },
     { id: "applications", label: "My Applications", count: workerApplicationUnreadCount, onClick: openWorkerApplications },
     { id: "jobs", label: "My Jobs", onClick: openWorkerMyJobs },
-    { id: "flag", label: "My Reports", active: true },
+    { id: "flag", label: "My Complaints", active: true },
     { id: "verified", label: verificationNavLabel, section: "Account", onClick: openWorkerGetVerified },
     { id: "notifications", label: "Notifications", onClick: openWorkerNotifications },
   ];
 }
 
 /**
- * "My Reports" -- issues the signed-in user has filed. Reports about the
+ * "My Complaints" -- issues the signed-in user has filed. Reports about the
  * user are never shown: a report stays confidential from the person it
  * names, and the API only returns reports the caller filed.
  */
@@ -240,9 +240,9 @@ export default function MyComplaintsView({
               <TypeIcon type="other" />
             </div>
             <div>
-              <h1 className="h4 mb-1">My Reports</h1>
+              <h1 className="h4 mb-1">My Complaints</h1>
               <p className="text-muted small mb-0">
-                Issues you have reported. Our admin team reviews each one confidentially and updates its status
+                Complaints you have filed. Our admin team reviews each one confidentially and updates its status
                 here.
               </p>
             </div>
@@ -265,22 +265,22 @@ export default function MyComplaintsView({
 
           {status === "loading" && (
             <div className="profile-card p-4 mt-3 text-center">
-              <div className="spinner-border text-success" role="status" aria-label="Loading reports" />
+              <div className="spinner-border text-success" role="status" aria-label="Loading complaints" />
             </div>
           )}
 
           {status === "error" && (
-            <div className="alert alert-warning mt-3">Unable to load your reports right now.</div>
+            <div className="alert alert-warning mt-3">Unable to load your complaints right now.</div>
           )}
 
           {status === "ready" && complaints.length === 0 && (
             <div className="profile-card p-4 mt-3 text-center text-muted">
-              You haven't reported any issues. You can report an issue from a job's detail page.
+              You haven't filed any complaints. You can file a complaint from a job's detail page.
             </div>
           )}
 
           {status === "ready" && complaints.length > 0 && visibleComplaints.length === 0 && (
-            <div className="profile-card p-4 text-center text-muted">No reports match this filter.</div>
+            <div className="profile-card p-4 text-center text-muted">No complaints match this filter.</div>
           )}
 
           {status === "ready" && visibleComplaints.length > 0 && (
@@ -309,7 +309,7 @@ export default function MyComplaintsView({
                     </div>
 
                     <p className="my-report-meta">
-                      {complaint.jobTitle || "Job report"} &middot; {complaint.createdAt?.slice(0, 10)}
+                      {complaint.jobTitle || "Job complaint"} &middot; {complaint.createdAt?.slice(0, 10)}
                     </p>
 
                     {complaint.description && <p className="my-report-desc">{complaint.description}</p>}
@@ -325,7 +325,7 @@ export default function MyComplaintsView({
                             key={item.id}
                             className="my-report-thumb"
                             src={item.imageUrl}
-                            alt={`Evidence for report ${complaint.id}`}
+                            alt={`Evidence for complaint ${complaint.id}`}
                           />
                         ))}
                       </div>

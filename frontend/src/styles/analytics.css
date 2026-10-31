@@ -34,6 +34,9 @@
 .analytics-overview {
   display: grid;
   gap: 1rem;
+  /* The panel layout follows the space beside the sidebar, not the window:
+     at 1024px the window is "desktop" but only ~690px is left for content. */
+  container-type: inline-size;
 }
 
 .analytics-overview-head {
@@ -263,6 +266,20 @@
   min-height: 14.5rem;
 }
 
+/* One line under each chart's title saying what it shows (panel review
+   2026-10-31: every chart needs a description). */
+.analytics-chart-note {
+  margin: 0;
+  padding: 0.6rem 1rem 0;
+  color: var(--gg-ink-muted, #565e4e);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.card-body > .analytics-chart-note {
+  padding: 0 0 0.6rem;
+}
+
 .analytics-heatmap-head {
   display: flex;
   align-items: center;
@@ -460,6 +477,36 @@
 }
 
 @media (max-width: 767.98px) {
+  .analytics-section-head {
+    align-items: flex-start;
+  }
+
+  .analytics-summary-card {
+    min-height: 7rem;
+  }
+
+  .analytics-chart-wrap {
+    min-height: 15rem;
+    padding-inline: 0.25rem;
+  }
+
+  .analytics-heatmap-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-heatmap-map,
+  .analytics-heatmap-map .leaflet-container {
+    min-height: 20rem;
+  }
+
+  .analytics-rating-summary {
+    min-height: 10rem;
+  }
+}
+
+/* One panel per row on a phone, or on a tablet where the sidebar leaves
+   under 36rem for content. */
+@container (max-width: 35.99rem) {
   .analytics-overview-head {
     align-items: flex-start;
     flex-direction: column;
@@ -489,30 +536,30 @@
   .analytics-overview-metric.wide {
     grid-column: auto;
   }
+}
 
-  .analytics-section-head {
-    align-items: flex-start;
+/* Too narrow for the three panels side by side (they need 58rem), as on a
+   laptop next to the sidebar: Account Overview and Employment Activity share
+   a row with their three rows of tiles level, and Trust and Verification
+   takes the full row below with its four tiles in a line. */
+@container (min-width: 36rem) and (max-width: 57.99rem) {
+  .analytics-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .analytics-summary-card {
-    min-height: 7rem;
-  }
-
-  .analytics-chart-wrap {
-    min-height: 15rem;
-    padding-inline: 0.25rem;
-  }
-
-  .analytics-heatmap-layout {
+  .analytics-overview-panel:first-child .analytics-overview-metrics {
     grid-template-columns: 1fr;
   }
 
-  .analytics-heatmap-map,
-  .analytics-heatmap-map .leaflet-container {
-    min-height: 20rem;
+  .analytics-overview-panel:last-child {
+    grid-column: 1 / -1;
   }
 
-  .analytics-rating-summary {
-    min-height: 10rem;
+  .analytics-overview-panel:last-child .analytics-overview-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .analytics-overview-panel:last-child .analytics-overview-metric.wide {
+    grid-column: auto;
   }
 }

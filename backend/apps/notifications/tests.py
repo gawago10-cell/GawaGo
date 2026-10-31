@@ -252,7 +252,7 @@ class AdminAlertTests(TestCase):
     def test_superadmin_only_alerts_skip_plain_admins(self):
         from apps.notifications.services import notify_admins
 
-        notify_admins(title="New report to review", message="Waiting.", superadmins_only=True)
+        notify_admins(title="New complaint to review", message="Waiting.", superadmins_only=True)
 
         self.assertEqual(
             list(Notification.objects.values_list("recipient__username", flat=True)), ["alert-super"]

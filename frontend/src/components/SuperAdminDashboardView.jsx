@@ -4,6 +4,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -18,6 +19,7 @@ import ReportsView from "./ReportsView";
 import AdminComplaintsQueue from "./AdminComplaintsQueue";
 import AdminCredentialsQueue from "./AdminCredentialsQueue";
 import UserManagementView from "./UserManagementView";
+import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import {
   ANALYTICS_CHART_COLORS,
   PHILIPPINES_MAP_CENTER,
@@ -61,6 +63,8 @@ export default function SuperAdminDashboardView({
   verificationRequests,
 }) {
   const [verificationModalRequestId, setVerificationModalRequestId] = React.useState(null);
+  const [verificationRoleFilter, setVerificationRoleFilter] = React.useState("all");
+  const visibleVerificationRequests = filterVerificationRequestsByRole(verificationRequests, verificationRoleFilter);
   // Real audit trail from the backend's AdminActionLog -- fetched only when
   // the tab is actually open, not kept fabricated from verification
   // requests plus a permanently-fake "Current session" row.
@@ -192,8 +196,7 @@ export default function SuperAdminDashboardView({
   const monthlyJobRequests = analytics.monthlyJobRequests || [];
   const serviceAnalytics = analytics.serviceAnalytics || [];
   const geographicAnalytics = analytics.geographicAnalytics || {};
-  const barangayJobAnalytics = geographicAnalytics.barangayDemand || analytics.barangayJobAnalytics || [];
-  const barangayWorkerAnalytics = geographicAnalytics.workerAvailability || analytics.barangayWorkerAnalytics || [];
+  const barangayDemandVsSupply = geographicAnalytics.demandVsSupply || [];
   const ratingDistribution = analytics.ratingDistribution || [];
   const rateTransparency = analytics.rateTransparency || {};
   const jobCategories = rateTransparency.averageRatesByCategory || analytics.serviceRateSummary || [];
@@ -290,7 +293,7 @@ export default function SuperAdminDashboardView({
     },
     {
       id: "complaints",
-      label: "Reported Issues",
+      label: "Complaints",
     },
     {
       id: "adminmgmt",
@@ -428,7 +431,7 @@ export default function SuperAdminDashboardView({
                   <div className="p-4">
                     {/* Metric Cards */}
                     <div className="row g-3 mb-4">
-                      <div className="col-6 col-md-3">
+                      <div className="col-6 col-xl-3">
                         <div className="card border-0 shadow-sm bg-success text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Hiring Success Rate</h6>
@@ -437,7 +440,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="col-6 col-md-3">
+                      <div className="col-6 col-xl-3">
                         <div className="card border-0 shadow-sm bg-info text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Job Match Rate</h6>
@@ -446,7 +449,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="col-6 col-md-3">
+                      <div className="col-6 col-xl-3">
                         <div className="card border-0 shadow-sm bg-warning text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Hired Workers</h6>
@@ -455,7 +458,7 @@ export default function SuperAdminDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="col-6 col-md-3">
+                      <div className="col-6 col-xl-3">
                         <div className="card border-0 shadow-sm bg-primary text-white">
                           <div className="card-body">
                             <h6 className="card-title text-white-50">Repeat Hires</h6>
@@ -472,6 +475,9 @@ export default function SuperAdminDashboardView({
                         <div className="card border-0 shadow-sm">
                           <div className="card-header bg-light fw-bold">Application Trends (Last 6 Months)</div>
                           <div className="card-body">
+                            <p className="analytics-chart-note">
+                              How many job applications workers sent each month over the last six months.
+                            </p>
                             {(dashboardMetrics.analytics?.enhancedAnalytics?.applicationTrends || []).length > 0 ? (
                               <ResponsiveContainer width="100%" height={300}>
                                 <LineChart data={dashboardMetrics.analytics.enhancedAnalytics.applicationTrends}>
@@ -496,6 +502,7 @@ export default function SuperAdminDashboardView({
                         <div className="card border-0 shadow-sm">
                           <div className="card-header bg-light fw-bold">Service Type Distribution</div>
                           <div className="card-body">
+                            <p className="analytics-chart-note">How many jobs households posted for each type of service.</p>
                             {(dashboardMetrics.analytics?.serviceAnalytics || []).length > 0 ? (
                               <ResponsiveContainer width="100%" height={300}>
                                 <BarChart data={dashboardMetrics.analytics.serviceAnalytics}>
@@ -518,6 +525,9 @@ export default function SuperAdminDashboardView({
                         <div className="card border-0 shadow-sm">
                           <div className="card-header bg-light fw-bold">Monthly Job Postings</div>
                           <div className="card-body">
+                            <p className="analytics-chart-note">
+                              How many jobs households posted each month over the last six months.
+                            </p>
                             {(dashboardMetrics.analytics?.monthlyJobRequests || []).length > 0 ? (
                               <ResponsiveContainer width="100%" height={300}>
                                 <BarChart data={dashboardMetrics.analytics.monthlyJobRequests}>
@@ -571,14 +581,21 @@ export default function SuperAdminDashboardView({
               {superAdminSection === "verification" && (
                 <div className="profile-card mt-3">
                   <div className="profile-card-head d-flex justify-content-between align-items-center gap-3 flex-wrap">
-                    <span>Worker Verification Queue</span>
+                    <span>Verification Queue</span>
                     <span className="small text-muted">{verificationRequests.length} total requests</span>
+                  </div>
+                  <div className="px-3 pt-3">
+                    <VerificationRoleTabs
+                      requests={verificationRequests}
+                      value={verificationRoleFilter}
+                      onChange={setVerificationRoleFilter}
+                    />
                   </div>
                   <div className="table-responsive">
                     <table className="table align-middle mb-0">
                       <thead>
                         <tr>
-                          <th>Worker</th>
+                          <th>Account</th>
                           <th>Submitted</th>
                           <th>Submitted Files</th>
                           <th>Review Note</th>
@@ -586,8 +603,8 @@ export default function SuperAdminDashboardView({
                         </tr>
                       </thead>
                       <tbody>
-                        {verificationRequests.length > 0 ? (
-                          verificationRequests.map((request) => (
+                        {visibleVerificationRequests.length > 0 ? (
+                          visibleVerificationRequests.map((request) => (
                             <tr
                               className="verification-queue-row"
                               key={request.id}
@@ -605,6 +622,9 @@ export default function SuperAdminDashboardView({
                                 <strong>{request.workerName}</strong>
                                 <br />
                                 <span className="small text-muted">@{request.workerUsername}</span>
+                                <span className={`verification-role-pill role-${request.accountRole}`}>
+                                  {request.accountRole === "household" ? "Household" : "Worker"}
+                                </span>
                               </td>
                               <td>{formatTimestamp(request.submittedAt, "Recently")}</td>
                               <td>
@@ -619,7 +639,9 @@ export default function SuperAdminDashboardView({
                         ) : (
                           <tr>
                             <td colSpan="5" className="text-center text-muted py-4">
-                              No verification requests yet.
+                              {verificationRequests.length > 0
+                                ? `No ${verificationRoleFilter === "household" ? "household" : "worker"} verification requests.`
+                                : "No verification requests yet."}
                             </td>
                           </tr>
                         )}
@@ -809,6 +831,10 @@ export default function SuperAdminDashboardView({
                           ))}
                         </div>
                       </div>
+                      <p className="analytics-chart-note">
+                        Activity in each Tayabas City barangay for the measure you pick above. Bigger, redder circles
+                        mean more.
+                      </p>
                       <SuperAdminHeatMap
                         data={heatMapData}
                         metricLabel={selectedHeatMapOption.label}
@@ -821,6 +847,9 @@ export default function SuperAdminDashboardView({
                       <div className="col-xl-6">
                         <div className="profile-card analytics-card h-100">
                           <div className="profile-card-head">Monthly Job Requests</div>
+                          <p className="analytics-chart-note">
+                            How many jobs households posted each month over the last six months.
+                          </p>
                           <div className="analytics-chart-wrap">
                             <ResponsiveContainer width="100%" height={280}>
                               <LineChart
@@ -868,6 +897,9 @@ export default function SuperAdminDashboardView({
                       <div className="col-xl-6">
                         <div className="profile-card analytics-card h-100">
                           <div className="profile-card-head">Most Requested Services</div>
+                          <p className="analytics-chart-note">
+                            How many jobs were posted for each service, so you can see which work is most in demand.
+                          </p>
                           <div className="analytics-chart-wrap">
                             <ResponsiveContainer width="100%" height={280}>
                               <BarChart
@@ -912,89 +944,79 @@ export default function SuperAdminDashboardView({
 
                     <div className="profile-card analytics-card analytics-geographic-card mt-3">
                       <div className="profile-card-head analytics-section-title">Geographic Analytics</div>
-                      <div className="row g-3">
-                      <div className="col-xl-6">
-                        <div className="analytics-subcard h-100">
-                          <div className="profile-card-head">Barangays with High Job Demand</div>
-                          <div className="table-responsive">
-                            <table className="table align-middle mb-0 analytics-table">
-                              <thead>
-                                <tr>
-                                  <th>Barangay</th>
-                                  <th>Job Requests</th>
-                                  <th>Demand</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {barangayJobAnalytics.length > 0 ? (
-                                  barangayJobAnalytics.map((item) => (
-                                    <tr key={item.barangay}>
-                                      <td>{item.barangay}</td>
-                                      <td>{item.jobs}</td>
-                                      <td>
-                                        <div className="analytics-meter">
-                                          <span
-                                            style={{
-                                              width: `${Math.max(8, (item.jobs / Math.max(...barangayJobAnalytics.map((row) => row.jobs), 1)) * 100)}%`,
-                                            }}
-                                          />
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  ))
-                                ) : (
-                                  <tr>
-                                    <td colSpan="3" className="text-center text-muted py-4">
-                                      No barangay job data yet.
-                                    </td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="col-xl-6">
-                        <div className="analytics-subcard h-100">
-                          <div className="profile-card-head">Barangays with Worker Availability</div>
-                          <div className="table-responsive">
-                            <table className="table align-middle mb-0 analytics-table">
-                              <thead>
-                                <tr>
-                                  <th>Barangay</th>
-                                  <th>Workers</th>
-                                  <th>Availability</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {barangayWorkerAnalytics.length > 0 ? (
-                                  barangayWorkerAnalytics.map((item) => (
-                                    <tr key={item.barangay}>
-                                      <td>{item.barangay}</td>
-                                      <td>{item.workers}</td>
-                                      <td>
-                                        <div className="analytics-meter availability">
-                                          <span
-                                            style={{
-                                              width: `${Math.max(8, (item.workers / Math.max(...barangayWorkerAnalytics.map((row) => row.workers), 1)) * 100)}%`,
-                                            }}
-                                          />
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  ))
-                                ) : (
-                                  <tr>
-                                    <td colSpan="3" className="text-center text-muted py-4">
-                                      No barangay worker data yet.
-                                    </td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </div>
+                      <p className="analytics-chart-note">
+                        Job requests and available workers in the {barangayDemandVsSupply.length || 10} barangays with
+                        the most demand. Where the job line is above the worker line, that barangay needs more workers.
+                      </p>
+                      <div className="analytics-chart-wrap">
+                        {barangayDemandVsSupply.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={320}>
+                            <LineChart
+                              data={barangayDemandVsSupply}
+                              margin={{
+                                top: 16,
+                                right: 18,
+                                left: 0,
+                                bottom: 4,
+                              }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="#ded7c4" />
+                              <XAxis
+                                dataKey="barangay"
+                                interval={0}
+                                angle={-35}
+                                textAnchor="end"
+                                height={70}
+                                tick={{
+                                  fill: "#6b7460",
+                                  fontSize: 12,
+                                }}
+                              />
+                              <YAxis
+                                allowDecimals={false}
+                                tick={{
+                                  fill: "#6b7460",
+                                  fontSize: 12,
+                                }}
+                              />
+                              <Tooltip />
+                              <Legend verticalAlign="top" height={30} />
+                              <Line
+                                type="linear"
+                                dataKey="jobs"
+                                name="Job requests"
+                                stroke={ANALYTICS_CHART_COLORS[0]}
+                                strokeWidth={3}
+                                dot={{
+                                  r: 4,
+                                }}
+                                activeDot={{
+                                  r: 6,
+                                }}
+                              />
+                              <Line
+                                type="linear"
+                                dataKey="workers"
+                                name="Available workers"
+                                stroke={ANALYTICS_CHART_COLORS[2]}
+                                strokeWidth={3}
+                                // Dashed so an equal count doesn't hide the job line;
+                                // the dots stay solid.
+                                strokeDasharray="7 5"
+                                dot={{
+                                  r: 4,
+                                  strokeDasharray: "",
+                                }}
+                                activeDot={{
+                                  r: 6,
+                                  strokeDasharray: "",
+                                }}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <p className="text-center text-muted py-4 mb-0">No barangay data yet.</p>
+                        )}
                       </div>
                     </div>
 
@@ -1002,6 +1024,7 @@ export default function SuperAdminDashboardView({
                       <div className="col-xl-4">
                         <div className="profile-card analytics-card h-100">
                           <div className="profile-card-head">Average Worker Rating</div>
+                          <p className="analytics-chart-note">The average overall rating across all rated workers.</p>
                           <div className="analytics-rating-summary">
                             <p className="analytics-rating-value mb-1">{averageWorkerRating}</p>
                             <p className="small text-muted mb-0">{ratedWorkerCount} rated worker profile(s)</p>
@@ -1011,6 +1034,7 @@ export default function SuperAdminDashboardView({
                       <div className="col-xl-4">
                         <div className="profile-card analytics-card h-100">
                           <div className="profile-card-head">Rating Distribution</div>
+                          <p className="analytics-chart-note">How many workers have each star rating.</p>
                           <div className="analytics-chart-wrap compact">
                             <ResponsiveContainer width="100%" height={230}>
                               <BarChart
@@ -1047,6 +1071,9 @@ export default function SuperAdminDashboardView({
                       <div className="col-xl-4">
                         <div className="profile-card analytics-card h-100">
                           <div className="profile-card-head">Average Rates by Category</div>
+                          <p className="analytics-chart-note">
+                            The average rate households offer for each service, and how many job posts it comes from.
+                          </p>
                           <div className="table-responsive">
                             <table className="table align-middle mb-0 analytics-table">
                               <thead>
@@ -1080,7 +1107,10 @@ export default function SuperAdminDashboardView({
                     </div>
 
                     <div className="profile-card analytics-card analytics-pricing-card mt-3">
-                      <div className="profile-card-head">Pricing Trends</div>
+                      <div className="profile-card-head">Service Rate Trends</div>
+                      <p className="analytics-chart-note">
+                        The average rate households offered on new job posts each month over the last six months.
+                      </p>
                       <div className="analytics-chart-wrap">
                         <ResponsiveContainer width="100%" height={260}>
                           <LineChart

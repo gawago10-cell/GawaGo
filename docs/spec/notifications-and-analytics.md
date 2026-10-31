@@ -30,12 +30,12 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
   - Pending verifications
   - Reputation score distribution
 - Geographic service distribution:
-  - Barangays with high job demand
-  - Areas with higher worker availability
+  - One line chart of job requests against available workers in the 10 barangays with the most demand (`geographicAnalytics.demandVsSupply`), so a barangay short of workers shows where the job line runs above the worker line
 - Service rate transparency summary:
   - Disclosed rates by job category
-  - Average pricing trends
+  - Service rate trends (the average rate offered on new job posts each month); named for service rates rather than "pricing", since workers are not products (panel review, 2026-10-31)
   - Purpose: support fair pricing and protect both workers and households from underpricing or overpricing
+- Every chart and summary carries a one-line description under its title saying what it shows, on web and mobile.
 
 ### B. Admin Reports
 

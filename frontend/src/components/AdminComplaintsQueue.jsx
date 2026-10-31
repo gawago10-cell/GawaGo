@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 import {
+  downloadComplaintsCsv,
   fetchAdminComplaints,
   setComplaintRespondentBlocked,
   updateComplaintAdmin,
@@ -55,7 +56,7 @@ const ROLE_LABELS = {
 };
 
 function reportCode(id) {
-  return `RPT-${String(id).padStart(3, "0")}`;
+  return `CMP-${String(id).padStart(3, "0")}`;
 }
 
 function initials(name) {
@@ -169,6 +170,18 @@ export default function AdminComplaintsQueue({
   const [suspendRequest, setSuspendRequest] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [profileTarget, setProfileTarget] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleExport() {
+    setDownloading(true);
+    try {
+      await downloadComplaintsCsv({ status: statusFilter || undefined });
+    } catch (error) {
+      window.alert(error.message || "Unable to download the complaints.");
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   function load() {
     setStatus("loading");
@@ -211,7 +224,7 @@ export default function AdminComplaintsQueue({
       const updated = await updateComplaintAdmin(complaint.id, { status: nextStatus });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
     } catch (error) {
-      window.alert(error.message || "Unable to update this report.");
+      window.alert(error.message || "Unable to update this complaint.");
     } finally {
       setSavingId(null);
     }
@@ -270,7 +283,7 @@ export default function AdminComplaintsQueue({
   // can read; the backend refuses an empty one too.
   function resolutionMissing() {
     if (resolutionDraft.trim()) return false;
-    window.alert("Write the resolution the reporter will see first.");
+    window.alert("Write the resolution the complainant will see first.");
     return true;
   }
 
@@ -285,7 +298,7 @@ export default function AdminComplaintsQueue({
       });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
     } catch (error) {
-      window.alert(error.message || "Unable to resolve this report.");
+      window.alert(error.message || "Unable to resolve this complaint.");
     } finally {
       setSavingId(null);
     }
@@ -302,7 +315,7 @@ export default function AdminComplaintsQueue({
       });
       setComplaints((prev) => prev.map((item) => (item.id === complaint.id ? updated : item)));
     } catch (error) {
-      window.alert(error.message || "Unable to close this report.");
+      window.alert(error.message || "Unable to close this complaint.");
     } finally {
       setSavingId(null);
     }
@@ -312,7 +325,7 @@ export default function AdminComplaintsQueue({
     <div className="admin-reports-page">
       <div className="admin-reports-header">
         <div>
-          <h2>Reported Issues</h2>
+          <h2>Complaints</h2>
           <p>Review and resolve user-submitted complaints</p>
         </div>
         <div className="admin-reports-header-actions">
@@ -327,19 +340,27 @@ export default function AdminComplaintsQueue({
             </select>
           </label>
           <span className="admin-reports-count-badge">
-            {complaints?.length ?? 0} {(complaints?.length ?? 0) === 1 ? "report" : "reports"}
+            {complaints?.length ?? 0} {(complaints?.length ?? 0) === 1 ? "complaint" : "complaints"}
           </span>
+          <button
+            type="button"
+            className="btn btn-success btn-sm"
+            disabled={downloading || status !== "ready" || complaints.length === 0}
+            onClick={handleExport}
+          >
+            {downloading ? "Preparing…" : "Export CSV"}
+          </button>
         </div>
       </div>
 
       {status === "loading" && (
         <div className="text-center py-4">
-          <div className="spinner-border text-success" role="status" aria-label="Loading reports" />
+          <div className="spinner-border text-success" role="status" aria-label="Loading complaints" />
         </div>
       )}
-      {status === "error" && <div className="alert alert-warning">Unable to load reports right now.</div>}
+      {status === "error" && <div className="alert alert-warning">Unable to load complaints right now.</div>}
       {status === "ready" && complaints.length === 0 && (
-        <div className="admin-reports-table-card admin-reports-empty">No reports match this filter.</div>
+        <div className="admin-reports-table-card admin-reports-empty">No complaints match this filter.</div>
       )}
 
       {status === "ready" && complaints.length > 0 && (
@@ -348,7 +369,7 @@ export default function AdminComplaintsQueue({
             <table className="admin-reports-table">
               <thead>
                 <tr>
-                  <th>Report ID</th>
+                  <th>Complaint ID</th>
                   <th>Type</th>
                   <th>Complainant</th>
                   <th>Respondent</th>
@@ -394,7 +415,7 @@ export default function AdminComplaintsQueue({
                 <p className="gg-modal-kicker">{reportCode(selected.id)}</p>
                 <h2>
                   {TYPE_LABELS[selected.complaintType] || selected.complaintType} —{" "}
-                  {selected.jobName || selected.jobTitle || "Report"}
+                  {selected.jobName || selected.jobTitle || "Complaint"}
                 </h2>
               </div>
               <div className="d-flex align-items-center gap-3">
@@ -450,7 +471,7 @@ export default function AdminComplaintsQueue({
               <div className="admin-report-accounts-grid">
                 <AccountCard
                   tone="reporter"
-                  kicker="Reporter (Complainant)"
+                  kicker="Complainant"
                   roleLabel={ROLE_LABELS[selected.complainantDetail?.role] || "Household"}
                   detail={selected.complainantDetail}
                   username={selected.complainantUsername}
@@ -458,7 +479,7 @@ export default function AdminComplaintsQueue({
                 />
                 <AccountCard
                   tone="reported"
-                  kicker="Reported (Respondent)"
+                  kicker="Respondent"
                   roleLabel={ROLE_LABELS[selected.respondentDetail?.role] || "Worker"}
                   detail={selected.respondentDetail}
                   username={selected.respondentUsername}
@@ -479,13 +500,13 @@ export default function AdminComplaintsQueue({
                       <AuthImage
                         key={item.id}
                         src={item.imageUrl}
-                        alt={`Evidence for report ${selected.id}`}
+                        alt={`Evidence for complaint ${selected.id}`}
                         className="admin-report-evidence-thumb"
                       />
                     ))}
                   </div>
                 ) : (
-                  <p className="small text-muted mb-0">No photos were attached to this report.</p>
+                  <p className="small text-muted mb-0">No photos were attached to this complaint.</p>
                 )}
               </div>
 
@@ -541,7 +562,7 @@ export default function AdminComplaintsQueue({
 
               <div className="admin-report-info-card">
                 <label className="admin-report-info-kicker d-block" htmlFor="admin-report-resolution">
-                  Resolution &mdash; the reporter will see this
+                  Resolution &mdash; the complainant will see this
                 </label>
                 <textarea
                   id="admin-report-resolution"
@@ -549,11 +570,11 @@ export default function AdminComplaintsQueue({
                   rows={3}
                   value={resolutionDraft}
                   onChange={(event) => setResolutionDraft(event.target.value)}
-                  placeholder="What was decided, in words the reporter can read..."
+                  placeholder="What was decided, in words the complainant can read..."
                 />
                 {selected.status === "submitted" && (
                   <p className="small text-muted mt-2 mb-0">
-                    Mark the report Under Review before resolving or closing it.
+                    Mark the complaint Under Review before resolving or closing it.
                   </p>
                 )}
               </div>
@@ -600,7 +621,7 @@ export default function AdminComplaintsQueue({
                   disabled={savingId === selected.id || !canMoveTo(selected, "closed")}
                   onClick={() => closeReport(selected)}
                 >
-                  Close Report
+                  Close Complaint
                 </button>
               </div>
             </div>

@@ -95,7 +95,7 @@ class _AdminComplaintsQueueState extends State<AdminComplaintsQueue> {
               final complaints = snapshot.data!;
               if (complaints.isEmpty) {
                 return const AppEmptyState(
-                  message: 'No reports match this filter.',
+                  message: 'No complaints match this filter.',
                 );
               }
               return RefreshIndicator(
@@ -414,7 +414,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Review Report #${widget.complaint.id}',
+              'Review Complaint #${widget.complaint.id}',
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
@@ -423,7 +423,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
             ),
             const SizedBox(height: 8),
             Text(
-              '${widget.complaint.complainantDetail?.displayName ?? widget.complaint.complainantUsername} reported '
+              '${widget.complaint.complainantDetail?.displayName ?? widget.complaint.complainantUsername} filed a complaint about '
               '${widget.complaint.respondentDetail?.displayName ?? (widget.complaint.respondentUsername.isEmpty ? "an unspecified user" : widget.complaint.respondentUsername)}'
               '${widget.complaint.adminJobLabel.isEmpty ? "" : " on ${widget.complaint.adminJobLabel}"}',
               style: const TextStyle(
@@ -434,14 +434,14 @@ class _ReviewSheetState extends State<_ReviewSheet> {
             const SizedBox(height: 12),
             if (widget.complaint.complainantDetail != null) ...[
               _PartyDetailCard(
-                kicker: 'Reporter',
+                kicker: 'Complainant',
                 detail: widget.complaint.complainantDetail!,
               ),
               const SizedBox(height: 8),
             ],
             if (widget.complaint.respondentDetail != null) ...[
               _PartyDetailCard(
-                kicker: 'Reported',
+                kicker: 'Respondent',
                 detail: widget.complaint.respondentDetail!,
               ),
               const SizedBox(height: 12),
@@ -455,7 +455,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
             const SizedBox(height: 6),
             if (_current.evidenceUrls.isEmpty)
               const Text(
-                'No photos were attached to this report.',
+                'No photos were attached to this complaint.',
                 style: TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
               )
             else

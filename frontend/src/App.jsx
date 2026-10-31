@@ -1203,7 +1203,6 @@ function App() {
   const {
     handleApplyToJob,
     handleHireWorker,
-    handleWorkerRequestCompletion,
     handleWorkerHireDecision,
     handleRejectApplication,
     handleLoginSubmit,
@@ -1574,7 +1573,6 @@ function App() {
           handleApplyToJob={handleApplyToJob}
           handleLogout={handleLogout}
           handleWorkerHireDecision={handleWorkerHireDecision}
-          handleWorkerRequestCompletion={handleWorkerRequestCompletion}
           openWorkerApplications={openWorkerApplications}
           openWorkerDashboard={openWorkerDashboard}
           openWorkerFindJobs={openWorkerFindJobs}
@@ -1690,7 +1688,6 @@ function App() {
       handleCancelJob={handleCancelJob}
       handleConfirmJobCompleted={handleConfirmJobCompleted}
       handleHireWorker={handleHireWorker}
-      handleWorkerRequestCompletion={handleWorkerRequestCompletion}
       handleHouseholdChange={handleHouseholdChange}
       handleHouseholdJobChange={handleHouseholdJobChange}
       handleHouseholdJobSubmit={handleHouseholdJobSubmit}

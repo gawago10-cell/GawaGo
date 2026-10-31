@@ -2308,24 +2308,6 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                 icon: const Icon(Icons.close),
                 label: const Text('Reject Request'),
               ),
-            if (job.canRequestCompletion)
-              FilledButton.icon(
-                onPressed: _busy
-                    ? null
-                    : () async {
-                        final note = await _askNote('Request completion');
-                        if (note != null) {
-                          await _run(
-                            () => widget.repository.requestCompletion(
-                              job.id,
-                              note,
-                            ),
-                          );
-                        }
-                      },
-                icon: const Icon(Icons.task_alt),
-                label: const Text('Mark Work as Done'),
-              ),
             if (job.canReview)
               FilledButton.icon(
                 onPressed: _busy ? null : () => _review(job),
@@ -2345,12 +2327,12 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                         );
                         if (submitted && mounted) {
                           _message(
-                            'Report submitted. Our admin team will review it.',
+                            'Complaint submitted. Our admin team will review it.',
                           );
                         }
                       },
                 icon: const Icon(Icons.flag_outlined),
-                label: const Text('Report an Issue'),
+                label: const Text('File a Complaint'),
               ),
           ];
           final applied = job.application != null;
@@ -3177,9 +3159,7 @@ String _workerApplicationStage(WorkerApplication item) {
 }
 
 /// The work a worker is hired for, split from their finished history --
-/// the mobile counterpart to the web "My Jobs" tab. Was previously only
-/// reachable via "Mark Work as Done" buried in a job's own detail screen;
-/// this gives it a dedicated home matching web.
+/// the mobile counterpart to the web "My Jobs" tab.
 class _WorkerMyJobs extends StatefulWidget {
   const _WorkerMyJobs({required this.repository, required this.onChanged});
 
@@ -3192,7 +3172,6 @@ class _WorkerMyJobs extends StatefulWidget {
 
 class _WorkerMyJobsState extends State<_WorkerMyJobs> {
   late Future<(List<WorkerApplication>, List<GawaGoReview>)> _future = _load();
-  bool _busy = false;
 
   Future<(List<WorkerApplication>, List<GawaGoReview>)> _load() async {
     final results = await Future.wait([
@@ -3209,61 +3188,6 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
     setState(() {
       _future = _load();
     });
-  }
-
-  void _message(String value) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
-  }
-
-  Future<void> _markComplete(WorkerApplication job) async {
-    if (_busy) return;
-    final household = job.householdName.isNotEmpty
-        ? job.householdName
-        : job.householdUsername.isNotEmpty
-        ? job.householdUsername
-        : 'the household';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Mark as complete'),
-        content: Text(
-          'This lets $household know the job is finished, so they can review and confirm.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Confirm complete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() => _busy = true);
-    try {
-      await widget.repository.requestCompletion(
-        job.jobId,
-        'I have completed the service today.',
-      );
-      // This page lives inside the drawer's IndexedStack, keyed off a
-      // refresh counter -- widget.onChanged() bumps that counter and
-      // recreates this widget on the spot, so anything after it would run
-      // on an already-disposed State. Finish local feedback first; the
-      // fresh instance onChanged() spawns will reload this same data anyway.
-      if (mounted) {
-        _message('Marked complete. Waiting for $household to confirm.');
-      }
-      widget.onChanged();
-    } catch (error) {
-      if (mounted) _message(friendlyApiError(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   @override
@@ -3309,11 +3233,7 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
                 )
               else
                 for (final job in inProgress) ...[
-                  _WorkerInProgressJobCard(
-                    job: job,
-                    busy: _busy,
-                    onMarkComplete: () => _markComplete(job),
-                  ),
+                  _WorkerInProgressJobCard(job: job),
                   const SizedBox(height: 12),
                 ],
               const SizedBox(height: 20),
@@ -3386,15 +3306,9 @@ class _WorkerMyJobsEmptyCard extends StatelessWidget {
 }
 
 class _WorkerInProgressJobCard extends StatelessWidget {
-  const _WorkerInProgressJobCard({
-    required this.job,
-    required this.busy,
-    required this.onMarkComplete,
-  });
+  const _WorkerInProgressJobCard({required this.job});
 
   final WorkerApplication job;
-  final bool busy;
-  final VoidCallback onMarkComplete;
 
   @override
   Widget build(BuildContext context) {
@@ -3403,26 +3317,12 @@ class _WorkerInProgressJobCard extends StatelessWidget {
         : job.householdUsername.isNotEmpty
         ? job.householdUsername
         : 'Household';
-    final awaitingConfirmation =
-        _workerApplicationStage(job) == 'awaiting_confirmation';
-    // The backend refuses completion before the start date (a review must
-    // follow work that happened), so the button waits for it too.
-    final startDate = DateTime.tryParse(job.jobStartDate);
-    final now = DateTime.now();
-    final notStarted =
-        startDate != null &&
-        DateTime(now.year, now.month, now.day).isBefore(startDate);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: awaitingConfirmation
-              ? GawaGoColors.primary
-              : GawaGoColors.border,
-          width: awaitingConfirmation ? 1.6 : 1.2,
-        ),
+        border: Border.all(color: GawaGoColors.border, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3438,10 +3338,8 @@ class _WorkerInProgressJobCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             _workerApplicationDisplayStatus(job),
-            style: TextStyle(
-              color: awaitingConfirmation
-                  ? GawaGoColors.leafDeep
-                  : const Color(0xFFB07B12),
+            style: const TextStyle(
+              color: Color(0xFFB07B12),
               fontSize: 13,
               fontWeight: FontWeight.w700,
             ),
@@ -3465,34 +3363,15 @@ class _WorkerInProgressJobCard extends StatelessWidget {
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
           ),
           const SizedBox(height: 12),
-          if (awaitingConfirmation)
-            Text(
-              'Marked complete — waiting for $household to confirm.',
-              style: const TextStyle(
-                color: GawaGoColors.textMuted,
-                fontSize: 13,
-                fontStyle: FontStyle.italic,
-              ),
-            )
-          else if (notStarted)
-            Text(
-              'You can mark this job complete once it starts on ${job.jobStartDate}.',
-              key: const ValueKey('worker-job-not-started'),
-              style: const TextStyle(
-                color: GawaGoColors.textMuted,
-                fontSize: 13,
-                fontStyle: FontStyle.italic,
-              ),
-            )
-          else
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: busy ? null : onMarkComplete,
-                icon: const Icon(Icons.task_alt),
-                label: const Text('Mark job as complete'),
-              ),
+          // The household marks a job done (AGENTS.md I.A).
+          Text(
+            '$household will mark this job as done when the work is finished.',
+            style: const TextStyle(
+              color: GawaGoColors.textMuted,
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
             ),
+          ),
         ],
       ),
     );
@@ -6428,7 +6307,7 @@ String _title(_WorkerPage page) => switch (page) {
   _WorkerPage.applications => 'My Applications',
   _WorkerPage.myJobs => 'My Jobs',
   _WorkerPage.messages => 'Messages',
-  _WorkerPage.myReports => 'My Reports',
+  _WorkerPage.myReports => 'My Complaints',
   _WorkerPage.profile => 'My Profile',
   _WorkerPage.reviews => 'Reviews & Feedback',
   _WorkerPage.notifications => 'Notifications',

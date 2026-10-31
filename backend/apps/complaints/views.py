@@ -1,7 +1,9 @@
+import csv
 import mimetypes
 
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -59,7 +61,7 @@ class ComplaintCreateView(APIView):
         job_id = request.data.get("job")
         if not job_id:
             return Response(
-                {"detail": "A job is required to file a report."},
+                {"detail": "A job is required to file a complaint."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         job = JobPosting.objects.filter(pk=job_id).first() if str(job_id).isdigit() else None
@@ -73,14 +75,14 @@ class ComplaintCreateView(APIView):
             respondent_id = request.data.get("respondent")
             if not respondent_id:
                 return Response(
-                    {"detail": "Select the worker this report is about."},
+                    {"detail": "Select the worker this complaint is about."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
                 respondent_id = int(respondent_id)
             except (TypeError, ValueError):
                 return Response(
-                    {"detail": "Select the worker this report is about."},
+                    {"detail": "Select the worker this complaint is about."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if not JobApplication.objects.filter(job=job, worker_id=respondent_id).exists():
@@ -92,7 +94,7 @@ class ComplaintCreateView(APIView):
             respondent_id = job.household_id
         else:
             return Response(
-                {"detail": "You can only report a job you posted or applied to."},
+                {"detail": "You can only file a complaint about a job you posted or applied to."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -122,9 +124,9 @@ class ComplaintCreateView(APIView):
         # No names in the alert: the report stays confidential, and only the
         # superadmins who can open the queue are told it exists.
         notify_admins(
-            title="New report to review",
-            message=f"A new {complaint.get_complaint_type_display().lower()} report was filed. "
-            "Review it in Reported Issues.",
+            title="New complaint to review",
+            message=f"A new {complaint.get_complaint_type_display().lower()} complaint was filed. "
+            "Review it in Complaints.",
             superadmins_only=True,
         )
         return Response(
@@ -204,7 +206,75 @@ class ComplaintListAdminView(APIView):
         if complaint_type_filter:
             queryset = queryset.filter(complaint_type=complaint_type_filter)
 
+        # `export`, not `format`, for the same reason as apps.reports.views.
+        if request.query_params.get("export") == "csv":
+            return _complaints_csv_response(queryset.order_by("-created_at", "-id"))
         return paginated_response(request, queryset, ComplaintAdminSerializer, context={"request": request})
+
+
+def _csv_cell(value):
+    """Plain text for a spreadsheet: a description starting with = + - or @
+    would otherwise run as a formula when the file is opened."""
+    text = "" if value is None else str(value)
+    return f"'{text}" if text[:1] in ("=", "+", "-", "@") else text
+
+
+def _party_name(user, username):
+    if user is not None:
+        return user.get_full_name().strip() or user.username
+    return username or ""
+
+
+def _party_role(user):
+    profile = getattr(user, "profile", None) if user is not None else None
+    return profile.get_role_display() if profile else ""
+
+
+def _complaints_csv_response(complaints):
+    """Every complaint matching the queue's filter, for superadmins to keep
+    on record. Staff notes stay out: they are internal to the review."""
+    response = HttpResponse(content_type="text/csv")
+    filename = f"gawago-complaints-{timezone.localdate():%Y-%m-%d}.csv"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    writer = csv.writer(response)
+    writer.writerow(
+        [
+            "Complaint ID",
+            "Type",
+            "Status",
+            "Complainant",
+            "Complainant role",
+            "Respondent",
+            "Respondent role",
+            "Job",
+            "Description",
+            "Resolution",
+            "Filed",
+            "Last updated",
+        ]
+    )
+    for complaint in complaints:
+        job = complaint.job
+        writer.writerow(
+            [
+                _csv_cell(value)
+                for value in (
+                    f"CMP-{complaint.id:03d}",
+                    complaint.get_complaint_type_display(),
+                    complaint.get_status_display(),
+                    _party_name(complaint.complainant, complaint.complainant_username),
+                    _party_role(complaint.complainant),
+                    _party_name(complaint.respondent, complaint.respondent_username),
+                    _party_role(complaint.respondent),
+                    f"JOB-{job.id:03d} {job.title}" if job else "",
+                    complaint.description,
+                    complaint.resolution or "",
+                    timezone.localtime(complaint.created_at).strftime("%Y-%m-%d %H:%M"),
+                    timezone.localtime(complaint.updated_at).strftime("%Y-%m-%d %H:%M"),
+                )
+            ]
+        )
+    return response
 
 
 class ComplaintUpdateAdminView(APIView):
@@ -226,7 +296,7 @@ class ComplaintUpdateAdminView(APIView):
                 return Response(
                     {
                         "detail": (
-                            f"A report cannot move from {complaint.get_status_display()} to "
+                            f"A complaint cannot move from {complaint.get_status_display()} to "
                             f"{dict(Complaint.STATUS_CHOICES)[new_status]}."
                         )
                     },
@@ -261,15 +331,15 @@ class ComplaintUpdateAdminView(APIView):
             create_notification(
                 recipient=complaint.complainant,
                 notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
-                title="Your report has been updated",
-                message=f"Your {complaint.get_complaint_type_display().lower()} report is now: "
+                title="Your complaint has been updated",
+                message=f"Your {complaint.get_complaint_type_display().lower()} complaint is now: "
                 f"{complaint.get_status_display()}.",
             )
         if status_changed:
             log_admin_action(
                 request.user,
                 AdminActionLog.ACTION_COMPLAINT_STATUS_CHANGED,
-                target_label=f"Report #{complaint.id} ({complaint.get_complaint_type_display()})",
+                target_label=f"Complaint #{complaint.id} ({complaint.get_complaint_type_display()})",
                 target_type="complaint",
                 target_id=complaint.id,
                 detail=f"-> {complaint.get_status_display()}",
@@ -302,12 +372,12 @@ class ComplaintRespondentBlockAdminView(APIView):
         complaint = get_object_or_404(Complaint, pk=pk)
         if not complaint.respondent_id:
             return Response(
-                {"detail": "This report has no respondent to block."},
+                {"detail": "This complaint has no respondent to block."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if complaint.respondent.is_staff or complaint.respondent.is_superuser:
             return Response(
-                {"detail": "Admin accounts cannot be blocked from the report queue."},
+                {"detail": "Admin accounts cannot be blocked from the complaints queue."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -336,7 +406,7 @@ class ComplaintRespondentBlockAdminView(APIView):
             target_label=complaint.respondent.username,
             target_type="user",
             target_id=complaint.respondent_id,
-            detail=f"{reason} (from report #{complaint.id})" if blocked else f"from report #{complaint.id}",
+            detail=f"{reason} (from complaint #{complaint.id})" if blocked else f"from complaint #{complaint.id}",
         )
 
         return Response(ComplaintAdminSerializer(complaint, context={"request": request}).data)

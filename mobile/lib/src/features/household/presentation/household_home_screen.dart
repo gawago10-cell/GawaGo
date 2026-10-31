@@ -439,15 +439,17 @@ class _DashboardState extends State<_Dashboard> {
 
   final Set<int> _jobsInFlight = {};
 
-  Future<void> _confirmCompletion(HouseholdJob job) async {
+  Future<void> _markDone(HouseholdJob job) async {
     // Claimed before the dialog: a second tap lands before the first
     // dialog covers the button and would open (and send) a second one.
     if (!_jobsInFlight.add(job.id)) return;
     try {
       final confirmed = await _confirmDialog(
         context,
-        title: 'Confirm this job as completed?',
-        message: "This can't be undone.",
+        title: 'Mark this job as done?',
+        message:
+            "The worker will be notified and you can both leave a review. "
+            "This can't be undone.",
       );
       if (!confirmed) return;
       try {
@@ -582,7 +584,7 @@ class _DashboardState extends State<_Dashboard> {
     if (!submitted || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Report submitted. Our admin team will review it.'),
+        content: Text('Complaint submitted. Our admin team will review it.'),
       ),
     );
   }
@@ -673,7 +675,7 @@ class _DashboardState extends State<_Dashboard> {
                       job: job,
                       onBrowseWorkers: () => _browseWorkers(job),
                       onViewApplicants: () => _viewApplicants(job),
-                      onConfirmCompletion: () => _confirmCompletion(job),
+                      onMarkDone: () => _markDone(job),
                       onCancel: () => _cancelJob(job),
                     ),
                   ),
@@ -757,7 +759,7 @@ class _HouseholdWelcomeBanner extends StatelessWidget {
   }
 }
 
-enum _ProcessTone { review, assigned, applicants, open }
+enum _ProcessTone { assigned, applicants, open }
 
 /// One "IN PROCESS" card on the household Dashboard -- mirrors web's
 /// .household-process-card (AppViews.jsx / main.css) icon-coded status,
@@ -768,14 +770,14 @@ class _InProcessJobCard extends StatelessWidget {
     required this.job,
     required this.onBrowseWorkers,
     required this.onViewApplicants,
-    required this.onConfirmCompletion,
+    required this.onMarkDone,
     required this.onCancel,
   });
 
   final HouseholdJob job;
   final VoidCallback onBrowseWorkers;
   final VoidCallback onViewApplicants;
-  final VoidCallback onConfirmCompletion;
+  final VoidCallback onMarkDone;
   final VoidCallback onCancel;
 
   @override
@@ -787,35 +789,22 @@ class _InProcessJobCard extends StatelessWidget {
     final isAssigned =
         assignedApp != null &&
         (assignedApp.status == 'hired' || assignedApp.status == 'completed');
-    final needsConfirmation =
-        _normalizedJobStatus(job.status) == 'completion requested';
-    final hasApplicants = !needsConfirmation && !isAssigned && pendingCount > 0;
+    final hasApplicants = !isAssigned && pendingCount > 0;
     // A sent hire request is still an open thread on this job: without its own
     // state the card would claim nobody applied the moment the household
     // asked someone.
     final requestedCount = job.applications
         .where((application) => application.status == 'hire_requested')
         .length;
-    final awaitingReply =
-        !needsConfirmation &&
-        !isAssigned &&
-        !hasApplicants &&
-        requestedCount > 0;
+    final awaitingReply = !isAssigned && !hasApplicants && requestedCount > 0;
 
-    final tone = needsConfirmation
-        ? _ProcessTone.review
-        : isAssigned || awaitingReply
+    final tone = isAssigned || awaitingReply
         ? _ProcessTone.assigned
         : hasApplicants
         ? _ProcessTone.applicants
         : _ProcessTone.open;
 
     final (Color bg, Color fg, IconData icon) = switch (tone) {
-      _ProcessTone.review => (
-        GawaGoColors.primary,
-        GawaGoColors.onPrimary,
-        Icons.check_circle_outline,
-      ),
       _ProcessTone.assigned => (
         const Color(0x479EBF5E),
         GawaGoColors.leafDeep,
@@ -836,9 +825,7 @@ class _InProcessJobCard extends StatelessWidget {
         ? GawaGoColors.leafDeep
         : GawaGoColors.primary;
 
-    final statusLabel = needsConfirmation
-        ? 'Marked done — confirm to finish'
-        : isAssigned
+    final statusLabel = isAssigned
         ? 'In progress'
         : hasApplicants
         ? '$pendingCount applicant${pendingCount == 1 ? '' : 's'} waiting'
@@ -857,10 +844,7 @@ class _InProcessJobCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: GawaGoColors.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: needsConfirmation ? GawaGoColors.primary : GawaGoColors.line,
-          width: needsConfirmation ? 1.6 : 1,
-        ),
+        border: Border.all(color: GawaGoColors.line),
         boxShadow: gawagoCardShadow,
       ),
       child: Column(
@@ -983,11 +967,13 @@ class _InProcessJobCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          if (needsConfirmation)
+          if (isAssigned) ...[
+            // The household marks a job done (AGENTS.md I.A); the backend
+            // says when that's allowed and, if not yet, why.
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: onConfirmCompletion,
+                onPressed: job.canMarkDone ? onMarkDone : null,
                 style: FilledButton.styleFrom(
                   backgroundColor: GawaGoColors.primary,
                   foregroundColor: GawaGoColors.onPrimary,
@@ -996,26 +982,28 @@ class _InProcessJobCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: const Text('Confirm Completion'),
+                child: const Text('Mark as done'),
               ),
-            )
-          else if (isAssigned)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: GawaGoColors.leafTint,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                "You'll be notified once ${workerName.isEmpty ? 'the worker' : workerName} marks this done.",
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  color: GawaGoColors.textMuted,
+            ),
+            if (job.markDoneNote.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: GawaGoColors.leafTint,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  job.markDoneNote,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: GawaGoColors.textMuted,
+                  ),
                 ),
               ),
-            )
-          else ...[
+            ],
+          ] else ...[
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -1231,7 +1219,7 @@ class _PendingReviewJobCard extends StatelessWidget {
               TextButton.icon(
                 onPressed: onReport,
                 icon: const Icon(Icons.flag_outlined, size: 16),
-                label: const Text('Report'),
+                label: const Text('Complain'),
                 style: TextButton.styleFrom(
                   foregroundColor: GawaGoColors.danger,
                 ),
@@ -3326,19 +3314,17 @@ class _JobDetailState extends State<_JobDetail> {
               _CompletionReviewPanel(
                 job: job,
                 busy: _busy,
-                // 'assigned' means the worker hasn't marked the job done yet
-                // -- only 'completion_requested' means the worker actually
-                // asked the household to confirm. Web only offers this for
-                // completion_requested; the backend permits assigned to skip
-                // straight to completed, but that isn't a household action
-                // to expose before the worker has requested it.
-                onConfirmCompleted: job.status == 'completion_requested'
+                // The household marks a job done (AGENTS.md I.A); the backend
+                // decides when (a hired worker, a verified household, the
+                // start date reached) through can_mark_done.
+                onMarkDone: job.canMarkDone
                     ? () async {
                         final confirmed = await _confirmDialog(
                           context,
-                          title: 'Confirm this job is complete?',
+                          title: 'Mark this job as done?',
                           message:
-                              'The worker will be marked as having finished this job.',
+                              "The worker will be notified and you can both "
+                              "leave a review. This can't be undone.",
                         );
                         if (!confirmed) return;
                         await _run(
@@ -3399,12 +3385,12 @@ class _JobDetailState extends State<_JobDetail> {
                     );
                     if (submitted && context.mounted) {
                       _message(
-                        'Report submitted. Our admin team will review it.',
+                        'Complaint submitted. Our admin team will review it.',
                       );
                     }
                   },
                   icon: const Icon(Icons.flag_outlined),
-                  label: const Text('Report an Issue'),
+                  label: const Text('File a Complaint'),
                 ),
               ),
             ],
@@ -3805,12 +3791,12 @@ class _CompletionReviewPanel extends StatelessWidget {
   const _CompletionReviewPanel({
     required this.job,
     required this.busy,
-    required this.onConfirmCompleted,
+    required this.onMarkDone,
   });
 
   final HouseholdJob job;
   final bool busy;
-  final VoidCallback? onConfirmCompleted;
+  final VoidCallback? onMarkDone;
 
   @override
   Widget build(BuildContext context) {
@@ -3875,18 +3861,15 @@ class _CompletionReviewPanel extends StatelessWidget {
               message:
                   'No worker is assigned yet, so completion controls are not available.',
             )
-          else if (job.status == 'assigned')
-            const _WarningBox(
-              message:
-                  "You'll be notified once the worker marks this job done.",
-            ),
+          else if (job.markDoneNote.isNotEmpty)
+            _WarningBox(message: job.markDoneNote),
           const SizedBox(height: 14),
           const Divider(color: GawaGoColors.border),
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: busy ? null : onConfirmCompleted,
+            onPressed: busy ? null : onMarkDone,
             style: FilledButton.styleFrom(
-              backgroundColor: onConfirmCompleted == null
+              backgroundColor: onMarkDone == null
                   ? GawaGoColors.textFaint
                   : GawaGoColors.primary,
               foregroundColor: GawaGoColors.onPrimary,
@@ -3900,7 +3883,7 @@ class _CompletionReviewPanel extends StatelessWidget {
                 letterSpacing: 0,
               ),
             ),
-            child: Text(busy ? 'Confirming...' : 'Confirm Completed'),
+            child: Text(busy ? 'Saving...' : 'Mark as done'),
           ),
         ],
       ),
@@ -7044,7 +7027,7 @@ String _title(_Page page) => switch (page) {
   _Page.postJob => 'Post a Job',
   _Page.jobs => 'My Jobs',
   _Page.messages => 'Messages',
-  _Page.myReports => 'My Reports',
+  _Page.myReports => 'My Complaints',
   _Page.profile => 'My Profile',
   _Page.reviews => 'Reviews & Feedback',
   _Page.verification => 'Get Verified',
