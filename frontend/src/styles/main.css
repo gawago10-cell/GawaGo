@@ -3354,6 +3354,35 @@ body {
   background: #f3f7ff;
 }
 
+/* Why a worker can't apply: a full-time job of theirs is under way. */
+.job-blocked-note {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #e8d49a;
+  border-radius: 10px;
+  background: #fff6dc;
+  color: #6a5317;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.job-blocked-note::before {
+  content: "\23F8";
+  line-height: 1.35;
+}
+
+.job-blocked-note strong {
+  color: #4d3b0c;
+}
+
+.worker-job-actions + .job-blocked-note,
+.job-blocked-note + .worker-job-actions {
+  margin-top: 0.75rem;
+}
+
 /* A job's start and end with the day of the week (JobScheduleBox). */
 .job-schedule-box {
   display: grid;
@@ -3402,6 +3431,44 @@ body {
   background: #f1f4e6;
   color: var(--gg-leaf-text, #4a632a);
   font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* The same schedule as short lines in a table cell (My Applications). */
+.job-schedule-lines {
+  display: grid;
+  gap: 0.1rem;
+  white-space: nowrap;
+}
+
+.job-schedule-lines > div {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.job-schedule-lines span {
+  min-width: 3.9rem;
+  color: var(--gg-ink-muted, #565e4e);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.job-schedule-lines strong {
+  color: var(--gg-ink, #1f2a19);
+  font-size: 0.86rem;
+}
+
+.job-schedule-lines .is-unset strong {
+  color: var(--gg-ink-muted, #565e4e);
+  font-weight: 600;
+}
+
+.job-schedule-lines small {
+  color: var(--gg-leaf-text, #4a632a);
+  font-size: 0.76rem;
   font-weight: 700;
 }
 

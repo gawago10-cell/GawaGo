@@ -30,6 +30,7 @@ import '../../../shared/widgets/status_card.dart';
 import '../../chat/presentation/conversations_view.dart';
 import '../data/worker_models.dart';
 import '../data/worker_repository.dart';
+import 'apply_blocked_note.dart';
 import 'worker_jobs_map.dart';
 
 enum _WorkerPage {
@@ -1683,6 +1684,10 @@ class _AvailableJobCard extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (job.applyBlockedReason.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ApplyBlockedNote(reason: job.applyBlockedReason),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -1736,7 +1741,10 @@ class _AvailableJobCard extends StatelessWidget {
                             ),
                           ),
                           child: Text(
-                            job.canApply ? 'Apply Now' : 'Applied',
+                            applyButtonLabel(
+                              canApply: job.canApply,
+                              blocked: job.applyBlockedReason,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -2340,7 +2348,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
           final notice = job.canAcceptHireRequest
               ? 'This household sent you a hire request. Review the job '
                     'details before accepting or rejecting.'
-              : (!job.canApply && !applied)
+              : (!job.canApply && !applied && job.applyBlockedReason.isEmpty)
               ? 'Applications are unavailable for this job right now.'
               : null;
           return ListView(
@@ -2663,6 +2671,13 @@ class _WorkerJobDetailsCard extends StatelessWidget {
                   height: 1.35,
                 ),
               ),
+            ),
+          ],
+          if (job.applyBlockedReason.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            ApplyBlockedNote(
+              lead: "You can't apply right now.",
+              reason: job.applyBlockedReason,
             ),
           ],
         ],
@@ -3039,33 +3054,39 @@ class _WorkerApplicationRow extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _ApplicationFact(
-                  label: 'Schedule',
-                  value: _workerApplicationSchedule(application),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _ApplicationFact(
-                  label: 'Location',
-                  value: application.locationLabel.isEmpty
-                      ? 'Not set'
-                      : application.locationLabel,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _ApplicationFact(
                   label: 'Rate',
                   value:
                       'PHP ${application.serviceRate.toStringAsFixed(2)} / ${application.rateTypeLabel}',
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          _ApplicationFact(
+            label: 'Location',
+            value: application.locationLabel.isEmpty
+                ? 'Not set'
+                : application.locationLabel,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Schedule:',
+            style: TextStyle(
+              color: GawaGoColors.ink,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 3),
+          JobScheduleLines(
+            startDate: application.jobStartDate,
+            endDate: application.jobEndDate,
+            workingDays: application.jobEstimatedWorkingDays,
+            finished:
+                application.statusStage == 'completed' ||
+                application.jobStatus.toLowerCase() == 'completed',
+            scheduleLabel: _workerApplicationScheduleType(application),
           ),
           if (application.distanceKm != null) ...[
             const SizedBox(height: 8),
@@ -3478,9 +3499,14 @@ class _WorkerCompletedJobCard extends StatelessWidget {
   }
 }
 
-String _workerApplicationSchedule(WorkerApplication item) {
-  if (item.jobStartDate.isNotEmpty) return _jobDate(item.jobStartDate);
-  return _scheduleLabel(item.jobSchedule);
+/// The schedule wording beside the working days ("One-Time"), or the old
+/// free-text schedule when the job has no type; never a raw date.
+String _workerApplicationScheduleType(WorkerApplication item) {
+  final type = item.jobScheduleType.trim();
+  if (type.isNotEmpty) return type;
+  final schedule = item.jobSchedule.trim();
+  if (schedule.isEmpty || DateTime.tryParse(schedule) != null) return '';
+  return schedule;
 }
 
 class _WorkerProfile extends StatefulWidget {

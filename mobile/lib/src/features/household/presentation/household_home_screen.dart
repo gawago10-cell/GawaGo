@@ -1983,7 +1983,7 @@ class _PostJobFields extends StatelessWidget {
           right: _PostJobDropdown(
             label: 'Schedule Type',
             value: scheduleType,
-            items: const ['One-Time', 'Recurring'],
+            items: const ['One-Time', 'Part-Time', 'Full-Time'],
             onChanged: onScheduleChanged,
           ),
         ),

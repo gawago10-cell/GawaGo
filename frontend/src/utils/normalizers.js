@@ -411,6 +411,9 @@ export function normalizeBackendJob(job) {
     updatedAt: currentWorkerApplication?.updatedAt || "",
     currentWorkerApplication,
     canApply: Boolean(job.can_apply ?? job.canApply ?? false),
+    // Why the worker can't apply although the job is open (a full-time job
+    // of theirs is under way); "" otherwise. Worded by the backend.
+    applyBlockedReason: job.apply_blocked_reason ?? job.applyBlockedReason ?? "",
     canAcceptHireRequest: Boolean(job.can_accept_hire_request ?? job.canAcceptHireRequest ?? false),
     canRequestCompletion: Boolean(job.can_request_completion ?? job.canRequestCompletion ?? false),
     canMarkDone: Boolean(job.can_mark_done ?? job.canMarkDone ?? false),

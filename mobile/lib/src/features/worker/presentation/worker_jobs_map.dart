@@ -8,6 +8,7 @@ import '../../../core/theme/gawago_colors.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
 import '../data/worker_models.dart';
+import 'apply_blocked_note.dart';
 
 const _tayabasCenter = LatLng(14.0269, 121.5926);
 const _defaultZoom = 13.0;
@@ -604,11 +605,20 @@ class _AreaJobTile extends StatelessWidget {
               Expanded(
                 child: FilledButton(
                   onPressed: job.canApply ? onApply : null,
-                  child: Text(job.canApply ? 'Apply Now' : 'Applied'),
+                  child: Text(
+                    applyButtonLabel(
+                      canApply: job.canApply,
+                      blocked: job.applyBlockedReason,
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
+          if (job.applyBlockedReason.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ApplyBlockedNote(reason: job.applyBlockedReason),
+          ],
         ],
       ),
     );

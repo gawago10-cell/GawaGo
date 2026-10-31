@@ -32,6 +32,75 @@ class HiringWorkerSuspendedError(HiringError):
     pass
 
 
+class HiringWorkerOnFullTimeJobError(HiringError):
+    """The worker is already hired on a full-time job that is under way."""
+
+    def __init__(self, full_time_job):
+        super().__init__(full_time_job)
+        self.full_time_job = full_time_job
+
+
+# Job types that take all of a worker's time. While one is in progress the
+# worker can't apply elsewhere or be invited or hired (panel review,
+# 2026-10-31). schedule_type is the posting form's wording, so a rename of
+# these terms only needs this set updated.
+FULL_TIME_SCHEDULE_TYPES = {"full-time", "full time", "fulltime"}
+UNDERWAY_JOB_STATUSES = (JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED)
+
+
+def is_full_time_job(job) -> bool:
+    return (job.schedule_type or "").strip().lower() in FULL_TIME_SCHEDULE_TYPES
+
+
+def active_full_time_job(worker, exclude_job_id=None):
+    """The full-time job this worker is hired on and that is still under way,
+    or None. ``exclude_job_id`` leaves out the job being acted on, so being
+    hired on a job never blocks that same job."""
+    jobs = (
+        JobPosting.objects.filter(
+            applications__worker=worker,
+            applications__status=JobApplication.STATUS_HIRED,
+            status__in=UNDERWAY_JOB_STATUSES,
+        )
+        .select_related("household")
+        .order_by("job_start_date", "id")
+    )
+    if exclude_job_id is not None:
+        jobs = jobs.exclude(pk=exclude_job_id)
+    return next((job for job in jobs if is_full_time_job(job)), None)
+
+
+def workers_on_full_time_jobs(exclude_job_id=None):
+    """Ids of every worker currently held by a full-time job under way."""
+    rows = JobApplication.objects.filter(
+        status=JobApplication.STATUS_HIRED, job__status__in=UNDERWAY_JOB_STATUSES
+    )
+    if exclude_job_id is not None:
+        rows = rows.exclude(job_id=exclude_job_id)
+    return {
+        worker_id
+        for worker_id, schedule_type in rows.values_list("worker_id", "job__schedule_type")
+        if (schedule_type or "").strip().lower() in FULL_TIME_SCHEDULE_TYPES
+    }
+
+
+def full_time_apply_message(full_time_job) -> str:
+    """For the worker: why they can't take other work right now."""
+    household = get_user_display_name(full_time_job.household)
+    return (
+        f"You're on a full-time job ({full_time_job.title}) until {household} marks it done. "
+        "You can apply to other jobs after that."
+    )
+
+
+def full_time_hire_message(worker) -> str:
+    """For another household: why this worker can't be invited or hired."""
+    return (
+        f"{get_user_display_name(worker)} is on a full-time job, so they can't be invited or hired "
+        "until that job is done."
+    )
+
+
 def job_not_started_message(job):
     """Why the job can't be finished yet, or "" when it can.
 
@@ -114,6 +183,9 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
         # path already refuses them, and an instant accept must too.
         if worker_profile.refresh_block_status():
             raise HiringWorkerSuspendedError
+        full_time_job = active_full_time_job(application.worker, exclude_job_id=job.id)
+        if full_time_job:
+            raise HiringWorkerOnFullTimeJobError(full_time_job)
 
         hired_count = job.applications.filter(status=JobApplication.STATUS_HIRED).exclude(
             pk=application.pk
@@ -146,9 +218,61 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
             crowded_out = close_open_applications(
                 job, actor=actor, note="Closed automatically: job reached its worker limit."
             )
+        # A full-time hire takes the worker off the market, so their other
+        # open applications and invites close now rather than linger.
+        released = (
+            close_worker_open_applications(
+                application.worker,
+                exclude_job_id=job.id,
+                actor=actor,
+                note="Closed automatically: the worker took a full-time job.",
+            )
+            if is_full_time_job(job)
+            else []
+        )
 
     notify_closed_applicants(job, crowded_out, "was filled by another worker")
+    notify_households_worker_unavailable(released)
     return application
+
+
+def close_worker_open_applications(worker, exclude_job_id=None, actor=None, note=""):
+    """Close every application of this worker still waiting on a decision
+    (pending or invited) on other jobs, and return them."""
+    open_applications = JobApplication.objects.select_related("job", "job__household", "worker").filter(
+        worker=worker,
+        status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED],
+    )
+    if exclude_job_id is not None:
+        open_applications = open_applications.exclude(job_id=exclude_job_id)
+    closed = list(open_applications)
+    for other in closed:
+        previous_status = other.status
+        other.status = JobApplication.STATUS_CLOSED
+        other.save(update_fields=["status", "updated_at"])
+        record_application_status_event(other, previous_status, other.status, actor=actor, note=note)
+    return closed
+
+
+def notify_households_worker_unavailable(applications):
+    """Tell each household whose applicant or invitee took a full-time job.
+    The other household is never named."""
+    for application in applications:
+        worker_name = get_user_display_name(application.worker)
+        create_notification(
+            recipient=application.job.household,
+            notification_type=Notification.TYPE_APPLICATION,
+            title="Application closed",
+            message=(
+                f"{worker_name} took a full-time job and is no longer available. "
+                f"Their application for {application.job.title} has been closed."
+            ),
+            actor=application.worker,
+            related_job_id=application.job_id,
+            related_application_id=application.id,
+            action_type=Notification.ACTION_JOB_DETAIL,
+            action_url=f"/household/jobs/{application.job_id}/applications",
+        )
 
 
 def close_open_applications(job, actor=None, note=""):

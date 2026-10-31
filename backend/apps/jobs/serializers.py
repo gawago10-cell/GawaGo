@@ -19,7 +19,7 @@ from apps.jobs.privacy import (
 )
 from apps.matching.recommendations import score_pair_with_distance
 from apps.matching.services import get_cached_road_route, get_road_route_for_match, smart_match_sort_key
-from apps.jobs.services import job_not_started_message
+from apps.jobs.services import active_full_time_job, full_time_apply_message, job_not_started_message
 from apps.jobs.statuses import get_application_stage, get_job_stage, get_stage_label
 
 
@@ -400,6 +400,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
     hired_count = serializers.SerializerMethodField()
     workers_needed = serializers.IntegerField(source="worker_slots", read_only=True)
     can_apply = serializers.SerializerMethodField()
+    apply_blocked_reason = serializers.SerializerMethodField()
     can_accept_hire_request = serializers.SerializerMethodField()
     can_request_completion = serializers.SerializerMethodField()
     can_mark_done = serializers.SerializerMethodField()
@@ -474,6 +475,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "hired_count",
             "workers_needed",
             "can_apply",
+            "apply_blocked_reason",
             "can_accept_hire_request",
             "can_request_completion",
             "can_mark_done",
@@ -677,10 +679,19 @@ class JobPostingSerializer(serializers.ModelSerializer):
             return False, None, None
         return True, user, profile
 
-    def get_can_apply(self, obj):
-        is_worker, user, profile = self.is_authenticated_worker()
+    def _worker_full_time_job(self, obj):
+        """The requesting worker's full-time job under way, unless it is this
+        one. Looked up once per request: a list serializes many jobs."""
+        is_worker, user, _profile = self.is_authenticated_worker()
         if not is_worker:
-            return False
+            return None
+        cache = self.context.setdefault("_full_time_jobs", {})
+        if user.id not in cache:
+            cache[user.id] = active_full_time_job(user)
+        full_time_job = cache[user.id]
+        return full_time_job if full_time_job and full_time_job.id != obj.id else None
+
+    def _could_apply(self, obj, user, profile):
         if profile.verification_status != "verified":
             return False
         # Mirrors JobApplicationView: a multi-worker job still has openings
@@ -691,11 +702,28 @@ class JobPostingSerializer(serializers.ModelSerializer):
             return False
         return not obj.applications.filter(worker=user).exists()
 
+    def get_can_apply(self, obj):
+        is_worker, user, profile = self.is_authenticated_worker()
+        if not is_worker or self._worker_full_time_job(obj):
+            return False
+        return self._could_apply(obj, user, profile)
+
+    def get_apply_blocked_reason(self, obj):
+        """Why a job the worker could otherwise apply to is closed to them:
+        a full-time job of theirs is under way. "" otherwise."""
+        is_worker, user, profile = self.is_authenticated_worker()
+        full_time_job = self._worker_full_time_job(obj) if is_worker else None
+        if not full_time_job or not self._could_apply(obj, user, profile):
+            return ""
+        return full_time_apply_message(full_time_job)
+
     def get_can_accept_hire_request(self, obj):
         application = self.get_current_worker_application_obj(obj)
         if not application or application.status != JobApplication.STATUS_HIRE_REQUESTED:
             return False
         if obj.status in [JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED]:
+            return False
+        if self._worker_full_time_job(obj):
             return False
         return self.get_hired_count(obj) < obj.worker_slots
 

@@ -8,8 +8,9 @@ WorkerJob _job(
   String title,
   String household,
   double? lat,
-  double? lng,
-) {
+  double? lng, {
+  String blockedReason = '',
+}) {
   return WorkerJob.fromJson({
     'id': id,
     'title': title,
@@ -22,7 +23,8 @@ WorkerJob _job(
     'service_rate': '700.00',
     'rate_type_label': 'Per Day',
     'status': 'open',
-    'can_apply': true,
+    'can_apply': blockedReason.isEmpty,
+    'apply_blocked_reason': blockedReason,
     'latitude': null,
     'longitude': null,
     'approximate_latitude': lat,
@@ -105,5 +107,51 @@ void main() {
       scrollable: find.byType(Scrollable).last,
     );
     expect(find.text('Garden Cleanup'), findsOneWidget);
+  });
+
+  testWidgets('a worker on a full-time job sees why they cannot apply', (
+    tester,
+  ) async {
+    const reason =
+        "You're on a full-time job (Yaya) until Mila Reyes marks it done. "
+        'You can apply to other jobs after that.';
+    final job = _job(
+      5,
+      'Garden Cleanup',
+      'Liza Tan',
+      14.03,
+      121.59,
+      blockedReason: reason,
+    );
+    expect(job.canApply, isFalse);
+    expect(job.applyBlockedReason, reason);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 400,
+            height: 700,
+            child: WorkerJobsMap(
+              jobs: [job],
+              matchesSkills: (_) => true,
+              distanceLabel: (_) => '1.2 km away',
+              onViewDetails: (_) {},
+              onApply: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LT'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Not available'), findsOneWidget);
+    expect(find.text('Apply Now'), findsNothing);
+    expect(
+      find.text('On a full-time job. $reason', findRichText: true),
+      findsOneWidget,
+    );
   });
 }

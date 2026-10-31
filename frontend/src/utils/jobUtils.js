@@ -168,7 +168,9 @@ export function getWorkerJobMatches(worker, jobs) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
   const workerSkills = new Set((worker.skills || []).map(normalizeSkill));
-  return jobs.filter(isJobOpenForApplications).map((job) => {
+  // A worker on a full-time job still sees open jobs, each saying why they
+  // can't apply yet, rather than an empty Find Jobs page.
+  return jobs.filter((job) => isJobOpenForApplications(job) || job.applyBlockedReason).map((job) => {
     const matchesSkill = workerSkills.has(normalizeSkill(job.serviceType))
       || workerSkills.has(normalizeSkill(job.requiredSkill));
     return { ...job, matchesSkill };

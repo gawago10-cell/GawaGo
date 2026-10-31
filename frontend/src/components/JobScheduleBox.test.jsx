@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import JobScheduleBox from "./JobScheduleBox";
+import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
 import { formatJobDay } from "../utils/formatters";
 
 describe("formatJobDay", () => {
@@ -49,6 +49,20 @@ describe("JobScheduleBox", () => {
     render(<JobScheduleBox startDate="2026-10-22" endDate="" workingDays={1} />);
     expect(screen.getAllByText("Thu, Oct 22, 2026")).toHaveLength(2);
     expect(screen.getByText("1 working day")).toBeTruthy();
+  });
+
+  it("lists the schedule as lines for My Applications, or its wording without dates", () => {
+    at("2026-10-31");
+    const { rerender } = render(
+      <JobScheduleLines startDate="2026-11-08" endDate="2026-11-10" workingDays={3} scheduleLabel="One-Time" />,
+    );
+    expect(screen.getByText("Sun, Nov 8, 2026")).toBeTruthy();
+    expect(screen.getByText("Tue, Nov 10, 2026")).toBeTruthy();
+    expect(screen.getByText("One-Time · 3 working days")).toBeTruthy();
+
+    rerender(<JobScheduleLines startDate="" endDate="" scheduleLabel="Part-Time" />);
+    expect(screen.getByText("Part-Time")).toBeTruthy();
+    expect(screen.queryByText("Not set")).toBeNull();
   });
 
   it("says Not set for a missing end on a longer job", () => {

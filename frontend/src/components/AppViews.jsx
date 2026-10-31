@@ -16,7 +16,7 @@ import EditJobDialog from "./EditJobDialog";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import RequiredMark, { hasAnswer } from "./RequiredMark";
-import JobScheduleBox from "./JobScheduleBox";
+import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import { getApplicationStatusLabel, getPendingApplicationCount, getWorkersNeeded } from "../utils/jobUtils";
@@ -2419,13 +2419,20 @@ export default function AppViews({
                                 disabled={!job.canApply}
                                 onClick={() => handleApplyToJob(job.id)}
                               >
-                                {job.canApply ? "Apply Now" : "Applied"}
+                                {job.canApply ? "Apply Now" : job.applyBlockedReason ? "Not available" : "Applied"}
                               </button>
                             </div>
-                            {!job.canApply && !job.applicationStatus && (
-                              <p className="worker-jobcard-note">
-                                Applications are unavailable for this job right now.
+                            {job.applyBlockedReason ? (
+                              <p className="job-blocked-note">
+                                <span><strong>On a full-time job.</strong> {job.applyBlockedReason}</span>
                               </p>
+                            ) : (
+                              !job.canApply &&
+                              !job.applicationStatus && (
+                                <p className="worker-jobcard-note">
+                                  Applications are unavailable for this job right now.
+                                </p>
+                              )
                             )}
                           </div>
                         </article>
@@ -3983,10 +3990,19 @@ export default function AppViews({
                               </td>
                               <td>{job.householdName || "Household"}</td>
                               <td>
-                                {formatScheduleLabel(job.scheduleType) || "Not set"}
-                                {job.jobStartDate && (
-                                  <div className="small text-muted">{formatJobDate(job.jobStartDate)}</div>
-                                )}
+                                {(() => {
+                                  const label = formatScheduleLabel(job.scheduleType) || "";
+                                  return (
+                                    <JobScheduleLines
+                                      startDate={job.jobStartDate}
+                                      endDate={job.jobEndDate}
+                                      workingDays={job.estimatedWorkingDays}
+                                      finished={job.status === "Completed" || job.applicationStatus === "Completed"}
+                                      // An old schedule written as a date would repeat the dates above.
+                                      scheduleLabel={/^\d{4}-\d{2}-\d{2}/.test(label) ? "" : label}
+                                    />
+                                  );
+                                })()}
                               </td>
                               <td>{formatLocation(job.barangay, job.streetAddress)}</td>
                               <td>{formatRate(job.offeredRate, job.rateType)}</td>

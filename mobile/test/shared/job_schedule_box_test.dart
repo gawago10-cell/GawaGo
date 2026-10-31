@@ -79,4 +79,64 @@ void main() {
     expect(find.text('STARTED'), findsNothing);
     expect(find.text('START'), findsNothing);
   });
+
+  testWidgets('lists the schedule as lines for My Applications', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      JobScheduleLines(
+        startDate: '2026-11-08',
+        endDate: '2026-11-10',
+        workingDays: 3,
+        scheduleLabel: 'One-Time',
+        today: today,
+      ),
+    );
+    expect(
+      find.text('Starts  Sun, Nov 8, 2026', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Ends  Tue, Nov 10, 2026', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.text('One-Time · 3 working days'), findsOneWidget);
+  });
+
+  testWidgets('lines show the schedule wording alone without dates', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      JobScheduleLines(
+        startDate: '',
+        endDate: '',
+        scheduleLabel: 'Part-Time',
+        today: today,
+      ),
+    );
+    expect(find.text('Part-Time'), findsOneWidget);
+    expect(find.text('Not set'), findsNothing);
+  });
+
+  testWidgets('lines say Started and Ended for a finished job', (tester) async {
+    await _pump(
+      tester,
+      JobScheduleLines(
+        startDate: '2026-10-20',
+        endDate: '2026-11-02',
+        finished: true,
+        today: today,
+      ),
+    );
+    expect(
+      find.text('Started  Tue, Oct 20, 2026', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Ended  Mon, Nov 2, 2026', findRichText: true),
+      findsOneWidget,
+    );
+  });
 }

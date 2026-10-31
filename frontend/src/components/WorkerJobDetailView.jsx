@@ -262,6 +262,11 @@ export default function WorkerJobDetailView({
                             </div>
                           </div>
                         )}
+                        {job.applyBlockedReason && (
+                          <p className="job-blocked-note">
+                            <span><strong>You can't apply right now.</strong> {job.applyBlockedReason}</span>
+                          </p>
+                        )}
                         <div className="worker-job-actions">
                           <button
                             className="btn btn-outline-secondary btn-sm"
@@ -304,7 +309,9 @@ export default function WorkerJobDetailView({
                                 ? hasRejectedHireRequest
                                   ? "Request Rejected"
                                   : "Already Applied"
-                                : "Apply Now"}
+                                : job.applyBlockedReason
+                                  ? "Not available"
+                                  : "Apply Now"}
                             </button>
                           )}
                         </div>
@@ -313,7 +320,7 @@ export default function WorkerJobDetailView({
                             This household sent you a hire request. Review the job details before accepting or rejecting.
                           </div>
                         )}
-                        {!canApply && !alreadyApplied && !canAcceptHireRequest && (
+                        {!canApply && !alreadyApplied && !canAcceptHireRequest && !job.applyBlockedReason && (
                           <div className="alert alert-warning mt-3 mb-0 py-2">
                             Applications are unavailable for this job right now.
                           </div>

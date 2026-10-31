@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import UserProfile
 from apps.jobs.models import JobPosting
+from apps.jobs.services import workers_on_full_time_jobs
 from apps.matching.recommendations import get_recommended_jobs, get_recommended_workers
 from apps.matching.serializers import (
     MatchRequestSerializer,
@@ -102,6 +103,9 @@ class RecommendedWorkersView(APIView):
             .prefetch_related("user__availability_windows")
             .filter(role=UserProfile.ROLE_WORKER, user__is_staff=False)
             .not_suspended()
+            # A worker held by a full-time job elsewhere can't be invited or
+            # hired, so they aren't offered (a worker on this job still is).
+            .exclude(user_id__in=workers_on_full_time_jobs(exclude_job_id=job.id))
         )
         match_results = build_match_results(job, workers)
         # Both scores on every result (AGENTS.md I.C), whichever order was

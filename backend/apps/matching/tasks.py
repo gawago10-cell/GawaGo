@@ -19,6 +19,7 @@ from django.db import IntegrityError, transaction
 
 from apps.accounts.models import UserProfile
 from apps.jobs.models import JobPosting
+from apps.jobs.services import workers_on_full_time_jobs
 from apps.matching.recommendations import _within_radius, score_pair_with_distance
 from apps.matching.services import get_road_route_for_match, straight_line_distance_km
 from apps.notifications.models import Notification
@@ -36,6 +37,8 @@ def eligible_workers():
         UserProfile.objects.select_related("user")
         .filter(role=UserProfile.ROLE_WORKER, user__is_staff=False, user__is_active=True)
         .not_suspended()
+        # No "a job near you" alert for a job they can't apply to.
+        .exclude(user_id__in=workers_on_full_time_jobs())
     )
 
 

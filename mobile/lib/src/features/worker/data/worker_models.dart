@@ -171,6 +171,7 @@ class WorkerJob {
     required this.routePoints,
     required this.images,
     required this.canApply,
+    this.applyBlockedReason = '',
     required this.canAcceptHireRequest,
     required this.canRequestCompletion,
     required this.canReview,
@@ -220,6 +221,10 @@ class WorkerJob {
   final List<RoutePoint> routePoints;
   final List<JobImage> images;
   final bool canApply;
+
+  /// The backend's reason this worker can't apply right now (on a full-time
+  /// job until that household marks it done); empty when nothing blocks them.
+  final String applyBlockedReason;
   final bool canAcceptHireRequest;
   final bool canRequestCompletion;
   final bool canReview;
@@ -265,6 +270,7 @@ class WorkerJob {
         json['images'],
       ).map((item) => JobImage.fromJson(_map(item))).toList(),
       canApply: json['can_apply'] == true,
+      applyBlockedReason: _text(json['apply_blocked_reason'] ?? ''),
       canAcceptHireRequest: json['can_accept_hire_request'] == true,
       canRequestCompletion: json['can_request_completion'] == true,
       canReview: json['can_review'] == true,

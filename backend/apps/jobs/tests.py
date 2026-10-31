@@ -2441,3 +2441,116 @@ class EmploymentHistorySkillRatingTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["results"][0]["skill_ratings"], [])
+
+
+class FullTimeJobRuleTests(TestCase):
+    """A worker on a full-time job under way can't apply, be invited or be
+    hired elsewhere, and their other open applications close when they take
+    it (panel review, 2026-10-31)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.home_a = User.objects.create_user(username="ft-home-a", password="password", first_name="Ana", last_name="Home")
+        self.home_b = User.objects.create_user(username="ft-home-b", password="password")
+        self.worker = User.objects.create_user(username="ft-worker", password="password", first_name="Wil", last_name="Worker")
+        for user, role in ((self.home_a, UserProfile.ROLE_HOUSEHOLD), (self.home_b, UserProfile.ROLE_HOUSEHOLD), (self.worker, UserProfile.ROLE_WORKER)):
+            UserProfile.objects.create(user=user, role=role, verification_status="verified")
+        self.full_time = self._job(self.home_a, "Full-time housekeeping", "Full-Time")
+        self.other = self._job(self.home_b, "Garden help", "One-Time")
+
+    def _job(self, household, title, schedule_type):
+        return JobPosting.objects.create(
+            household=household,
+            title=title,
+            job_type="House Cleaning",
+            required_skill="House Cleaning",
+            schedule="One-Time",
+            schedule_type=schedule_type,
+            location_label="Isabang, Tayabas",
+            latitude="13.9622745",
+            longitude="121.5632841",
+            service_rate="500.00",
+        )
+
+    def _hire_on(self, job):
+        application = JobApplication.objects.create(job=job, worker=self.worker)
+        self.client.force_authenticate(user=job.household)
+        return self.client.patch(
+            reverse("job-application-status", args=[application.id]), {"status": "hired"}, format="json"
+        )
+
+    def test_taking_a_full_time_job_closes_other_open_applications(self):
+        pending = JobApplication.objects.create(job=self.other, worker=self.worker)
+
+        self.assertEqual(self._hire_on(self.full_time).status_code, 200)
+
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, JobApplication.STATUS_CLOSED)
+        notice = Notification.objects.get(recipient=self.home_b, title="Application closed")
+        self.assertIn("Wil Worker took a full-time job", notice.message)
+        self.assertIn("Garden help", notice.message)
+        # The household that hired them is never named.
+        self.assertNotIn("Ana", notice.message)
+
+    def test_a_worker_on_a_full_time_job_cannot_apply_elsewhere(self):
+        self._hire_on(self.full_time)
+        self.client.force_authenticate(user=self.worker)
+
+        detail = self.client.get(reverse("job-detail", args=[self.other.id])).data
+        self.assertFalse(detail["can_apply"])
+        self.assertIn("full-time job (Full-time housekeeping) until Ana Home marks it done", detail["apply_blocked_reason"])
+        # Their own full-time job carries no such note.
+        own = self.client.get(reverse("job-detail", args=[self.full_time.id])).data
+        self.assertEqual(own["apply_blocked_reason"], "")
+
+        response = self.client.post(reverse("job-apply", args=[self.other.id]), {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("You're on a full-time job", response.data["detail"])
+        self.assertFalse(JobApplication.objects.filter(job=self.other, worker=self.worker).exists())
+
+    def test_other_households_cannot_invite_or_hire_them(self):
+        self._hire_on(self.full_time)
+        self.client.force_authenticate(user=self.home_b)
+
+        invite = self.client.post(
+            reverse("job-hire-request", args=[self.other.id]), {"worker_id": self.worker.id}, format="json"
+        )
+        self.assertEqual(invite.status_code, 400)
+        self.assertIn("Wil Worker is on a full-time job", invite.data["detail"])
+
+        # An application that slipped in (e.g. from before) can't be accepted either.
+        stray = JobApplication.objects.create(job=self.other, worker=self.worker)
+        hire = self.client.patch(reverse("job-application-status", args=[stray.id]), {"status": "hired"}, format="json")
+        self.assertEqual(hire.status_code, 400)
+        self.assertIn("can't be invited or hired", hire.data["detail"])
+        stray.refresh_from_db()
+        self.assertEqual(stray.status, JobApplication.STATUS_PENDING)
+
+    def test_they_drop_out_of_matching_until_the_job_is_done(self):
+        from apps.jobs.services import workers_on_full_time_jobs
+        from apps.matching.tasks import eligible_workers
+
+        self._hire_on(self.full_time)
+        self.assertIn(self.worker.id, workers_on_full_time_jobs())
+        self.assertNotIn(self.worker.id, workers_on_full_time_jobs(exclude_job_id=self.full_time.id))
+        self.assertFalse(eligible_workers().filter(user=self.worker).exists())
+
+        complete_job(self.full_time, actor=self.home_a)
+
+        self.assertNotIn(self.worker.id, workers_on_full_time_jobs())
+        self.client.force_authenticate(user=self.worker)
+        detail = self.client.get(reverse("job-detail", args=[self.other.id])).data
+        self.assertTrue(detail["can_apply"])
+        self.assertEqual(detail["apply_blocked_reason"], "")
+
+    def test_a_part_time_job_does_not_hold_the_worker(self):
+        part_time = self._job(self.home_a, "Part-time laundry", "Part-Time")
+        pending = JobApplication.objects.create(job=self.other, worker=self.worker)
+
+        self._hire_on(part_time)
+
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, JobApplication.STATUS_PENDING)
+        self.client.force_authenticate(user=self.worker)
+        third = self._job(self.home_b, "Window washing", "One-Time")
+        self.assertTrue(self.client.get(reverse("job-detail", args=[third.id])).data["can_apply"])
