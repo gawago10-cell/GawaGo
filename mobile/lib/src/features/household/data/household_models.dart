@@ -170,6 +170,7 @@ class HouseholdApplication {
   const HouseholdApplication({
     required this.id,
     required this.workerId,
+    this.workerAvailable = true,
     required this.workerUsername,
     required this.workerName,
     required this.locationLabel,
@@ -199,6 +200,10 @@ class HouseholdApplication {
 
   final int id;
   final int workerId;
+
+  /// False while the worker's account is suspended; the reason stays
+  /// confidential, the household just can't accept them right now.
+  final bool workerAvailable;
   final String workerUsername;
   final String workerName;
   final String locationLabel;
@@ -268,6 +273,7 @@ class HouseholdApplication {
       workerLatitude: _number(json['worker_latitude']),
       workerLongitude: _number(json['worker_longitude']),
       workerVerificationStatus: _text(json['worker_verification_status']),
+      workerAvailable: json['worker_available'] != false,
       workerRatingLabel: _text(json['worker_rating_label'], 'No ratings yet'),
       workerBio: _text(json['worker_bio']),
       workerYearsExperience: _integer(json['worker_years_experience']),

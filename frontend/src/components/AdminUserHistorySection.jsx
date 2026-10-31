@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { formatJobDate } from "../utils/formatters";
 
 import { APPLICATION_STATUS_TONE, JOB_STATUS_TONE, appCode, formatMoney, jobCode } from "../utils/adminReportFormatting";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
@@ -79,7 +80,7 @@ export default function AdminUserHistorySection({ role, fullRecord, postedJobs, 
                       <td className="admin-reports-id">{jobCode(job.id)}</td>
                       <td>{job.jobTitle}</td>
                       <td className="text-muted">{job.barangay || "—"}</td>
-                      <td className="text-muted">{job.createdAt?.slice(0, 10)}</td>
+                      <td className="text-muted admin-reports-date">{formatJobDate(job.createdAt?.slice(0, 10))}</td>
                       <td>{formatMoney(job.offeredRate)}</td>
                       <td>
                         <HistoryStatusPill status={job.statusLabel || job.status} tone={JOB_STATUS_TONE[job.status]} />
@@ -117,7 +118,7 @@ export default function AdminUserHistorySection({ role, fullRecord, postedJobs, 
                         <span className="text-muted small">({jobCode(application.job?.id)})</span>
                       </td>
                       <td className="text-muted">{application.job?.barangay || "—"}</td>
-                      <td className="text-muted">{application.appliedAt?.slice(0, 10)}</td>
+                      <td className="text-muted admin-reports-date">{formatJobDate(application.appliedAt?.slice(0, 10))}</td>
                       <td>{formatMoney(application.job?.offeredRate)}</td>
                       <td>
                         <HistoryStatusPill

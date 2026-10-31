@@ -111,18 +111,19 @@ class NotificationPermissionTests(TestCase):
         self.recipient.save(update_fields=["email"])
         detail_message = "This is a longer notification message with schedule, location, and rate details."
 
-        notification = create_notification(
-            recipient=self.recipient,
-            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
-            title="Detailed account activity",
-            message=detail_message,
-            actor=self.other_user,
-            related_job_id=10,
-            related_application_id=20,
-            action_type=Notification.ACTION_HIRE_REQUEST,
-            action_url="/worker/jobs/10",
-            requires_action=True,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            notification = create_notification(
+                recipient=self.recipient,
+                notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+                title="Detailed account activity",
+                message=detail_message,
+                actor=self.other_user,
+                related_job_id=10,
+                related_application_id=20,
+                action_type=Notification.ACTION_HIRE_REQUEST,
+                action_url="/worker/jobs/10",
+                requires_action=True,
+            )
 
         self.assertEqual(notification.recipient, self.recipient)
         self.assertEqual(notification.actor, self.other_user)

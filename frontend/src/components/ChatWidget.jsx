@@ -294,6 +294,9 @@ export default function ChatWidget({ currentUser }) {
 
               <div className="gawago-chat-composer">
                 {loadError ? <p className="gawago-chat-load-error">{loadError}</p> : null}
+                {activeConversation?.readOnly ? (
+                  <p className="gawago-chat-read-only">This job is finished, so the chat is read only.</p>
+                ) : (
                 <div className="gawago-chat-composer-row gawago-chat-composer-row-text">
                   <input
                     id="gawago-chat-draft"
@@ -313,6 +316,7 @@ export default function ChatWidget({ currentUser }) {
                     Send
                   </button>
                 </div>
+                )}
               </div>
             </div>
           </div>

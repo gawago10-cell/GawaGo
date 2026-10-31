@@ -4253,6 +4253,7 @@ Widget _buildApplicantCard({
   final status = application.status.trim().toLowerCase();
   final settled =
       status == 'hired' || status == 'completed' || status == 'hire_requested';
+  final unavailable = !settled && !application.workerAvailable;
 
   Future<void> respond(String next) async {
     try {
@@ -4292,7 +4293,9 @@ Widget _buildApplicantCard({
     bio: application.workerBio,
     appliedAgo: formatTimeAgo(application.appliedAt),
     isTopMatch: topMatchId != null && topMatchId == application.id,
-    statusLabel: settled
+    statusLabel: unavailable
+        ? 'Not available right now'
+        : settled
         ? (application.statusLabel.isNotEmpty
               ? application.statusLabel
               : applicationStatusLabel(application.status))
@@ -4831,7 +4834,10 @@ class _ApplicantDetailState extends State<_ApplicantDetail> {
     return _WorkerProfileScreen(
       subject: _WorkerProfileSubject.fromApplication(application),
       repository: repository,
-      hireEnabled: application.status == 'pending' && !_busy,
+      hireEnabled:
+          application.status == 'pending' &&
+          application.workerAvailable &&
+          !_busy,
       hireLabel: application.status == 'pending'
           ? null
           : (application.statusLabel.isNotEmpty
@@ -5039,7 +5045,7 @@ class _ProfileFormState extends State<_ProfileForm> {
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
       children: [
         const Text(
-          'My Profile Household',
+          'My Profile',
           style: TextStyle(
             fontFamily: GawaGoColors.fontHeading,
             color: GawaGoColors.ink,

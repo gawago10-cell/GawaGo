@@ -62,6 +62,7 @@ class ChatConversation {
     required this.otherPartyPhotoUrl,
     required this.unreadCount,
     this.lastMessage,
+    this.readOnly = false,
   });
 
   factory ChatConversation.fromJson(Map<String, dynamic> json) {
@@ -78,6 +79,7 @@ class ChatConversation {
       otherPartyRole: other['role']?.toString() ?? '',
       otherPartyPhotoUrl: other['photo_url']?.toString() ?? '',
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+      readOnly: json['read_only'] == true,
       lastMessage: last is Map<String, dynamic>
           ? ChatMessage.fromJson(last)
           : null,
@@ -93,4 +95,7 @@ class ChatConversation {
   final String otherPartyPhotoUrl;
   final int unreadCount;
   final ChatMessage? lastMessage;
+
+  /// The job is done or cancelled: the thread can be read, not added to.
+  final bool readOnly;
 }

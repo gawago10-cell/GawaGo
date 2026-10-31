@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
-import { createComplaint } from "../services/backendDataService";
+import { createComplaint, fetchMyComplaints } from "../services/backendDataService";
+import { formatJobDate } from "../utils/formatters";
 
 const COMPLAINT_TYPES = [
   { value: "payment_issue", label: "Payment Issue" },
@@ -27,6 +28,7 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
   const [evidence, setEvidence] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [openComplaints, setOpenComplaints] = useState([]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -35,7 +37,31 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
     setDescription("");
     setEvidence([]);
     setError("");
+    // A complaint about this job that's still being reviewed: the backend
+    // refuses a second one, so say so before the form is filled in.
+    let cancelled = false;
+    fetchMyComplaints()
+      .then((complaints) => {
+        if (cancelled || !complaints) return;
+        setOpenComplaints(
+          complaints.filter(
+            (complaint) =>
+              String(complaint.jobId) === String(job?.id) && ["submitted", "under_review"].includes(complaint.status),
+          ),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, job?.id]);
+
+  const selectedApplicant = applicants.find((applicant) => String(applicant.id) === String(respondentId));
+  const alreadyOpen = openComplaints.find((complaint) =>
+    isHousehold
+      ? selectedApplicant && complaint.respondentUsername === selectedApplicant.username
+      : true,
+  );
 
   if (!isOpen) return null;
 
@@ -85,6 +111,13 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
               About <strong>{job?.jobTitle || job?.serviceType || "this job"}</strong>. Your complaint goes
               directly to our admin team for review.
             </p>
+            {alreadyOpen && (
+              <div className="gg-complaint-open-note" role="status">
+                <strong>You already filed a complaint about this job.</strong> CMP-
+                {String(alreadyOpen.id).padStart(3, "0")} was sent on {formatJobDate(alreadyOpen.createdAt?.slice(0, 10))}{" "}
+                and is still being reviewed. You'll be notified when it's updated.
+              </div>
+            )}
 
             {isHousehold && (
               <div className="mb-3">
@@ -190,10 +223,15 @@ export default function ComplaintModal({ isOpen, onClose, onSubmitted, job, role
           </div>
 
           <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={submitting}>
+            <button type="button" className="btn btn-outline-secondary gg-complaint-cancel" onClick={onClose} disabled={submitting}>
               Cancel
             </button>
-            <button type="button" className="btn btn-danger" onClick={handleSubmit} disabled={submitting}>
+            <button
+              type="button"
+              className="btn btn-success gg-complaint-submit"
+              onClick={handleSubmit}
+              disabled={submitting || Boolean(alreadyOpen)}
+            >
               {submitting ? "Submitting..." : "Submit Complaint"}
             </button>
           </div>

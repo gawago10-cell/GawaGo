@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/gawago_colors.dart';
+import '../utils/display_formatters.dart';
 import '../../features/complaints/data/complaint_models.dart';
 import '../../features/complaints/data/complaint_repository.dart';
 import 'async_state.dart';
@@ -147,7 +148,7 @@ class _ComplaintCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             '${complaint.jobTitle.isEmpty ? "Job complaint" : complaint.jobTitle} '
-            '· ${complaint.createdAt.length >= 10 ? complaint.createdAt.substring(0, 10) : complaint.createdAt}',
+            '· ${formatJobDate(complaint.createdAt.length >= 10 ? complaint.createdAt.substring(0, 10) : complaint.createdAt)}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
           ),
           if (complaint.description.isNotEmpty) ...[

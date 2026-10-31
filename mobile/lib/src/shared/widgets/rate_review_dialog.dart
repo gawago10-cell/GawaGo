@@ -66,7 +66,9 @@ class _RateReviewDialog extends StatefulWidget {
 }
 
 class _RateReviewDialogState extends State<_RateReviewDialog> {
-  double _rating = 5;
+  // No stars until the household picks: a preset 5 let one tap give a
+  // perfect score (second scan, 2026-11-01).
+  double _rating = 0;
   final Map<String, int> _metrics = {};
   final _feedback = TextEditingController();
   bool _submitting = false;
@@ -85,8 +87,13 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
       _error = null;
     });
     try {
+      // With metrics rated, the overall rating is their average (AGENTS.md
+      // II.A); the stars only stand alone when no metric was given.
+      final metricAverage = _metrics.isEmpty
+          ? null
+          : _metrics.values.reduce((a, b) => a + b) / _metrics.length;
       await widget.onSubmit(
-        rating: _rating,
+        rating: metricAverage ?? _rating,
         feedback: _feedback.text.trim(),
         qualityOfWork: _metrics['quality_of_work'],
         punctuality: _metrics['punctuality'],
@@ -186,12 +193,18 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                           );
                         }),
                         const SizedBox(width: 4),
-                        Text(
-                          '${_rating.toStringAsFixed(0)}/5',
-                          style: const TextStyle(
-                            color: GawaGoColors.textMuted,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
+                        // Flexible: "Tap a star" beside five stars ran past
+                        // a phone-width dialog.
+                        Flexible(
+                          child: Text(
+                            _rating == 0
+                                ? 'Tap a star'
+                                : '${_rating.toStringAsFixed(0)}/5',
+                            style: const TextStyle(
+                              color: GawaGoColors.textMuted,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ],
@@ -259,7 +272,11 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                       children: [
                         Expanded(
                           child: FilledButton(
-                            onPressed: _submitting ? null : _submit,
+                            onPressed:
+                                _submitting ||
+                                    (_rating == 0 && _metrics.isEmpty)
+                                ? null
+                                : _submit,
                             style: FilledButton.styleFrom(
                               backgroundColor: GawaGoColors.primary,
                               foregroundColor: GawaGoColors.onPrimary,

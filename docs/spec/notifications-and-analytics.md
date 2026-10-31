@@ -6,6 +6,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
 
 ### A. Notification and Alerts
 - In-system notifications, each mirrored by an automated email, cover: job application submitted, application hired, application rejected, job completion, rating/review submitted, verification status change, review reminders, account activity, and admin alerts.
+- The mirrored emails go out in the background once the change is saved (`transaction.on_commit` + `enqueue`), the same way admin alerts and match alerts do, so a household cancelling a job with many applicants isn't kept waiting and no email goes out for an action that rolled back (second scan, 2026-11-01).
 - Admin alerts tell administrators that something is waiting in a review queue: every active admin is alerted when a verification request or a certificate is submitted, and only superadmins are alerted when a report is filed (the alert names no one, keeping the report confidential). Admin dashboards have no notification inbox, so admins receive these through the mirrored email; the queues themselves show what is pending.
 - A separate, email-less notification alerts a worker when a newly posted job scores above the AI recommendation match threshold (see I.C), so a strong match reaches the worker without them having to check manually.
 - Notifications carry read/unread state and, where relevant, an action link back to the job, hire request, or review that triggered them.

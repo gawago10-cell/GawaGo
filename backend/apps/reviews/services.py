@@ -171,15 +171,20 @@ def calculate_rating_trend(user) -> str:
 
     thirty_days_ago = timezone.now() - timedelta(days=30)
 
-    # Get recent ratings
-    recent_reviews = Review.objects.filter(
-        target=user, rating__isnull=False, created_at__gte=thirty_days_ago
-    ).order_by("-created_at")[:10]
-
-    # Get older ratings
-    old_reviews = Review.objects.filter(
-        target=user, rating__isnull=False, created_at__lt=thirty_days_ago
-    ).order_by("-created_at")[:10]
+    # The same reviews the average counts (a metrics-only review included),
+    # minus the automatic 3.5 placeholders, which say nothing about how the
+    # worker is doing lately (second scan, 2026-11-01).
+    rated = Review.objects.filter(
+        Q(rating__isnull=False)
+        | Q(quality_of_work__isnull=False)
+        | Q(punctuality__isnull=False)
+        | Q(communication__isnull=False)
+        | Q(professionalism__isnull=False),
+        target=user,
+        is_system_generated=False,
+    )
+    recent_reviews = rated.filter(created_at__gte=thirty_days_ago).order_by("-created_at")[:10]
+    old_reviews = rated.filter(created_at__lt=thirty_days_ago).order_by("-created_at")[:10]
 
     if (
         len(recent_reviews) < RATING_TREND_MIN_SAMPLES_PER_WINDOW

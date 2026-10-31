@@ -230,7 +230,10 @@ export function useBackendSync({
           return {
             ...existing,
             ...workerProfile,
-            verificationSubmission: existing?.verificationSubmission || null,
+            // The profile carries the server's latest verification request;
+            // keeping only the old copy left it empty for admins, so Workers
+            // History never listed anyone (second scan, 2026-11-01).
+            verificationSubmission: workerProfile.verificationSubmission || existing?.verificationSubmission || null,
             verificationNotifications: existing?.verificationNotifications || [],
             applicationNotifications: existing?.applicationNotifications || [],
             receivedReviews: existing?.receivedReviews || [],

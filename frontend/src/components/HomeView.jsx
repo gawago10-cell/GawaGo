@@ -1,5 +1,7 @@
 import React from "react";
 
+import { fetchPublicSummary } from "../services/backendDataService";
+
 export default function HomeView({
   dashboardMetrics,
   initialShowLogin = false,
@@ -13,6 +15,21 @@ export default function HomeView({
   onOpenWorkerRegister,
 }) {
   const [showLogin, setShowLogin] = React.useState(initialShowLogin);
+  // Visitors can't load profiles, so totals computed from them read 0
+  // verified workers and 0 accounts; the backend's public counts don't.
+  const [publicSummary, setPublicSummary] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchPublicSummary()
+      .then((summary) => {
+        if (!cancelled && summary) setPublicSummary(summary);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const homeMetrics = { ...dashboardMetrics, ...(publicSummary || {}) };
   const [authMode, setAuthMode] = React.useState("login");
   // Set when opening the panel added a history entry, so Back (ours or the
   // phone's) can return to the landing page instead of leaving the site.
@@ -207,20 +224,20 @@ export default function HomeView({
                   <div className="hero-snapshot-card">
                     <span className="hero-snapshot-badge">Open Jobs Live</span>
                     <p className="hero-snapshot-label mb-1">Open Jobs</p>
-                    <p className="hero-snapshot-value mb-2">{dashboardMetrics.openJobs}</p>
+                    <p className="hero-snapshot-value mb-2">{homeMetrics.openJobs}</p>
                     <p className="hero-snapshot-note mb-0">Jobs waiting for workers to apply</p>
                     <hr className="hero-snapshot-divider" />
                     <div className="hero-snapshot-mini-grid">
                       <div>
-                        <strong>{dashboardMetrics.verifiedWorkers}</strong>
+                        <strong>{homeMetrics.verifiedWorkers}</strong>
                         <span>Verified Workers</span>
                       </div>
                       <div>
-                        <strong>{dashboardMetrics.completedJobs}</strong>
+                        <strong>{homeMetrics.completedJobs}</strong>
                         <span>Completed Services</span>
                       </div>
                       <div>
-                        <strong>{dashboardMetrics.totalAccounts}</strong>
+                        <strong>{homeMetrics.totalAccounts}</strong>
                         <span>Registered Accounts</span>
                       </div>
                     </div>

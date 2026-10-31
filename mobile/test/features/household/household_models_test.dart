@@ -232,4 +232,20 @@ void main() {
     expect(full.noData, isFalse);
     expect(full.value, 683.08);
   });
+
+  test('a suspended applicant is not available', () {
+    final available = HouseholdApplication.fromJson({
+      'id': 1,
+      'worker_username': 'mery',
+      'status': 'pending',
+    });
+    final suspended = HouseholdApplication.fromJson({
+      'id': 2,
+      'worker_username': 'louise',
+      'status': 'pending',
+      'worker_available': false,
+    });
+    expect(available.workerAvailable, isTrue);
+    expect(suspended.workerAvailable, isFalse);
+  });
 }

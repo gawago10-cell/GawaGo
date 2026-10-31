@@ -16,7 +16,7 @@ explainability breakdown via _build_score_result().
 from django.contrib.auth.models import User
 
 from apps.accounts.models import currently_suspended_q
-from apps.jobs.models import JobPosting
+from apps.jobs.models import JobApplication, JobPosting
 from apps.jobs.privacy import rounded_distance_km
 from apps.jobs.services import jobs_accepting_applications
 from apps.matching.services import (
@@ -247,6 +247,13 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     open_jobs = list(
         jobs_accepting_applications(JobPosting.objects.all())
         .exclude(household_id=worker.id)
+        # A multi-worker job stays open after a hire; the worker hired on
+        # it doesn't need it recommended back (second scan, 2026-11-01).
+        .exclude(
+            pk__in=JobApplication.objects.filter(
+                worker=worker, status__in=[JobApplication.STATUS_HIRED, JobApplication.STATUS_COMPLETED]
+            ).values("job_id")
+        )
         .exclude(currently_suspended_q("household__profile__"))
         .select_related("household")
     )

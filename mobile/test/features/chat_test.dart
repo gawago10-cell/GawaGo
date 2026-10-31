@@ -244,4 +244,45 @@ void main() {
     expect(find.byKey(const ValueKey('chat-draft')), findsNothing);
     await _closeChat(tester);
   });
+
+  testWidgets('a finished job shows its history read only', (tester) async {
+    const finished = ChatConversation(
+      id: 7,
+      jobTitle: 'Deep clean',
+      statusLabel: 'Completed',
+      otherPartyName: 'Hana Tester',
+      otherPartyRole: 'household',
+      otherPartyPhotoUrl: '',
+      unreadCount: 0,
+      readOnly: true,
+    );
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        if (request.url.path.endsWith('/read/')) {
+          return _json({'marked_read': 0});
+        }
+        return _json([_message(1, 'See you at 8')]);
+      }),
+    );
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ChatScreen(
+          conversation: finished,
+          pollInterval: Duration(seconds: 4),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('See you at 8'), findsOneWidget);
+    expect(
+      find.text('This job is finished, so the chat is read only.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('chat-draft')), findsNothing);
+    expect(
+      ChatConversation.fromJson({'id': 1, 'read_only': true}).readOnly,
+      isTrue,
+    );
+  });
 }

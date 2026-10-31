@@ -11,6 +11,10 @@ from apps.jobs.models import JobApplication, JobPosting
 # Chat is only open while the work is live. A cancelled job leaves its
 # application "hired", so the job status has to be checked as well.
 CHAT_JOB_STATUSES = (JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED)
+# After the job is done or cancelled the thread stays readable, so neither
+# side loses what was agreed (second scan, 2026-11-01); only sending stops.
+CHAT_HISTORY_JOB_STATUSES = CHAT_JOB_STATUSES + (JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED)
+READ_ONLY = {"detail": "This job is finished, so the chat is read only."}
 # First load returns the tail of the thread; polling with ?after= fetches the rest.
 HISTORY_LIMIT = 200
 NOT_ALLOWED = {"detail": "You can't access this conversation."}
@@ -24,16 +28,23 @@ def chat_open_applications(user):
     )
 
 
-def get_conversation(user, hire_id):
-    """The hire if `user` is one of its two parties and chat is open, else None.
-    Missing, foreign and closed hires all look the same to the caller so the
-    endpoint can't be used to probe which hire ids exist."""
-    return (
-        chat_open_applications(user)
-        .select_related("job", "job__household", "worker")
-        .filter(pk=hire_id)
-        .first()
+def chat_history_applications(user):
+    """Every hire whose thread the user can read: live ones, plus finished
+    or cancelled ones (read only)."""
+    return JobApplication.objects.filter(
+        Q(worker=user) | Q(job__household=user),
+        status__in=[JobApplication.STATUS_HIRED, JobApplication.STATUS_COMPLETED],
+        job__status__in=CHAT_HISTORY_JOB_STATUSES,
     )
+
+
+def get_conversation(user, hire_id, readable=False):
+    """The hire if `user` is one of its two parties and chat is open (or,
+    with readable, its history can still be read), else None. Missing and
+    foreign hires look the same to the caller so the endpoint can't be used
+    to probe which hire ids exist."""
+    applications = chat_history_applications(user) if readable else chat_open_applications(user)
+    return applications.select_related("job", "job__household", "worker").filter(pk=hire_id).first()
 
 
 class ConversationListView(APIView):
@@ -43,7 +54,7 @@ class ConversationListView(APIView):
         user = request.user
         latest = Message.objects.filter(application=OuterRef("pk")).order_by("-id")
         applications = list(
-            chat_open_applications(user)
+            chat_history_applications(user)
             .select_related("job", "job__household__profile", "worker__profile")
             .annotate(
                 last_message_id=Subquery(latest.values("id")[:1]),
@@ -55,6 +66,10 @@ class ConversationListView(APIView):
         )
         for application in applications:
             application.last_message = last_messages.get(application.last_message_id)
+        # A finished hire is listed only when there is something to look back on.
+        applications = [
+            a for a in applications if a.job.status in CHAT_JOB_STATUSES or a.last_message is not None
+        ]
         applications.sort(
             key=lambda a: (a.last_message.created_at if a.last_message else a.updated_at),
             reverse=True,
@@ -66,7 +81,7 @@ class ConversationMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, hire_id):
-        application = get_conversation(request.user, hire_id)
+        application = get_conversation(request.user, hire_id, readable=True)
         if not application:
             return Response(NOT_ALLOWED, status=status.HTTP_403_FORBIDDEN)
         messages = application.messages.select_related("sender")
@@ -84,6 +99,8 @@ class ConversationMessagesView(APIView):
     def post(self, request, hire_id):
         application = get_conversation(request.user, hire_id)
         if not application:
+            if get_conversation(request.user, hire_id, readable=True):
+                return Response(READ_ONLY, status=status.HTTP_403_FORBIDDEN)
             return Response(NOT_ALLOWED, status=status.HTTP_403_FORBIDDEN)
         serializer = MessageSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -95,7 +112,7 @@ class ConversationReadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, hire_id):
-        application = get_conversation(request.user, hire_id)
+        application = get_conversation(request.user, hire_id, readable=True)
         if not application:
             return Response(NOT_ALLOWED, status=status.HTTP_403_FORBIDDEN)
         marked = application.messages.filter(is_read=False).exclude(sender=request.user).update(is_read=True)

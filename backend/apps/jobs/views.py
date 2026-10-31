@@ -593,7 +593,7 @@ class JobApplicationStatusView(APIView):
                 return Response({"detail": "Only verified workers can be hired."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringWorkerSuspendedError:
                 return Response(
-                    {"detail": "This worker's account is suspended and can't be hired right now."},
+                    {"detail": "This worker isn't available right now."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             except HiringWorkerUnavailableError as unavailable:
@@ -788,7 +788,7 @@ class JobApplicationDecisionView(APIView):
                 return Response({"detail": "Only verified workers can be hired."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringWorkerSuspendedError:
                 return Response(
-                    {"detail": "This worker's account is suspended and can't be hired right now."},
+                    {"detail": "This worker isn't available right now."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             except HiringWorkerUnavailableError as unavailable:

@@ -153,7 +153,9 @@ export const EMPTY_HOUSEHOLD_FORM = {
   confirmPassword: "",
 };
 export const EMPTY_HOUSEHOLD_REVIEW_FORM = {
-  rating: "5",
+  // No stars until the household picks: a preset 5 let one tap give a
+  // perfect score (second scan, 2026-11-01).
+  rating: "",
   feedback: "",
   jobId: "",
   quality_of_work: "",

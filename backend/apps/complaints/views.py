@@ -98,6 +98,32 @@ class ComplaintCreateView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # The same report filed again (three identical ones in a test) only
+        # repeated the superadmin alert; one stays open until it's decided.
+        still_open = (
+            Complaint.objects.filter(
+                complainant=user,
+                job=job,
+                respondent_id=respondent_id,
+                status__in=[Complaint.STATUS_SUBMITTED, Complaint.STATUS_UNDER_REVIEW],
+            )
+            .order_by("created_at")
+            .first()
+        )
+        if still_open:
+            filed = timezone.localtime(still_open.created_at)
+            return Response(
+                {
+                    "detail": (
+                        f"You already filed a complaint about this job (CMP-{still_open.id:03d}) on "
+                        f"{filed:%b} {filed.day}, {filed.year}. It's still being reviewed, and you'll be "
+                        "notified when it's updated."
+                    ),
+                    "open_complaint_id": still_open.id,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         image_files = request.FILES.getlist("evidence")
         if len(image_files) > MAX_EVIDENCE_IMAGES:
             return Response(

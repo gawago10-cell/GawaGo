@@ -52,7 +52,11 @@ def create_notification(
         requires_action=requires_action,
     )
     if send_email:
-        send_notification_email(recipient, title, message)
+        # Sent in the background once the change is saved, like admin
+        # alerts: a job cancelled with ten applicants used to send ten
+        # emails before the household's screen answered, and an email
+        # could go out for an action that then rolled back.
+        transaction.on_commit(lambda: enqueue(send_notification_emails, [notification.id]))
     return notification
 
 

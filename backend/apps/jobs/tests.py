@@ -922,11 +922,12 @@ class JobPermissionTests(TestCase):
         self.application.save(update_fields=["status"])
         self.client.force_authenticate(user=self.household)
 
-        response = self.client.patch(
-            reverse("job-detail", args=[self.job.id]),
-            {"status": JobPosting.STATUS_COMPLETED},
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                reverse("job-detail", args=[self.job.id]),
+                {"status": JobPosting.STATUS_COMPLETED},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         self.job.refresh_from_db()
@@ -1140,11 +1141,12 @@ class JobPermissionTests(TestCase):
     def test_job_owner_can_send_hire_request_for_pending_application(self):
         self.client.force_authenticate(user=self.household)
 
-        response = self.client.patch(
-            reverse("job-application-status", args=[self.application.id]),
-            {"status": JobApplication.STATUS_HIRE_REQUESTED},
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                reverse("job-application-status", args=[self.application.id]),
+                {"status": JobApplication.STATUS_HIRE_REQUESTED},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         self.application.refresh_from_db()
@@ -1273,11 +1275,12 @@ class JobPermissionTests(TestCase):
     def test_owner_can_reject_pending_application(self):
         self.client.force_authenticate(user=self.household)
 
-        response = self.client.patch(
-            reverse("job-application-status", args=[self.application.id]),
-            {"status": JobApplication.STATUS_REJECTED},
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                reverse("job-application-status", args=[self.application.id]),
+                {"status": JobApplication.STATUS_REJECTED},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         self.application.refresh_from_db()
@@ -2963,4 +2966,135 @@ class SystemScanFixTests(TestCase):
         empty = [month for month in months if month["postings"] == 0]
         self.assertTrue(all(month["averageRate"] is None for month in empty))
         self.assertTrue(all(month["averageRate"] > 0 for month in months if month["postings"]))
+
+
+class SecondScanFixTests(TestCase):
+    """Fixes from the second scan of 2026-11-01."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.home = User.objects.create_user(username="s2-home", password="password", first_name="Emman", last_name="Aviles", email="home@example.com")
+        UserProfile.objects.create(user=self.home, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        self.worker = User.objects.create_user(username="s2-worker", password="password", first_name="Mery", last_name="Cruz", email="mery@example.com")
+        self.worker_profile = UserProfile.objects.create(
+            user=self.worker, role=UserProfile.ROLE_WORKER, verification_status="verified", skills=["House Cleaning"],
+            latitude="13.9622745", longitude="121.5632841",
+        )
+        self.job = JobPosting.objects.create(
+            household=self.home, title="Aircon repair", job_type="House Cleaning", required_skill="House Cleaning",
+            schedule="One-Time", location_label="Isabang, Tayabas", latitude="13.9622745", longitude="121.5632841",
+            service_rate="600.00", worker_slots=3, geographic_boundary="unlimited", max_distance_km=999999,
+        )
+
+    def test_the_home_page_totals_are_public(self):
+        UserProfile.objects.create(user=User.objects.create_user(username="s2-new"), role=UserProfile.ROLE_WORKER)
+        response = self.client.get(reverse("public-summary"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["verifiedWorkers"], 1)
+        self.assertEqual(response.data["totalAccounts"], 3)
+        self.assertEqual(response.data["openJobs"], 1)
+        self.assertEqual(response.data["completedJobs"], 0)
+
+    def test_ai_picks_leave_out_jobs_the_worker_is_hired_on(self):
+        from unittest.mock import patch as mock_patch
+        from apps.matching.recommendations import get_recommended_jobs
+
+        no_route = {"distance_km": None, "route_points": []}
+        with mock_patch("apps.matching.recommendations.get_road_route_for_match", return_value=no_route):
+            self.assertIn(self.job.id, [row["job"].id for row in get_recommended_jobs(self.worker)])
+            JobApplication.objects.create(job=self.job, worker=self.worker, status=JobApplication.STATUS_HIRED)
+            JobPosting.objects.filter(pk=self.job.pk).update(status=JobPosting.STATUS_ASSIGNED)
+            self.assertNotIn(self.job.id, [row["job"].id for row in get_recommended_jobs(self.worker)])
+
+    def test_a_suspended_applicant_reads_unavailable_without_a_reason(self):
+        application = JobApplication.objects.create(job=self.job, worker=self.worker)
+        self.worker_profile.is_blocked = True
+        self.worker_profile.blocked_reason = "Confidential"
+        self.worker_profile.save()
+        self.client.force_authenticate(user=self.home)
+
+        detail = self.client.get(reverse("job-detail", args=[self.job.id])).data
+        row = next(a for a in detail["applications"] if a["id"] == application.id)
+        self.assertFalse(row["worker_available"])
+        hire = self.client.patch(reverse("job-application-status", args=[application.id]), {"status": "hired"}, format="json")
+        self.assertEqual(hire.status_code, 400)
+        self.assertEqual(hire.data["detail"], "This worker isn't available right now.")
+        self.assertNotIn("suspend", hire.data["detail"].lower())
+
+    def test_the_same_complaint_is_not_filed_twice_while_open(self):
+        from apps.complaints.models import Complaint
+
+        JobApplication.objects.create(job=self.job, worker=self.worker)
+        self.client.force_authenticate(user=self.worker)
+        payload = {"job": self.job.id, "complaint_type": "no_show", "description": "Nobody was home."}
+        first = self.client.post(reverse("complaint-create"), payload, format="json")
+        self.assertEqual(first.status_code, 201)
+        second = self.client.post(reverse("complaint-create"), payload, format="json")
+        self.assertEqual(second.status_code, 400)
+        self.assertIn(f"CMP-{first.data['id']:03d}", second.data["detail"])
+        self.assertEqual(Complaint.objects.count(), 1)
+
+        Complaint.objects.filter(pk=first.data["id"]).update(status=Complaint.STATUS_CLOSED)
+        self.assertEqual(self.client.post(reverse("complaint-create"), payload, format="json").status_code, 201)
+
+    def test_a_finished_job_keeps_its_chat_as_read_only_history(self):
+        from apps.chat.models import Message
+        from apps.jobs.services import complete_job
+
+        hire = JobApplication.objects.create(job=self.job, worker=self.worker, status=JobApplication.STATUS_HIRED)
+        JobPosting.objects.filter(pk=self.job.pk).update(status=JobPosting.STATUS_ASSIGNED)
+        Message.objects.create(application=hire, sender=self.home, content="See you at 8 tomorrow.")
+        self.job.refresh_from_db()
+        complete_job(self.job, actor=self.home)
+
+        self.client.force_authenticate(user=self.worker)
+        conversations = self.client.get(reverse("conversation-list")).json()
+        self.assertEqual([c["id"] for c in conversations], [hire.id])
+        self.assertTrue(conversations[0]["read_only"])
+        messages = self.client.get(reverse("conversation-messages", args=[hire.id]))
+        self.assertEqual(messages.status_code, 200)
+        self.assertEqual(messages.json()[0]["content"], "See you at 8 tomorrow.")
+        sent = self.client.post(reverse("conversation-messages", args=[hire.id]), {"content": "hi"}, format="json")
+        self.assertEqual(sent.status_code, 403)
+        self.assertEqual(sent.json()["detail"], "This job is finished, so the chat is read only.")
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_notification_emails_wait_for_the_change_to_be_saved(self):
+        from apps.notifications.services import create_notification
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            create_notification(recipient=self.worker, notification_type=Notification.TYPE_APPLICATION, title="T", message="M")
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(len(callbacks), 1)
+        callbacks[0]()
+        self.assertEqual(mail.outbox[-1].to, ["mery@example.com"])
+
+    def test_the_rating_trend_leaves_out_automatic_ratings(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.reviews.models import Review
+        from apps.reviews.services import calculate_rating_trend
+
+        def review(job_no, rating, days_ago, system=False, metrics=None):
+            job = JobPosting.objects.create(
+                household=self.home, title=f"Job {job_no}", job_type="House Cleaning", required_skill="House Cleaning",
+                schedule="One-Time", location_label="Isabang, Tayabas", latitude="13.9622745", longitude="121.5632841",
+                service_rate="500.00", status=JobPosting.STATUS_COMPLETED,
+            )
+            r = Review.objects.create(
+                author=self.home, target=self.worker, author_role="household", target_role="worker", job=job,
+                rating=rating, is_system_generated=system, **(metrics or {}),
+            )
+            Review.objects.filter(pk=r.pk).update(created_at=timezone.now() - timedelta(days=days_ago))
+
+        self.worker_profile.rating_count = 4
+        self.worker_profile.save()
+        review(1, 5, 60)
+        review(2, 5, 50)
+        # Recent: one real 5 scored on metrics only, and automatic 3.5s.
+        review(3, None, 5, metrics={"quality_of_work": 5, "punctuality": 5, "communication": 5, "professionalism": 5})
+        review(4, None, 3, metrics={"quality_of_work": 5, "punctuality": 5, "communication": 5, "professionalism": 5})
+        review(5, "3.5", 2, system=True)
+        review(6, "3.5", 1, system=True)
+        self.assertEqual(calculate_rating_trend(self.worker), "neutral")
 

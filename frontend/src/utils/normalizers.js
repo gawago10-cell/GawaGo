@@ -342,6 +342,8 @@ export function normalizeBackendApplication(application) {
     // existing client-side branching only.
     statusStage: application.status_stage || application.statusStage || "",
     statusLabel: application.status_label || application.statusLabel || "",
+    // False while the worker's account is suspended (no reason is sent).
+    workerAvailable: (application.worker_available ?? application.workerAvailable) !== false,
     appliedAt: application.applied_at || application.appliedAt || "",
     updatedAt: application.updated_at || application.updatedAt || "",
     note: application.note || "",

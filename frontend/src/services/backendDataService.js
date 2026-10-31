@@ -333,6 +333,15 @@ export async function fetchRecommendedWorkers(jobId, rank) {
   return Array.isArray(data?.results) ? data.results : [];
 }
 
+/** Home page totals anyone may see: counts only, no profiles. */
+export async function fetchPublicSummary() {
+  const response = await apiRequest("analytics/public-summary/", {});
+  if (!response.ok) {
+    return null;
+  }
+  return readResponseData(response);
+}
+
 export async function fetchRateGuide(skill, rateType) {
   const query = new URLSearchParams({ skill, rate_type: rateType }).toString();
   const response = await apiRequest(`jobs/rate-guide/?${query}`, {
@@ -427,6 +436,8 @@ function normalizeConversation(conversation) {
     jobId: conversation.job_id,
     jobTitle: conversation.job_title || "Service Request",
     statusLabel: conversation.status_label || "",
+    // The job is done or cancelled: the thread can be read, not added to.
+    readOnly: Boolean(conversation.read_only),
     serviceRate: conversation.service_rate,
     otherPartyName: other.name || other.username || "",
     otherPartyRole: other.role || "",

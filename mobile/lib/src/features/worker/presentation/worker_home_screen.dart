@@ -2165,7 +2165,8 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
   }
 
   Future<void> _review(WorkerJob job) async {
-    double rating = 5;
+    // No preset: the worker picks the stars (second scan, 2026-11-01).
+    double? rating;
     final feedback = TextEditingController();
     // Optional 1-5 detail scores mirroring the web review form; null means
     // "not rated" and is simply omitted from the request.
@@ -2190,21 +2191,43 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                DropdownButtonFormField<double>(
-                  initialValue: rating,
-                  decoration: const InputDecoration(
-                    labelText: 'Overall rating',
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Overall rating',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  items: [1, 2, 3, 4, 5]
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value.toDouble(),
-                          child: Text('$value star${value == 1 ? '' : 's'}'),
+                ),
+                Row(
+                  children: [
+                    for (var value = 1; value <= 5; value++)
+                      IconButton(
+                        tooltip: '$value star${value == 1 ? '' : 's'}',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 34,
+                          minHeight: 34,
                         ),
-                      )
-                      .toList(),
-                  onChanged: (value) =>
-                      setDialogState(() => rating = value ?? 5),
+                        onPressed: () =>
+                            setDialogState(() => rating = value.toDouble()),
+                        icon: Icon(
+                          (rating ?? 0) >= value
+                              ? Icons.star_rounded
+                              : Icons.star_border_rounded,
+                          color: const Color(0xFFE0A82E),
+                          size: 30,
+                        ),
+                      ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        rating == null
+                            ? 'Tap a star'
+                            : '${rating!.toStringAsFixed(0)}/5',
+                        style: const TextStyle(color: GawaGoColors.textMuted),
+                      ),
+                    ),
+                  ],
                 ),
                 for (final field in metricLabels.keys)
                   DropdownButtonFormField<int?>(
@@ -2239,18 +2262,20 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: rating == null
+                  ? null
+                  : () => Navigator.pop(context, true),
               child: const Text('Submit'),
             ),
           ],
         ),
       ),
     );
-    if (submit == true) {
+    if (submit == true && rating != null) {
       await _run(
         () => widget.repository.reviewHousehold(
           job,
-          rating: rating,
+          rating: rating!,
           feedback: feedback.text.trim(),
           qualityOfWork: metrics['quality_of_work'],
           punctuality: metrics['punctuality'],

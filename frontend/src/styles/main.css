@@ -16364,3 +16364,39 @@ a,
 .worker-dashboard .admin-user-status-badge.unverified,
 .worker-dashboard .admin-user-status-badge.rejected { background: #ece9df; color: #5d6450; }
 
+/* Second scan fixes, 2026-11-01. */
+
+/* File a Complaint: an open complaint about this job, and themed buttons. */
+.gg-complaint-open-note {
+  background: #fff3df;
+  border: 1px solid #ecd2a2;
+  color: #7a5216;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.modal-content .gg-complaint-cancel { border-radius: 10px; }
+.modal-content .gg-complaint-submit { border-radius: 10px; }
+
+/* Applicants window: full names in the strip, cut with an ellipsis. */
+.gg-applicant-strip-name {
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Chat: a finished job's thread is read only. */
+.gawago-chat-read-only {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #5d6450;
+  background: #f1ece0;
+  border-radius: 10px;
+  text-align: center;
+}
+

@@ -141,6 +141,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     worker_latitude = serializers.SerializerMethodField()
     worker_longitude = serializers.SerializerMethodField()
     worker_verification_status = serializers.CharField(source="worker.profile.verification_status", read_only=True)
+    worker_available = serializers.SerializerMethodField()
     worker_rating_label = serializers.CharField(source="worker.profile.display_rating", read_only=True)
     worker_rating_count = serializers.IntegerField(source="worker.profile.rating_count", read_only=True)
     worker_completed_jobs = serializers.SerializerMethodField()
@@ -218,6 +219,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "worker_latitude",
             "worker_longitude",
             "worker_verification_status",
+            "worker_available",
             "worker_rating_label",
             "worker_rating_count",
             "worker_completed_jobs",
@@ -241,6 +243,15 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "note",
         ]
         read_only_fields = ["id", "worker_username", "applied_at", "updated_at"]
+
+    def get_worker_available(self, obj):
+        """False while the worker's account is suspended, so the household
+        sees "Not available right now" instead of an Accept that fails. The
+        reason stays confidential (AGENTS.md II.D)."""
+        profile = getattr(obj.worker, "profile", None)
+        if not profile or not profile.is_blocked:
+            return True
+        return bool(profile.blocked_until and profile.blocked_until <= timezone.now())
 
     def get_worker_name(self, obj):
         return obj.worker.get_full_name().strip() or obj.worker.username

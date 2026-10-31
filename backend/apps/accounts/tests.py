@@ -327,11 +327,12 @@ class ProfileUpdateTests(TestCase):
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
     def test_profile_update_cannot_change_role(self):
-        response = self.client.patch(
-            reverse("profile-me"),
-            {"role": UserProfile.ROLE_HOUSEHOLD, "phone": "09170000000"},
-            content_type="application/json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                reverse("profile-me"),
+                {"role": UserProfile.ROLE_HOUSEHOLD, "phone": "09170000000"},
+                content_type="application/json",
+            )
 
         self.assertEqual(response.status_code, 200)
         self.profile.refresh_from_db()

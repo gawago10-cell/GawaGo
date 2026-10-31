@@ -216,13 +216,15 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             Expanded(child: _buildThread()),
-            if (_closed)
+            if (_closed || widget.conversation.readOnly)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 color: const Color(0xFFFBF1D9),
-                child: const Text(
-                  'This chat is closed because the job is no longer in progress.',
+                child: Text(
+                  widget.conversation.readOnly
+                      ? 'This job is finished, so the chat is read only.'
+                      : 'This chat is closed because the job is no longer in progress.',
                   textAlign: TextAlign.center,
                 ),
               )

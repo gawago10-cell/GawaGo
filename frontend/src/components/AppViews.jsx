@@ -480,6 +480,7 @@ export default function AppViews({
       avatar: existingWorker?.avatar || (application.workerName || application.workerUsername || "W").slice(0, 1).toUpperCase(),
       applicationStatus: application.status,
       applicationStatusLabel: application.statusLabel || "",
+      workerAvailable: application.workerAvailable !== false,
       appliedAt: application.appliedAt,
     };
   });
@@ -1372,7 +1373,7 @@ export default function AppViews({
             ? `${metricAverage.toFixed(1)}/5 · average of the metrics below`
             : selectedRating
               ? `${selectedRating}/5`
-              : "Select rating"}
+              : "Tap a star to rate"}
         </span>
       </div>
     );
@@ -3842,25 +3843,31 @@ export default function AppViews({
                       For {workerRateHouseholdJob.jobTitle || workerRateHouseholdJob.serviceType}. The household sees
                       your rating without your name.
                     </p>
-                    <label className="form-label fw-semibold" htmlFor="worker-rate-household-stars">
+                    <p className="form-label fw-semibold mb-1" id="worker-rate-household-stars">
                       Rating
-                    </label>
-                    <select
-                      id="worker-rate-household-stars"
-                      className="form-select mb-3"
-                      required
-                      value={workerRateHouseholdDraft.rating}
-                      onChange={(event) =>
-                        setWorkerRateHouseholdDraft((prev) => ({ ...prev, rating: event.target.value }))
-                      }
+                    </p>
+                    <div
+                      className="household-dashboard-star-rating mb-3"
+                      role="radiogroup"
+                      aria-labelledby="worker-rate-household-stars"
                     >
-                      <option value="">Choose a rating</option>
-                      <option value="5">5 stars</option>
-                      <option value="4">4 stars</option>
-                      <option value="3">3 stars</option>
-                      <option value="2">2 stars</option>
-                      <option value="1">1 star</option>
-                    </select>
+                      {[1, 2, 3, 4, 5].map((ratingValue) => (
+                        <button
+                          aria-checked={Number(workerRateHouseholdDraft.rating) === ratingValue}
+                          aria-label={`${ratingValue} star${ratingValue > 1 ? "s" : ""}`}
+                          className={`household-dashboard-star-button ${
+                            Number(workerRateHouseholdDraft.rating || 0) >= ratingValue ? "selected" : ""
+                          }`}
+                          key={ratingValue}
+                          onClick={() => setWorkerRateHouseholdDraft((prev) => ({ ...prev, rating: String(ratingValue) }))}
+                          role="radio"
+                          type="button"
+                        />
+                      ))}
+                      <span>
+                        {workerRateHouseholdDraft.rating ? `${workerRateHouseholdDraft.rating}/5` : "Tap a star to rate"}
+                      </span>
+                    </div>
                     <label className="form-label fw-semibold" htmlFor="worker-rate-household-feedback">
                       Feedback (optional)
                     </label>
@@ -3883,7 +3890,10 @@ export default function AppViews({
                     <button
                       type="submit"
                       className="btn btn-success"
-                      disabled={isActionPending?.(`worker-rate-household-${workerRateHouseholdJob.id}`)}
+                      disabled={
+                        !workerRateHouseholdDraft.rating ||
+                        isActionPending?.(`worker-rate-household-${workerRateHouseholdJob.id}`)
+                      }
                     >
                       Send rating
                     </button>
@@ -7221,7 +7231,7 @@ export default function AppViews({
                       <span className="gg-applicant-strip-item" key={`strip-${applicant.id || applicant.username}`}>
                         {index > 0 && <i className="gg-applicant-strip-dot" aria-hidden="true" />}
                         {renderWorkerPhoto(applicant, stripName, "gg-applicant-strip-photo")}
-                        <span>{String(stripName).split(" ")[0]}</span>
+                        <span className="gg-applicant-strip-name">{stripName}</span>
                       </span>
                     );
                   })}
@@ -7239,6 +7249,8 @@ export default function AppViews({
                     );
                     const isHired = ["Hired", "Completed"].includes(applicant.applicationStatus);
                     const isRequested = applicant.applicationStatus === "Hire Request";
+                    // Suspended: shown as unavailable, never why (AGENTS.md II.D).
+                    const isUnavailable = !isHired && !applicant.workerAvailable;
                     const extraSkills = Math.max(0, (applicant.skills || []).length - 3);
                     return (
                       <article className="gg-applicant-card" key={applicant.id || applicant.username}>
@@ -7279,8 +7291,10 @@ export default function AppViews({
                         {applicant.bio && <p className="gg-applicant-bio">{applicant.bio}</p>}
                         <div className="gg-applicant-footnote">
                           <span>{applicant.appliedAt ? `Applied ${formatTimeAgo(applicant.appliedAt)}` : "Applied"}</span>
-                          {applicant.applicationStatusLabel && (
-                            <span className="gg-applicant-stage">{applicant.applicationStatusLabel}</span>
+                          {(isUnavailable || applicant.applicationStatusLabel) && (
+                            <span className="gg-applicant-stage">
+                              {isUnavailable ? "Not available right now" : applicant.applicationStatusLabel}
+                            </span>
                           )}
                           {topApplicantKey &&
                             String(applicant.id || applicant.username) === topApplicantKey && (
@@ -7316,7 +7330,7 @@ export default function AppViews({
                           <button
                             type="button"
                             className="gg-applicant-hire"
-                            disabled={isHired || isRequested || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)}
+                            disabled={isHired || isRequested || isUnavailable || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)}
                             onClick={() => {
                               if (pendingHireWorkerId != null || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)) {
                                 return;
@@ -7331,7 +7345,7 @@ export default function AppViews({
                               requestDashboardHire(applicant);
                             }}
                           >
-                            {isHired ? "Hired" : isRequested ? "Waiting for worker" : "Accept"}
+                            {isHired ? "Hired" : isRequested ? "Waiting for worker" : isUnavailable ? "Not available" : "Accept"}
                           </button>
                         </div>
                       </article>
@@ -7439,7 +7453,11 @@ export default function AppViews({
                     }
                   />
                   <div className="gg-rate-actions">
-                    <button className="btn btn-success gg-rate-submit" type="submit">
+                    <button
+                      className="btn btn-success gg-rate-submit"
+                      type="submit"
+                      disabled={getReviewMetricAverage(householdReviewForm) == null && !householdReviewForm.rating}
+                    >
                       Submit Rating
                     </button>
                     <button

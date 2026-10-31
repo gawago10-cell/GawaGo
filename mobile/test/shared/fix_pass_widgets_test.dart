@@ -186,6 +186,9 @@ void main() {
         );
       });
 
+      // A review needs a star first; none is preset any more.
+      await tester.tap(find.byIcon(Icons.star_border_rounded).first);
+      await tester.pump();
       await tester.ensureVisible(find.text('Submit Rating'));
       await tester.tap(find.text('Submit Rating'));
       await tester.pumpAndSettle();

@@ -396,3 +396,22 @@ def build_dashboard_metrics():
             "enhancedAnalytics": _build_enhanced_analytics(jobs, total_workers),
         },
     }
+
+
+def build_public_summary():
+    """Platform totals safe to show signed-out visitors: counts only."""
+    from apps.accounts.models import currently_suspended_q
+    from apps.jobs.services import jobs_accepting_applications
+
+    people = UserProfile.objects.filter(
+        role__in=[UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD], user__is_active=True, user__is_staff=False
+    )
+    return {
+        "openJobs": jobs_accepting_applications(
+            JobPosting.objects.exclude(currently_suspended_q("household__profile__"))
+        ).count(),
+        "verifiedWorkers": people.filter(role=UserProfile.ROLE_WORKER, verification_status="verified").count(),
+        "completedJobs": JobPosting.objects.filter(status=JobPosting.STATUS_COMPLETED).count(),
+        "totalAccounts": people.count(),
+    }
+
