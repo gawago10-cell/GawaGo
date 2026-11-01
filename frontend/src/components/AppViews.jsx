@@ -22,6 +22,7 @@ import ChangePasswordCard from "./ChangePasswordCard";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import {
+  findJobApplicationForWorker,
   getApplicationStatusLabel,
   getHiredWorkerCount,
   getPendingApplicationCount,
@@ -34,6 +35,7 @@ import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
 import { formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, formatWorkerRate, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
 import { getVerificationNavLabel } from "../utils/normalizers";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
+import { confirmDialog } from "./AppDialogs";
 
 const HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY = "gawago-household-dismissed-notifications";
 const WORKER_DISMISSED_NOTIFICATIONS_KEY = "gawago-worker-dismissed-notifications";
@@ -87,6 +89,7 @@ export default function AppViews({
   handleAdminRejectVerification,
   handleApplyToJob,
   handleCancelJob,
+  handleWorkerWithdraw,
   handleConfirmJobCompleted,
   handleHireWorker,
   handleHouseholdChange,
@@ -449,7 +452,7 @@ export default function AppViews({
         )
       : null;
   const selectedJobVisibleApplications = (selectedJob?.applications || []).filter(
-    (application) => application.status !== "Rejected" && application.status !== "Closed",
+    (application) => !["Rejected", "Closed", "Withdrawn"].includes(application.status),
   );
   const selectedJobApplicantWorkers = selectedJobVisibleApplications.map((application) => {
     const existingWorker = registeredWorkers.find(
@@ -1011,7 +1014,7 @@ export default function AppViews({
   };
   const deleteHouseholdNotification = async (notification) => {
     setHouseholdNotificationMenuId(null);
-    if (!window.confirm("Delete this notification?")) {
+    if (!(await confirmDialog({ title: "Delete this notification?", confirmLabel: "Delete", tone: "danger" }))) {
       return;
     }
     setHouseholdNotificationDeletingId(notification.id);
@@ -1058,7 +1061,7 @@ export default function AppViews({
   };
   const deleteWorkerNotification = async (notification) => {
     setWorkerNotificationMenuId(null);
-    if (!window.confirm("Delete this notification?")) {
+    if (!(await confirmDialog({ title: "Delete this notification?", confirmLabel: "Delete", tone: "danger" }))) {
       return;
     }
     const notificationId =
@@ -1441,6 +1444,40 @@ export default function AppViews({
   const requestDashboardHire = (worker) => {
     setSelectedWorkerId(worker);
     setPendingHireWorkerId(worker?.id ?? null);
+  };
+  // What a match card's request button can do for this worker (fourth scan,
+  // 2026-11-01). It used to offer "Send a Request" to workers who can't be
+  // invited (not verified, already invited) and only then refuse.
+  const getMatchInviteState = (worker) => {
+    const status = selectedJob ? findJobApplicationForWorker(selectedJob, worker)?.status : "";
+    if (status === "Hired" || status === "Completed") return { label: "Hired", disabled: true };
+    if (status === "Hire Request") return { label: "Request sent", disabled: true };
+    if (status === "Withdrawn") return { label: "Withdrew from this job", disabled: true };
+    if (status === "Rejected" || status === "Closed") return { label: "Not available", disabled: true };
+    if (String(worker?.verification || "").toLowerCase() !== "verified") {
+      return { label: "Not verified yet", disabled: true };
+    }
+    if (status === "Pending") return { label: "Accept application", disabled: false, applicant: true };
+    return { label: "Send a Request to Worker", disabled: false };
+  };
+  const confirmMatchInvite = async (worker) => {
+    const state = getMatchInviteState(worker);
+    if (state.disabled || pendingHireWorkerId != null) return;
+    const workerName = getDisplayName(worker.firstName, worker.lastName, worker.username);
+    const confirmed = await confirmDialog(
+      state.applicant
+        ? {
+            title: `Accept ${workerName}?`,
+            message: "They applied, so they will be hired and the job moves to In progress.",
+            confirmLabel: "Accept",
+          }
+        : {
+            title: `Send a hire request to ${workerName}?`,
+            message: `They will be asked to accept or decline ${selectedJob?.title || "this job"}.`,
+            confirmLabel: "Send request",
+          },
+    );
+    if (confirmed) requestDashboardHire(worker);
   };
   useEffect(() => {
     if (pendingHireWorkerId == null) {
@@ -3747,6 +3784,16 @@ export default function AppViews({
                             {job.householdName || job.householdUsername || "The household"} will mark this job as
                             done when the work is finished.
                           </div>
+                          {job.canBackOut && (
+                            <button
+                              type="button"
+                              className="household-process-cancel-link"
+                              disabled={isActionPending(`withdraw-${job.applicationId}`)}
+                              onClick={() => handleWorkerWithdraw(job)}
+                            >
+                              Back out of this job
+                            </button>
+                          )}
                         </article>
                       );
                     })}
@@ -4005,8 +4052,8 @@ export default function AppViews({
                         : "No applications with this status."}
                     </p>
                   ) : (
-                  <div className="table-responsive">
-                    <table className="table align-middle mb-0 worker-applications-table">
+                  <div className="table-responsive gg-stack-wrap">
+                    <table className="table align-middle mb-0 worker-applications-table gg-stack-table">
                       <thead>
                         <tr>
                           <th>Job</th>
@@ -4048,7 +4095,22 @@ export default function AppViews({
                               </td>
                               <td data-label="Location">{formatLocation(job.barangay, job.streetAddress)}</td>
                               <td data-label="Rate">{formatRate(job.offeredRate, job.rateType)}</td>
-                              <td data-label="Status">{getWorkerApplicationDisplayStatus(job)}</td>
+                              <td data-label="Status">
+                                {/* One wrapper, so the stacked card keeps the action beside its label. */}
+                                <div>
+                                  <div>{getWorkerApplicationDisplayStatus(job)}</div>
+                                  {(job.canWithdraw || job.canBackOut) && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-link btn-sm p-0 text-danger worker-application-withdraw"
+                                      disabled={isActionPending(`withdraw-${job.applicationId}`)}
+                                      onClick={() => handleWorkerWithdraw(job)}
+                                    >
+                                      {job.canBackOut ? "Back out" : "Withdraw"}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
                               <td data-label="Applied">{formatDateTime(job.appliedAt)}</td>
                             </tr>
                           ))}
@@ -6020,7 +6082,8 @@ export default function AppViews({
                       workers={visibleMatchedWorkers}
                       job={selectedJob}
                       onViewProfile={(worker) => openMatchedWorkerProfile(worker, selectedJob.id)}
-                      onHire={requestDashboardHire}
+                      onHire={confirmMatchInvite}
+                      getInviteState={getMatchInviteState}
                     />
                   )}
                   {householdMatchesView === "list" && (
@@ -6030,6 +6093,7 @@ export default function AppViews({
                       {visibleMatchedWorkers.map((worker) => {
                         const workerName = getDisplayName(worker.firstName, worker.lastName, worker.username);
                         const extraSkills = Math.max(0, (worker.skills || []).length - 2);
+                        const inviteState = getMatchInviteState(worker);
                         return (
                           <article className="gg-match-card" key={worker.username || worker.id}>
                             <div className="gg-match-photo">
@@ -6075,9 +6139,10 @@ export default function AppViews({
                                 <button
                                   type="button"
                                   className="gg-match-hire"
-                                  onClick={() => requestDashboardHire(worker)}
+                                  disabled={inviteState.disabled}
+                                  onClick={() => confirmMatchInvite(worker)}
                                 >
-                                  Send a Request to Worker
+                                  {inviteState.label}
                                 </button>
                               </div>
                             </div>
@@ -6568,8 +6633,14 @@ export default function AppViews({
                           <button
                             className="btn btn-outline-danger w-100 mb-2"
                             type="button"
-                            onClick={() => {
-                              if (window.confirm("Reject this application? This can't be undone.")) {
+                            onClick={async () => {
+                              const confirmed = await confirmDialog({
+                                title: "Reject this application?",
+                                message: "The worker is told it was rejected. This can't be undone.",
+                                confirmLabel: "Reject",
+                                tone: "danger",
+                              });
+                              if (confirmed) {
                                 handleRejectApplication(selectedWorker.id, selectedJob.id);
                               }
                             }}
@@ -7041,15 +7112,16 @@ export default function AppViews({
                               type="button"
                               className="btn btn-success household-process-cta"
                               disabled={!job.canMarkDone || isActionPending(`complete-${job.id}`)}
-                              onClick={() => {
+                              onClick={async () => {
                                 if (isActionPending(`complete-${job.id}`)) {
                                   return;
                                 }
-                                if (
-                                  window.confirm(
-                                    `Mark this job as done? ${hiredNames.length > 1 ? hiredNames.join(", ") : workerName || "The worker"} will be notified and you can both leave a review. This can't be undone.`,
-                                  )
-                                ) {
+                                const confirmed = await confirmDialog({
+                                  title: "Mark this job as done?",
+                                  message: `${hiredNames.length > 1 ? hiredNames.join(", ") : workerName || "The worker"} will be notified and you can both leave a review. This can't be undone.`,
+                                  confirmLabel: "Mark as done",
+                                });
+                                if (confirmed) {
                                   handleConfirmJobCompleted(job.id);
                                 }
                               }}
@@ -7112,15 +7184,12 @@ export default function AppViews({
                               Edit Job
                             </button>
                           )}
-                          {!isAssigned && (
+                          {(job.canCancel ?? !isAssigned) && (
                             <button
                               type="button"
                               className="household-process-cancel-link"
-                              onClick={() => {
-                                if (window.confirm("Cancel this job? This can't be undone.")) {
-                                  handleCancelJob(job.id);
-                                }
-                              }}
+                              disabled={isActionPending(`cancel-job-${job.id}`)}
+                              onClick={() => handleCancelJob(job.id)}
                             >
                               Cancel Job
                             </button>
@@ -7330,8 +7399,14 @@ export default function AppViews({
                             <button
                               type="button"
                               className="gg-applicant-decline"
-                              onClick={() => {
-                                if (!window.confirm("Decline this application? This can't be undone.")) {
+                              onClick={async () => {
+                                const confirmed = await confirmDialog({
+                                  title: "Decline this application?",
+                                  message: "The worker is told it was declined. This can't be undone.",
+                                  confirmLabel: "Decline",
+                                  tone: "danger",
+                                });
+                                if (!confirmed) {
                                   return;
                                 }
                                 closeDashboardModal();
@@ -7355,15 +7430,16 @@ export default function AppViews({
                             type="button"
                             className="gg-applicant-hire"
                             disabled={isHired || isRequested || isUnavailable || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)}
-                            onClick={() => {
+                            onClick={async () => {
                               if (pendingHireWorkerId != null || isActionPending(`hire-${selectedJob?.id}-${applicant.id}`)) {
                                 return;
                               }
-                              if (
-                                !window.confirm(
-                                  `Accept ${applicantName} for this job? They will be hired and the job moves to In progress.`,
-                                )
-                              ) {
+                              const confirmed = await confirmDialog({
+                                title: `Accept ${applicantName}?`,
+                                message: "They will be hired and the job moves to In progress.",
+                                confirmLabel: "Accept",
+                              });
+                              if (!confirmed) {
                                 return;
                               }
                               requestDashboardHire(applicant);

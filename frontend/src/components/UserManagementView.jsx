@@ -288,8 +288,8 @@ export default function UserManagementView({
         <div className="admin-reports-empty">No {isHouseholds ? "households" : "workers"} match this filter.</div>
       ) : (
         <div className="admin-reports-table-card">
-          <div className="table-responsive">
-            <table className="admin-reports-table">
+          <div className="table-responsive gg-stack-wrap">
+            <table className="admin-reports-table gg-stack-table">
               <thead>
                 <tr>
                   <th>User</th>

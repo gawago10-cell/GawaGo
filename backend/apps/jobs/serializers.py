@@ -20,6 +20,9 @@ from apps.jobs.privacy import (
 from apps.matching.recommendations import score_pair_with_distance
 from apps.matching.services import get_cached_road_route, get_road_route_for_match, smart_match_sort_key
 from apps.jobs.services import (
+    UNDERWAY_JOB_STATUSES,
+    can_back_out_of_hire,
+    can_withdraw_application,
     hired_jobs_under_way,
     hold_apply_message,
     hold_on,
@@ -43,7 +46,11 @@ def route_lookup(context):
 from apps.reviews.models import Review
 
 
-INACTIVE_APPLICATION_STATUSES = {JobApplication.STATUS_REJECTED, JobApplication.STATUS_CLOSED}
+INACTIVE_APPLICATION_STATUSES = {
+    JobApplication.STATUS_REJECTED,
+    JobApplication.STATUS_CLOSED,
+    JobApplication.STATUS_WITHDRAWN,
+}
 
 
 def applicant_sort_key(application, distance_km):
@@ -157,6 +164,8 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     route_points = serializers.SerializerMethodField()
     can_accept_hire_request = serializers.SerializerMethodField()
     can_request_completion = serializers.SerializerMethodField()
+    can_withdraw = serializers.SerializerMethodField()
+    can_back_out = serializers.SerializerMethodField()
     can_review = serializers.SerializerMethodField()
     household_can_review = serializers.SerializerMethodField()
     status_stage = serializers.SerializerMethodField()
@@ -235,6 +244,8 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "route_points",
             "can_accept_hire_request",
             "can_request_completion",
+            "can_withdraw",
+            "can_back_out",
             "can_review",
             "household_can_review",
             "status",
@@ -386,6 +397,21 @@ class JobApplicationSerializer(serializers.ModelSerializer):
         # their old "Mark as done" button instead of offering a refused call.
         return False
 
+    def _viewer_is_worker(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated and obj.worker_id == user.id)
+
+    def get_can_withdraw(self, obj):
+        """The worker can take back an application still waiting on the
+        household (fourth scan, 2026-11-01)."""
+        return self._viewer_is_worker(obj) and can_withdraw_application(obj)
+
+    def get_can_back_out(self, obj):
+        """The hired worker can give the job up, with a reason, until its
+        first day (fourth scan, 2026-11-01)."""
+        return self._viewer_is_worker(obj) and can_back_out_of_hire(obj)
+
     def get_can_review(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
@@ -435,6 +461,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
     can_request_completion = serializers.SerializerMethodField()
     can_mark_done = serializers.SerializerMethodField()
     mark_done_note = serializers.SerializerMethodField()
+    can_cancel = serializers.SerializerMethodField()
+    cancel_needs_reason = serializers.SerializerMethodField()
     can_review = serializers.SerializerMethodField()
     images = JobImageSerializer(many=True, read_only=True)
     location_label = serializers.SerializerMethodField()
@@ -513,6 +541,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "can_request_completion",
             "can_mark_done",
             "mark_done_note",
+            "can_cancel",
+            "cancel_needs_reason",
             "can_review",
             "job_start_date",
             "job_end_date",
@@ -744,7 +774,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
     def _could_apply(self, obj, user, profile):
         if profile.verification_status != "verified" or not self.get_accepting_applications(obj):
             return False
-        return not obj.applications.filter(worker=user).exists()
+        # A worker who withdrew may apply again (fourth scan, 2026-11-01).
+        return not obj.applications.filter(worker=user).exclude(status=JobApplication.STATUS_WITHDRAWN).exists()
 
     def get_can_apply(self, obj):
         is_worker, user, profile = self.is_authenticated_worker()
@@ -812,6 +843,22 @@ class JobPostingSerializer(serializers.ModelSerializer):
         if not profile or profile.verification_status != "verified":
             return "Your household account must be verified before you can complete a job."
         return job_not_started_message(obj)
+
+    def get_can_cancel(self, obj):
+        """The household can call its job off until it is done, hired worker
+        or not: a worker who never showed up used to leave "Mark as done" as
+        the only way out (fourth scan, 2026-11-01)."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated or obj.household_id != user.id:
+            return False
+        return obj.status == JobPosting.STATUS_OPEN or obj.status in UNDERWAY_JOB_STATUSES
+
+    def get_cancel_needs_reason(self, obj):
+        """Cancelling owes the hired worker a reason (third scan, 2026-11-01)."""
+        if not self.get_can_cancel(obj):
+            return False
+        return any(application.status == JobApplication.STATUS_HIRED for application in obj.applications.all())
 
     def get_can_review(self, obj):
         request = self.context.get("request")

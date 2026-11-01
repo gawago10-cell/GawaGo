@@ -4,6 +4,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./styles/main.css";
 import App from "./App";
 import IntroSplash from "./components/IntroSplash";
+import { watchStackedTables } from "./utils/stackedTables";
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -33,6 +34,9 @@ class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+
+// Column names for tables that stack into cards on narrow screens.
+watchStackedTables();
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>

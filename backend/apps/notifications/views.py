@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.pagination import paginated_response
+from apps.jobs.services import send_due_mark_done_reminders_on_read
 from apps.notifications.models import Notification
 from apps.notifications.serializers import NotificationSerializer
 
@@ -13,6 +14,9 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # The mark-done reminder pass rides on reads (cooldown-bound), so a
+        # household that only checks its notifications still gets it.
+        send_due_mark_done_reminders_on_read()
         queryset = Notification.objects.select_related("recipient").filter(recipient=request.user)
         return paginated_response(request, queryset, NotificationSerializer)
 
@@ -24,6 +28,7 @@ class NotificationUnreadCountView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        send_due_mark_done_reminders_on_read()
         return Response({"unread": Notification.objects.filter(recipient=request.user, is_read=False).count()})
 
 

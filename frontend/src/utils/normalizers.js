@@ -301,6 +301,9 @@ function normalizeJobApplicationStatus(status) {
   if (normalized === "completed") {
     return "Completed";
   }
+  if (normalized === "withdrawn") {
+    return "Withdrawn";
+  }
   return "Pending";
 }
 
@@ -350,6 +353,10 @@ export function normalizeBackendApplication(application) {
     // Whether the household can still review this particular worker; the
     // job-level canReview only says some worker on the job is left.
     householdCanReview: Boolean(application.household_can_review ?? application.householdCanReview ?? false),
+    // The worker's own ways to step away (fourth scan, 2026-11-01): take
+    // back a pending application, or back out of a hire before the start.
+    canWithdraw: Boolean(application.can_withdraw ?? application.canWithdraw ?? false),
+    canBackOut: Boolean(application.can_back_out ?? application.canBackOut ?? false),
   };
 }
 
@@ -428,6 +435,10 @@ export function normalizeBackendJob(job) {
     canAcceptHireRequest: Boolean(job.can_accept_hire_request ?? job.canAcceptHireRequest ?? false),
     canRequestCompletion: Boolean(job.can_request_completion ?? job.canRequestCompletion ?? false),
     canMarkDone: Boolean(job.can_mark_done ?? job.canMarkDone ?? false),
+    // null when the backend didn't say (offline demo data); the card then
+    // falls back to its own rule.
+    canCancel: job.can_cancel ?? job.canCancel ?? null,
+    cancelNeedsReason: Boolean(job.cancel_needs_reason ?? job.cancelNeedsReason ?? false),
     markDoneNote: job.mark_done_note ?? job.markDoneNote ?? "",
     canReview: Boolean(job.can_review ?? job.canReview ?? false),
     applications,

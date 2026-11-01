@@ -70,7 +70,7 @@ function jobPinIcon(L) {
   });
 }
 
-export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHire }) {
+export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHire, getInviteState }) {
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
@@ -256,8 +256,13 @@ export default function HouseholdWorkersMap({ workers, job, onViewProfile, onHir
                     <button type="button" className="worker-jobcard-btn is-ghost" onClick={() => onViewProfile(worker)}>
                       View Profile
                     </button>
-                    <button type="button" className="worker-jobcard-btn is-primary" onClick={() => onHire(worker)}>
-                      Send Request
+                    <button
+                      type="button"
+                      className="worker-jobcard-btn is-primary"
+                      disabled={Boolean(getInviteState?.(worker)?.disabled)}
+                      onClick={() => onHire(worker)}
+                    >
+                      {getInviteState?.(worker)?.disabled ? getInviteState(worker).label : "Send Request"}
                     </button>
                   </div>
                 </article>

@@ -93,6 +93,9 @@ class JobApplication(models.Model):
     STATUS_REJECTED = "rejected"
     STATUS_CLOSED = "closed"
     STATUS_COMPLETED = "completed"
+    # The worker took back their application, or backed out of a hire before
+    # the job started (fourth scan, 2026-11-01).
+    STATUS_WITHDRAWN = "withdrawn"
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
         (STATUS_HIRE_REQUESTED, "Hire Requested"),
@@ -100,6 +103,7 @@ class JobApplication(models.Model):
         (STATUS_REJECTED, "Rejected"),
         (STATUS_CLOSED, "Closed"),
         (STATUS_COMPLETED, "Completed"),
+        (STATUS_WITHDRAWN, "Withdrawn"),
     ]
 
     job = models.ForeignKey(JobPosting, on_delete=models.CASCADE, related_name="applications")

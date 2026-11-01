@@ -309,7 +309,8 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               _AnalyticsList(
                 title: 'Average Service Rates',
                 description:
-                    'The average rate households offer for each service.',
+                    'The average rate households offer for each service, '
+                    'kept apart by day, hour or fixed rate.',
                 emptyMessage: 'No service-rate data is available yet.',
                 items: metrics.averageRates,
                 icon: Icons.payments_outlined,
@@ -318,8 +319,9 @@ class _AdminDashboardState extends State<_AdminDashboard> {
               _AnalyticsList(
                 title: 'Service Rate Trends',
                 description:
-                    'The average rate households offered on new job posts '
-                    'each month over the last six months.',
+                    'The average day rate households offered on new per-day '
+                    'job posts each month over the last six months. Hourly '
+                    'and fixed rates are in Average Service Rates.',
                 emptyMessage: 'No rate data is available yet.',
                 items: metrics.pricingTrends,
                 icon: Icons.show_chart,
@@ -477,6 +479,8 @@ class _AnalyticsList extends StatelessWidget {
                           Text(
                             item.noData
                                 ? 'No posts yet'
+                                : item.valueLabel.isNotEmpty
+                                ? item.valueLabel
                                 : item.unit == 'PHP'
                                 ? 'PHP ${item.value.toStringAsFixed(2)}'
                                 : item.value.toStringAsFixed(

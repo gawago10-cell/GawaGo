@@ -27,6 +27,7 @@ import {
 } from "../constants/appConstants";
 import { formatCurrency, formatTimeAgo, formatTimestamp, formatWorkerRate, getDisplayName, isImagePreviewUrl } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
+import { confirmDialog } from "./AppDialogs";
 import {
   createAdminAccount,
   fetchAdminAccounts,
@@ -162,9 +163,12 @@ export default function SuperAdminDashboardView({
     const nextActive = !admin.isActive;
     if (
       !nextActive &&
-      !window.confirm(
-        `Deactivate "${admin.username}"? They will be signed out immediately and won't be able to log in.`,
-      )
+      !(await confirmDialog({
+        title: `Deactivate "${admin.username}"?`,
+        message: "They will be signed out immediately and won't be able to log in.",
+        confirmLabel: "Deactivate",
+        tone: "danger",
+      }))
     ) {
       return;
     }
@@ -605,8 +609,8 @@ export default function SuperAdminDashboardView({
                       onChange={setVerificationRoleFilter}
                     />
                   </div>
-                  <div className="table-responsive">
-                    <table className="table align-middle mb-0">
+                  <div className="table-responsive gg-stack-wrap">
+                    <table className="table align-middle mb-0 gg-stack-table">
                       <thead>
                         <tr>
                           <th>Account</th>
@@ -941,14 +945,8 @@ export default function SuperAdminDashboardView({
                                   }}
                                 />
                                 <Tooltip />
-                                <Bar dataKey="requests" radius={[8, 8, 0, 0]}>
-                                  {serviceAnalytics.map((entry, index) => (
-                                    <Cell
-                                      key={entry.service}
-                                      fill={ANALYTICS_CHART_COLORS[index % ANALYTICS_CHART_COLORS.length]}
-                                    />
-                                  ))}
-                                </Bar>
+                                {/* One measure, so one colour: a hue per bar meant nothing (fourth scan, 2026-11-01). */}
+                                <Bar dataKey="requests" radius={[8, 8, 0, 0]} fill="#9ebf5e" />
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
@@ -1109,7 +1107,8 @@ export default function SuperAdminDashboardView({
                         <div className="profile-card analytics-card analytics-rates-card h-100">
                           <div className="profile-card-head">Average Rates by Category</div>
                           <p className="analytics-chart-note">
-                            The average rate households offer for each service, and how many job posts it comes from.
+                            The average rate households offer for each service, kept apart by day, hour or fixed rate,
+                            and how many job posts it comes from.
                           </p>
                           <div className="table-responsive" tabIndex={0} aria-label="Average rates by category (scrolls)">
                             <table className="table align-middle mb-0 analytics-table">
@@ -1123,10 +1122,13 @@ export default function SuperAdminDashboardView({
                               <tbody>
                                 {jobCategories.length > 0 ? (
                                   jobCategories.map((item) => (
-                                    <tr key={item.skill}>
+                                    <tr key={`${item.skill}-${item.rateType || "per_day"}`}>
                                       <td>{item.skill}</td>
                                       <td className="text-end">{item.count}</td>
-                                      <td className="text-end">{formatCurrency(item.averageRate)}</td>
+                                      {/* A day, hourly and fixed rate never share an average (fourth scan, 2026-11-01). */}
+                                      <td className="text-end">
+                                        {item.averageRateLabel || `${formatCurrency(item.averageRate)} / day`}
+                                      </td>
                                     </tr>
                                   ))
                                 ) : (
@@ -1146,8 +1148,9 @@ export default function SuperAdminDashboardView({
                     <div className="profile-card analytics-card analytics-pricing-card mt-3">
                       <div className="profile-card-head">Service Rate Trends</div>
                       <p className="analytics-chart-note">
-                        The average rate households offered on new job posts each month over the last six months.
-                        {pricingTrends.some((item) => item.averageRate == null) && " Months with no posts yet are left blank."}
+                        The average day rate households offered on new per-day job posts each month over the last six
+                        months. Hourly and fixed rates are in the table above.
+                        {pricingTrends.some((item) => item.averageRate == null) && " Months with no per-day posts yet are left blank."}
                       </p>
                       <div className="analytics-chart-wrap">
                         <ResponsiveContainer width="100%" height={260}>
@@ -1314,8 +1317,8 @@ export default function SuperAdminDashboardView({
                     <p className="text-muted p-3 mb-0">No admin accounts found.</p>
                   )}
                   {!adminsLoading && !adminsError && adminAccounts.length > 0 && (
-                    <div className="table-responsive">
-                      <table className="table align-middle mb-0">
+                    <div className="table-responsive gg-stack-wrap">
+                      <table className="table align-middle mb-0 gg-stack-table">
                         <thead>
                           <tr>
                             <th>Admin Name</th>
@@ -1395,8 +1398,8 @@ export default function SuperAdminDashboardView({
                     <p className="text-muted p-3 mb-0">No admin actions recorded yet.</p>
                   )}
                   {!auditLoading && !auditError && auditLogs.length > 0 && (
-                    <div className="table-responsive">
-                      <table className="table align-middle mb-0">
+                    <div className="table-responsive gg-stack-wrap">
+                      <table className="table align-middle mb-0 gg-stack-table">
                         <thead>
                           <tr>
                             <th>When</th>

@@ -163,7 +163,6 @@ describe("the superadmin Admin Management tab", () => {
   });
 
   it("deactivates an admin after confirming", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const patched = [];
     mockBackend({
       admins: [
@@ -181,13 +180,16 @@ describe("the superadmin Admin Management tab", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Deactivate" })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
+    // The app's own confirm dialog, not the browser's (fourth scan, 2026-11-01).
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("signed out immediately");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Deactivate" }));
 
     await waitFor(() => expect(patched).toEqual([{ is_active: false }]));
     await waitFor(() => expect(screen.getByText("Deactivated")).toBeTruthy());
   });
 
   it("does not deactivate when the confirmation is dismissed", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const patched = [];
     mockBackend({
       admins: [adminRow({ id: 1, username: "Gawago", is_superuser: true }), adminRow()],
@@ -202,7 +204,10 @@ describe("the superadmin Admin Management tab", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Deactivate" })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Go back" }));
 
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(patched).toEqual([]);
   });
 

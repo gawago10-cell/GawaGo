@@ -26,6 +26,7 @@ import '../../../shared/widgets/notification_badge.dart';
 import '../../../shared/widgets/ai_match_breakdown.dart';
 import '../../../shared/widgets/authenticated_image.dart';
 import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
 import '../../../shared/widgets/status_card.dart';
@@ -2362,6 +2363,29 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                 icon: const Icon(Icons.star_outline),
                 label: const Text('Leave Feedback for Household'),
               ),
+            if (job.application != null &&
+                (job.application!.canWithdraw || job.application!.canBackOut))
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        final done = await _stepAwayFromJob(
+                          context,
+                          widget.repository,
+                          job.application!,
+                        );
+                        if (done && mounted) _reload();
+                      },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: GawaGoColors.danger,
+                ),
+                icon: const Icon(Icons.undo),
+                label: Text(
+                  job.application!.canBackOut
+                      ? 'Back Out of Job'
+                      : 'Withdraw Application',
+                ),
+              ),
             if (job.application != null)
               OutlinedButton.icon(
                 onPressed: _busy
@@ -3005,7 +3029,19 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
                       )
                     else
                       ...visible.map(
-                        (item) => _WorkerApplicationRow(application: item),
+                        (item) => _WorkerApplicationRow(
+                          application: item,
+                          onStepAway: item.canWithdraw || item.canBackOut
+                              ? () async {
+                                  final done = await _stepAwayFromJob(
+                                    context,
+                                    widget.repository,
+                                    item,
+                                  );
+                                  if (done && mounted) _reload();
+                                }
+                              : null,
+                        ),
                       ),
                   ],
                 ),
@@ -3021,9 +3057,12 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
 /// One application inside the My Applications card: title and live status on
 /// the header line, then the facts a worker checks before following up.
 class _WorkerApplicationRow extends StatelessWidget {
-  const _WorkerApplicationRow({required this.application});
+  const _WorkerApplicationRow({required this.application, this.onStepAway});
 
   final WorkerApplication application;
+
+  /// Withdraw (pending) or back out (hired, before the start); null if neither.
+  final VoidCallback? onStepAway;
 
   @override
   Widget build(BuildContext context) {
@@ -3152,6 +3191,21 @@ class _WorkerApplicationRow extends StatelessWidget {
               letterSpacing: 0,
             ),
           ),
+          if (onStepAway != null) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: onStepAway,
+              style: TextButton.styleFrom(
+                foregroundColor: GawaGoColors.danger,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 36),
+              ),
+              child: Text(
+                application.canBackOut ? 'Back out of this job' : 'Withdraw',
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -3195,6 +3249,7 @@ Color _applicationStatusColor(String stage) {
     'completed' || 'in_progress' => GawaGoColors.leafDeep,
     'awaiting_confirmation' => GawaGoColors.leafDeep,
     'rejected' || 'cancelled' => GawaGoColors.danger,
+    'withdrawn' || 'closed' => GawaGoColors.textMuted,
     _ => const Color(0xFFB07B12),
   };
 }
@@ -3294,7 +3349,22 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
                 )
               else
                 for (final job in inProgress) ...[
-                  _WorkerInProgressJobCard(job: job),
+                  _WorkerInProgressJobCard(
+                    job: job,
+                    onBackOut: job.canBackOut
+                        ? () async {
+                            final done = await _stepAwayFromJob(
+                              context,
+                              widget.repository,
+                              job,
+                            );
+                            if (done && mounted) {
+                              _reload();
+                              widget.onChanged();
+                            }
+                          }
+                        : null,
+                  ),
                   const SizedBox(height: 12),
                 ],
               const SizedBox(height: 20),
@@ -3367,9 +3437,12 @@ class _WorkerMyJobsEmptyCard extends StatelessWidget {
 }
 
 class _WorkerInProgressJobCard extends StatelessWidget {
-  const _WorkerInProgressJobCard({required this.job});
+  const _WorkerInProgressJobCard({required this.job, this.onBackOut});
 
   final WorkerApplication job;
+
+  /// Set until the job's first day: the worker can still give it up.
+  final VoidCallback? onBackOut;
 
   @override
   Widget build(BuildContext context) {
@@ -3441,9 +3514,106 @@ class _WorkerInProgressJobCard extends StatelessWidget {
               fontStyle: FontStyle.italic,
             ),
           ),
+          if (onBackOut != null) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: onBackOut,
+              style: TextButton.styleFrom(
+                foregroundColor: GawaGoColors.danger,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 36),
+              ),
+              child: const Text(
+                'Back out of this job',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+}
+
+/// The worker steps away from a job (fourth scan, 2026-11-01): a pending
+/// application is taken back after a confirm; a hire is given up before the
+/// job starts, with a reason the household reads. True once it went through.
+Future<bool> _stepAwayFromJob(
+  BuildContext context,
+  WorkerRepository repository,
+  WorkerApplication application,
+) async {
+  final title = application.jobTitle.isNotEmpty
+      ? application.jobTitle
+      : application.jobType.isNotEmpty
+      ? application.jobType
+      : 'this job';
+  final household = application.householdName.isNotEmpty
+      ? application.householdName
+      : application.householdUsername.isNotEmpty
+      ? application.householdUsername
+      : 'The household';
+  final backingOut = application.canBackOut;
+  var reason = '';
+  if (backingOut) {
+    final answer = await showReasonDialog(
+      context,
+      title: 'Back out of $title?',
+      message:
+          "$household is told you can't take this job, with your reason, so "
+          'they can hire someone else.',
+      label: "Why can't you take this job?",
+      actionLabel: 'Back Out',
+    );
+    if (answer == null) return false;
+    reason = answer;
+  } else {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Withdraw your application for $title?'),
+        content: Text(
+          '$household is told. You can apply again while the job is still '
+          'taking applicants.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep Application'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: GawaGoColors.danger,
+            ),
+            child: const Text('Withdraw'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+  }
+  if (!context.mounted) return false;
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await repository.withdraw(application.id, reason: reason);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          backingOut
+              ? 'You backed out of $title. $household has been told.'
+              : 'Your application for $title was withdrawn.',
+        ),
+      ),
+    );
+    return true;
+  } catch (error) {
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(friendlyApiError(error)),
+      ),
+    );
+    return false;
   }
 }
 

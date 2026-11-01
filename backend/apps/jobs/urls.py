@@ -5,6 +5,7 @@ from apps.jobs.views import (
     JobApplicationListView,
     JobApplicationStatusView,
     JobApplicationView,
+    JobApplicationWithdrawView,
     JobCompletionRequestView,
     JobHireRequestView,
     JobRateGuideView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("<int:job_id>/request-completion/", JobCompletionRequestView.as_view(), name="job-request-completion"),
     path("applications/", JobApplicationListView.as_view(), name="job-application-list"),
     path("applications/<int:pk>/decision/", JobApplicationDecisionView.as_view(), name="job-application-decision"),
+    path("applications/<int:pk>/withdraw/", JobApplicationWithdrawView.as_view(), name="job-application-withdraw"),
     path("applications/<int:pk>/status/", JobApplicationStatusView.as_view(), name="job-application-status"),
     path("applications/<str:pk>/status/", JobApplicationStatusView.as_view(), name="job-application-status-legacy"),
 ]

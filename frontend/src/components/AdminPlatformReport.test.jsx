@@ -37,7 +37,7 @@ describe("AdminPlatformReport", () => {
 
     render(<AdminPlatformReport />);
 
-    expect(await screen.findByText("Value of completed jobs")).toBeTruthy();
+    expect(await screen.findByText("Estimated value of completed jobs")).toBeTruthy();
     expect(screen.getByText("₱800.5")).toBeTruthy();
     expect(screen.getByText("37.5%")).toBeTruthy();
     expect(screen.getByText("No ratings yet")).toBeTruthy();
@@ -52,7 +52,7 @@ describe("AdminPlatformReport", () => {
     downloadPlatformReportCsv.mockResolvedValue(true);
 
     render(<AdminPlatformReport />);
-    await screen.findByText("Value of completed jobs");
+    await screen.findByText("Estimated value of completed jobs");
     fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
 
     await waitFor(() => expect(downloadPlatformReportCsv).toHaveBeenCalledTimes(1));

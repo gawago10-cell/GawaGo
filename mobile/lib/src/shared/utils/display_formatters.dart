@@ -8,6 +8,7 @@ String applicationStatusLabel(String status) {
     'hired': 'Hired',
     'rejected': 'Rejected',
     'closed': 'Closed',
+    'withdrawn': 'Withdrawn',
     // Displayed as Hired to avoid confusion with job completion.
     'completed': 'Hired',
   };

@@ -366,8 +366,8 @@ export default function AdminComplaintsQueue({
 
       {status === "ready" && complaints.length > 0 && (
         <div className="admin-reports-table-card">
-          <div className="table-responsive">
-            <table className="admin-reports-table">
+          <div className="table-responsive gg-stack-wrap">
+            <table className="admin-reports-table gg-stack-table gg-stack-wide">
               <thead>
                 <tr>
                   <th>Complaint ID</th>

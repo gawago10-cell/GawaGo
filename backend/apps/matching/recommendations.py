@@ -5,8 +5,9 @@ directions:
   * get_recommended_jobs()    -- ranks OPEN jobs for a WORKER (pull).
   * get_recommended_workers() -- ranks WORKERS for a household's JOB (push).
 
-Both compare a worker's skill profile against a job's required skill using
-TF-IDF + cosine similarity, then blend that with a proximity score computed
+Both compare each of a worker's skills against a job's required skill using
+TF-IDF + cosine similarity, keep the best fit, then blend that with a
+proximity score computed
 from real road distance (reusing the existing Smart Matching distance
 pipeline in apps.matching.services). Because the score is symmetric in
 (job, worker), both directions share the same weights and the same
@@ -49,15 +50,25 @@ def _tfidf():
 
 
 def _worker_skill_document(profile):
-    """Flatten a worker's skill list into one TF-IDF text document.
+    """Flatten a worker's skill list into one text, used to tell whether the
+    worker lists any skill at all.
 
     Skills are normalized with the same normalize_skill_label() used by
     the existing rule-based Smart Matching feature, so both algorithms
     agree on what counts as "the same skill" (aliases, casing, etc).
     A worker has at most 3 skills, so this document is always short.
     """
-    skills = profile.skills or []
-    return " ".join(normalize_skill_label(skill) for skill in skills)
+    return " ".join(_worker_skill_documents(profile))
+
+
+def _worker_skill_documents(profile):
+    """One TF-IDF document per listed skill (normalized, de-duplicated)."""
+    documents = []
+    for skill in profile.skills or []:
+        document = normalize_skill_label(skill)
+        if document.strip() and document not in documents:
+            documents.append(document)
+    return documents
 
 
 def _job_skill_document(job):
@@ -155,14 +166,22 @@ def score_pair_with_distance(job, profile, distance_km):
     if profile is None:
         return None
 
-    worker_document = _worker_skill_document(profile)
-    if not worker_document.strip():
+    worker_documents = _worker_skill_documents(profile)
+    if not worker_documents:
         return None
 
+    # Each skill is compared with the job on its own and the best fit kept.
+    # Comparing the whole skill list as one document diluted an exact match
+    # with every other skill listed, so a plumber who also listed Carpentry
+    # and Painting scored 45% skill fit on a Plumbing job, against 100% for
+    # one who listed only Plumbing (fourth scan, 2026-11-01).
     TfidfVectorizer, cosine_similarity = _tfidf()
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform([worker_document, _job_skill_document(job)])
-    skill_similarity = float(cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0])
+    job_document = _job_skill_document(job)
+    skill_similarity = 0.0
+    for worker_document in worker_documents:
+        tfidf_matrix = TfidfVectorizer().fit_transform([worker_document, job_document])
+        similarity = float(cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0])
+        skill_similarity = max(skill_similarity, similarity)
 
     return _build_score_result(job, profile, skill_similarity, distance_km)
 
@@ -200,14 +219,15 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     """Return open jobs ranked for `worker` by AI recommendation score.
 
     Algorithm (content-based filtering):
-      1. Build one text document from the worker's skill list, and one
-         per open job from its required skill.
-      2. For each job, fit TF-IDF on just that pair -- the worker's
-         document and the job's -- and take their cosine similarity as
-         skill_similarity in [0, 1]. Fitting on the pair (not on every open
-         job at once) is what makes a worker and a job score the same on
-         every screen: the IDF of a shared corpus changed with whoever else
-         was in it, so one pair read 51% in one place and 53% in another.
+      1. Build one text document per skill the worker lists, and one per
+         open job from its required skill.
+      2. For each job, fit TF-IDF on each pair -- one of the worker's skill
+         documents and the job's -- take their cosine similarity, and keep
+         the best as skill_similarity in [0, 1]. Fitting on the pair (not on
+         every open job at once) is what makes a worker and a job score the
+         same on every screen: the IDF of a shared corpus changed with
+         whoever else was in it, so one pair read 51% in one place and 53%
+         in another.
       4. distance_km comes from get_road_route_for_match(), the same
          OSRM-backed, cached road-distance lookup the rule-based Smart
          Matching feature already uses -- "distance" means the same

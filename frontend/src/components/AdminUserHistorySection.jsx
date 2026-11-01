@@ -54,9 +54,9 @@ export default function AdminUserHistorySection({ role, fullRecord, postedJobs, 
       </p>
 
       <div className="admin-reports-table-card">
-        <div className="table-responsive">
+        <div className="table-responsive gg-stack-wrap">
           {role === "household" ? (
-            <table className="admin-reports-table">
+            <table className="admin-reports-table gg-stack-table">
               <thead>
                 <tr>
                   <th>Job ID</th>
@@ -91,7 +91,7 @@ export default function AdminUserHistorySection({ role, fullRecord, postedJobs, 
               </tbody>
             </table>
           ) : (
-            <table className="admin-reports-table">
+            <table className="admin-reports-table gg-stack-table">
               <thead>
                 <tr>
                   <th>App ID</th>

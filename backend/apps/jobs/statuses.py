@@ -18,6 +18,7 @@ STAGE_COMPLETED = "completed"
 STAGE_REJECTED = "rejected"
 STAGE_CLOSED = "closed"
 STAGE_CANCELLED = "cancelled"
+STAGE_WITHDRAWN = "withdrawn"
 STAGE_OPEN = "open"
 
 STAGE_LABELS = {
@@ -29,11 +30,16 @@ STAGE_LABELS = {
     STAGE_REJECTED: "Rejected",
     STAGE_CLOSED: "Closed",
     STAGE_CANCELLED: "Cancelled",
+    STAGE_WITHDRAWN: "Withdrawn",
     STAGE_OPEN: "Open",
 }
 
 
 def get_application_stage(application_status, job_status=None):
+    # The worker's own decision to step away reads the same whatever the job
+    # did afterwards.
+    if application_status == JobApplication.STATUS_WITHDRAWN:
+        return STAGE_WITHDRAWN
     if job_status == JobPosting.STATUS_CANCELLED:
         return STAGE_CANCELLED
     if application_status == JobApplication.STATUS_REJECTED:

@@ -256,6 +256,7 @@ class WorkerMatchCard extends StatelessWidget {
     required this.onViewProfile,
     required this.onSendRequest,
     this.requestSent = false,
+    this.requestBlockedLabel,
     this.breakdown,
     this.showScore = true,
   });
@@ -282,6 +283,10 @@ class WorkerMatchCard extends StatelessWidget {
   final VoidCallback onViewProfile;
   final VoidCallback onSendRequest;
   final bool requestSent;
+
+  /// Set when this worker can't be asked (not verified, withdrew, hired...):
+  /// the button is off and shows this instead (fourth scan, 2026-11-01).
+  final String? requestBlockedLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -455,7 +460,9 @@ class WorkerMatchCard extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: FilledButton(
-                        onPressed: requestSent ? null : onSendRequest,
+                        onPressed: requestSent || requestBlockedLabel != null
+                            ? null
+                            : onSendRequest,
                         style: FilledButton.styleFrom(
                           backgroundColor: GawaGoColors.primary,
                           foregroundColor: GawaGoColors.onPrimary,
@@ -465,7 +472,8 @@ class WorkerMatchCard extends StatelessWidget {
                           ),
                         ),
                         child: Text(
-                          requestSent ? 'Request Sent' : 'Send a Request',
+                          requestBlockedLabel ??
+                              (requestSent ? 'Request Sent' : 'Send a Request'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 12.5),

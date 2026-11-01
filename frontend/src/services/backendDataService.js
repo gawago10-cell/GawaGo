@@ -789,6 +789,21 @@ export async function fetchAdminCertificates(statusFilter = "pending") {
   return records.map(normalizeCertificate).filter(Boolean);
 }
 
+/** The worker steps away from a job: takes back a pending application, or
+ * backs out of a hire before the job starts (a reason is required then). */
+export async function withdrawApplication(applicationId, reason = "") {
+  const response = await apiRequest(`jobs/applications/${applicationId}/withdraw/`, {
+    method: "POST",
+    auth: true,
+    body: { reason },
+  });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "Unable to withdraw from this job."));
+  }
+  return data;
+}
+
 export async function reviewCertificate(certificateId, { status, notes = "" }) {
   const response = await apiRequest(`accounts/admin/certificates/${certificateId}/`, {
     method: "PATCH",

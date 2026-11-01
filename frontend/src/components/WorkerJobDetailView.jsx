@@ -12,6 +12,7 @@ import {
   getHouseholdPhoto,
 } from "../utils/formatters";
 import { getVerificationNavLabel } from "../utils/normalizers";
+import { confirmDialog } from "./AppDialogs";
 import {
   getApplicationStatusLabel,
   getHiringProgressLabel,
@@ -26,6 +27,7 @@ export default function WorkerJobDetailView({
   handleApplyToJob,
   handleLogout,
   handleWorkerHireDecision,
+  handleWorkerWithdraw,
   openWorkerApplications,
   openWorkerDashboard,
   openWorkerFindJobs,
@@ -46,7 +48,7 @@ export default function WorkerJobDetailView({
   );
   const householdPhoto = getHouseholdPhoto(household);
   const currentWorkerApplication = job?.currentWorkerApplication || null;
-  const alreadyApplied = Boolean(currentWorkerApplication);
+  const hasApplication = Boolean(currentWorkerApplication);
   const jobLatitude = job?.latitude ?? household?.latitude ?? null;
   const jobLongitude = job?.longitude ?? household?.longitude ?? null;
   const workerLatitude = currentWorker?.latitude ?? null;
@@ -64,6 +66,11 @@ export default function WorkerJobDetailView({
   const currentWorkerApplicationStatus = job?.applicationStatus || currentWorkerApplication?.status || "";
   const currentWorkerApplicationId = job?.applicationId || currentWorkerApplication?.id || null;
   const hasRejectedHireRequest = currentWorkerApplicationStatus === "Rejected";
+  // A worker who withdrew may apply again while the job takes applicants.
+  const hasWithdrawn = currentWorkerApplicationStatus === "Withdrawn";
+  const alreadyApplied = hasApplication && !hasWithdrawn;
+  const canWithdraw = Boolean(job?.canWithdraw ?? currentWorkerApplication?.canWithdraw);
+  const canBackOut = Boolean(job?.canBackOut ?? currentWorkerApplication?.canBackOut);
   const isAssignedWorker = ["Hired", "Completed"].includes(currentWorkerApplicationStatus);
   const verificationNavLabel = getVerificationNavLabel(currentWorker);
   const isCompletedJob = job?.status === "Completed";
@@ -289,8 +296,14 @@ export default function WorkerJobDetailView({
                                 className="btn btn-outline-danger btn-sm"
                                 type="button"
                                 disabled={!currentWorkerApplicationId}
-                                onClick={() => {
-                                  if (window.confirm("Reject this hire request? This can't be undone.")) {
+                                onClick={async () => {
+                                  const confirmed = await confirmDialog({
+                                    title: "Reject this hire request?",
+                                    message: "The household is told you declined. This can't be undone.",
+                                    confirmLabel: "Reject request",
+                                    tone: "danger",
+                                  });
+                                  if (confirmed) {
                                     handleWorkerHireDecision(currentWorkerApplicationId, "reject");
                                   }
                                 }}
@@ -311,10 +324,36 @@ export default function WorkerJobDetailView({
                                   : "Already Applied"
                                 : job.applyBlockedReason
                                   ? "Not available"
-                                  : "Apply Now"}
+                                  : hasWithdrawn
+                                    ? canApply
+                                      ? "Apply Again"
+                                      : "Withdrawn"
+                                    : "Apply Now"}
+                            </button>
+                          )}
+                          {(canWithdraw || canBackOut) && handleWorkerWithdraw && (
+                            <button
+                              className="btn btn-outline-danger btn-sm"
+                              type="button"
+                              onClick={() =>
+                                handleWorkerWithdraw({
+                                  ...job,
+                                  applicationId: currentWorkerApplicationId,
+                                  canWithdraw,
+                                  canBackOut,
+                                  householdName,
+                                })
+                              }
+                            >
+                              {canBackOut ? "Back Out of Job" : "Withdraw Application"}
                             </button>
                           )}
                         </div>
+                        {canBackOut && (
+                          <p className="small text-muted mt-2 mb-0">
+                            You can back out until the job starts. The household is told why and can hire someone else.
+                          </p>
+                        )}
                         {canAcceptHireRequest && (
                           <div className="alert alert-info mt-3 mb-0 py-2">
                             This household sent you a hire request. Review the job details before accepting or rejecting.
@@ -325,7 +364,7 @@ export default function WorkerJobDetailView({
                             Applications are unavailable for this job right now.
                           </div>
                         )}
-                        {alreadyApplied && (
+                        {hasApplication && (
                           <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #e0e0e0" }}>
                             <button
                               type="button"

@@ -135,21 +135,25 @@ function buildLocalAnalytics({ postedJobs, registeredHouseholds, registeredWorke
   const averageWorkerRating = workerRatingValues.length
     ? (workerRatingValues.reduce((sum, rating) => sum + rating, 0) / workerRatingValues.length).toFixed(2)
     : "No ratings yet";
+  // Day rates only, like the backend's trend line: an hourly or fixed rate
+  // can't share an average with a day rate (fourth scan, 2026-11-01).
+  const dayRateJobs = postedJobs.filter((job) => !job.rateType || job.rateType === "Per Day");
   const serviceRateSummary = SKILLS.map((skill) => {
-    const categoryJobs = postedJobs.filter((job) => job.serviceType === skill);
+    const categoryJobs = dayRateJobs.filter((job) => job.serviceType === skill);
     const averageRate = categoryJobs.length
       ? categoryJobs.reduce((sum, job) => sum + Number(job.offeredRate || 0), 0) / categoryJobs.length
       : 0;
     return {
       skill,
+      rateType: "per_day",
       count: categoryJobs.length,
       averageRate,
     };
   })
     .filter((item) => item.count)
     .sort((a, b) => b.count - a.count);
-  const pricingTrends = buildMonthlyJobRequests(postedJobs).map((item) => {
-    const monthJobs = postedJobs.filter((job) => {
+  const pricingTrends = buildMonthlyJobRequests(dayRateJobs).map((item) => {
+    const monthJobs = dayRateJobs.filter((job) => {
       const date = new Date(job?.createdAt || job?.created_at || job?.jobStartDate || Date.now());
       return !Number.isNaN(date.getTime()) && date.toLocaleString("en-US", { month: "short" }) === item.month;
     });

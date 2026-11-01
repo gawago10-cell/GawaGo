@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import AuthImage from "./AuthImage";
 import { fetchAdminCertificates, reviewCertificate } from "../services/backendDataService";
 import { openProtectedFile } from "../utils/protectedFiles";
+import { askReason } from "./AppDialogs";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
@@ -158,7 +159,14 @@ export default function AdminCredentialsQueue() {
     try {
       let notes = "";
       if (decision === "rejected") {
-        const answer = window.prompt("Reason for rejecting (the worker will see this):", "");
+        const answer = await askReason({
+          title: `Reject "${card.title}"?`,
+          label: "Reason for rejecting (the worker will see this)",
+          placeholder: "e.g. The photo is too blurry to read.",
+          confirmLabel: "Reject certificate",
+          tone: "danger",
+          requiredMessage: "Please give a reason so the worker knows what to fix.",
+        });
         // Cancel means "don't reject", not "reject with no reason".
         if (answer === null) {
           return;

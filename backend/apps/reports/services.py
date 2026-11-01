@@ -9,6 +9,8 @@ screens draw.
 Money figures are sums of a job's offered service_rate over the jobs counted,
 not a payment ledger -- GawaGo does not process payments, so this is the
 agreed rate for work that reached `completed`, and it is labelled as such.
+The platform report's completed-job value is an estimate per job instead (see
+estimated_job_value).
 """
 
 from collections import OrderedDict
@@ -24,6 +26,7 @@ from apps.analytics.services import pending_account_verifications
 from apps.common.barangays import barangay_from_location_label
 from apps.common.skills import canonical_skill_label
 from apps.jobs.models import JobApplication, JobPosting
+from apps.jobs.services import job_days
 from apps.reviews.models import Review
 
 SCOPE_HOUSEHOLD = "household"
@@ -103,6 +106,30 @@ def _monthly_counts(period, queryset, date_field="created_at"):
         if label in counts:
             counts[label] += 1
     return counts
+
+
+def working_days(job) -> int:
+    """The days a job's rate is paid for: its working days, else the days its
+    dates span, else one."""
+    if job.estimated_working_days:
+        return max(job.estimated_working_days, 1)
+    days = job_days(job)
+    return (days[1] - days[0]).days + 1 if days else 1
+
+
+def estimated_job_value(job, workers):
+    """What a completed job came to at its agreed rate (fourth scan,
+    2026-11-01): a day rate times its working days times the workers who did
+    it, a fixed rate times those workers. An hourly job returns None, since
+    the hours worked aren't recorded. Adding the bare rates made a five-day
+    PHP 700-a-day job count as PHP 700."""
+    rate = Decimal(job.service_rate or 0)
+    workers = max(workers, 1)
+    if job.rate_type == JobPosting.RATE_PER_HOUR:
+        return None
+    if job.rate_type == JobPosting.RATE_FIXED:
+        return rate * workers
+    return rate * working_days(job) * workers
 
 
 def _section(title, description, columns, rows):
@@ -313,6 +340,15 @@ def build_platform_report(period):
     # of", letting the rate exceed 100%.
     job_list_ids = {job.id for job in job_list}
     matched_job_ids = {app.job_id for app in hired if app.job_id in job_list_ids}
+    workers_per_completed_job = {
+        row["job_id"]: row["workers"]
+        for row in JobApplication.objects.filter(
+            job_id__in=[job.id for job in completed], status=JobApplication.STATUS_COMPLETED
+        )
+        .values("job_id")
+        .annotate(workers=Count("id"))
+    }
+    completed_values = [estimated_job_value(job, workers_per_completed_job.get(job.id, 0)) for job in completed]
     finished_job_ids = set(
         JobPosting.objects.filter(
             id__in={app.job_id for app in application_list},
@@ -379,8 +415,10 @@ def build_platform_report(period):
         "rejectedVerifications": verification_counts["rejected"],
         "averageWorkerRating": round(_float(average_rating), 2) if average_rating is not None else None,
         # Agreed rates for work that reached Completed (AGENTS.md IV.B), not
-        # a payment ledger: GawaGo does not process payments.
-        "completedJobValue": round(sum(_float(job.service_rate) for job in completed), 2),
+        # a payment ledger: GawaGo does not process payments. Estimated per
+        # job (estimated_job_value); hourly jobs are counted, not valued.
+        "completedJobValue": round(sum(_float(value) for value in completed_values if value is not None), 2),
+        "completedHourlyJobs": sum(1 for value in completed_values if value is None),
     }
 
     sections = [

@@ -28,6 +28,7 @@ from apps.jobs.services import (
     HiringWorkerSuspendedError,
     HiringWorkerUnavailableError,
     HiringWorkerVerificationError,
+    WithdrawError,
     close_open_applications,
     complete_job,
     get_user_display_name,
@@ -44,6 +45,8 @@ from apps.jobs.services import (
     rate_guide,
     record_application_status_event,
     record_job_status_event,
+    send_due_mark_done_reminders_on_read,
+    withdraw_application,
     worker_hold,
 )
 from apps.notifications.models import Notification
@@ -139,6 +142,13 @@ class JobViewSet(viewsets.ModelViewSet):
             # each route live would be one outbound HTTP request per row.
             context["route_lookup"] = "cache_only"
         return context
+
+    def list(self, request, *args, **kwargs):
+        # A household's job list is where a finished-but-unclosed job shows,
+        # so the mark-done reminder pass rides on these reads (cooldown-bound).
+        if request.user.is_authenticated:
+            send_due_mark_done_reminders_on_read()
+        return super().list(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -482,12 +492,20 @@ class JobApplicationView(APIView):
             defaults={"note": serializer.validated_data.get("note", "")},
         )
         if not created:
-            return Response({"detail": "Worker already applied."}, status=status.HTTP_400_BAD_REQUEST)
+            if application.status != JobApplication.STATUS_WITHDRAWN:
+                return Response({"detail": "Worker already applied."}, status=status.HTTP_400_BAD_REQUEST)
+            # A worker who withdrew can change their mind while the job is
+            # still taking applicants.
+            previous_status = application.status
+            application.status = JobApplication.STATUS_PENDING
+            application.note = serializer.validated_data.get("note", "")
+            application.save(update_fields=["status", "note", "updated_at"])
+            record_application_status_event(application, previous_status, application.status, actor=worker)
         create_notification(
             recipient=job.household,
             notification_type=Notification.TYPE_APPLICATION,
             title="New worker application",
-            message=f"{worker.username} applied to {job.title}.",
+            message=f"{get_user_display_name(worker)} applied to {job.title}.",
             actor=worker,
             related_job_id=job.id,
             related_application_id=application.id,
@@ -579,6 +597,8 @@ class JobApplicationStatusView(APIView):
         requested_status = serializer.validated_data["status"]
         if application.job.status in {JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED}:
             return Response({"detail": "Applications cannot be updated for completed or cancelled jobs."}, status=status.HTTP_400_BAD_REQUEST)
+        if application.status == JobApplication.STATUS_WITHDRAWN:
+            return Response({"detail": "This worker withdrew from the job."}, status=status.HTTP_400_BAD_REQUEST)
         if application.status in {JobApplication.STATUS_HIRED, JobApplication.STATUS_REJECTED, JobApplication.STATUS_CLOSED}:
             return Response({"detail": "This application has already been finalized."}, status=status.HTTP_400_BAD_REQUEST)
         if requested_status not in {
@@ -661,7 +681,7 @@ class JobApplicationStatusView(APIView):
                 notification_type=Notification.TYPE_HIRING,
                 title="Hire request",
                 message=(
-                    f"{application.job.household.username} wants to hire you for {application.job.title}. "
+                    f"{get_user_display_name(application.job.household)} wants to hire you for {application.job.title}. "
                     "Please accept or reject this request."
                 ),
                 actor=application.job.household,
@@ -732,6 +752,8 @@ class JobHireRequestView(APIView):
             return Response({"detail": "This worker is already hired for this job."}, status=status.HTTP_400_BAD_REQUEST)
         if application.status == JobApplication.STATUS_HIRE_REQUESTED:
             return Response({"detail": "A hire request was already sent to this worker."}, status=status.HTTP_400_BAD_REQUEST)
+        if application.status == JobApplication.STATUS_WITHDRAWN:
+            return Response({"detail": "This worker withdrew from this job."}, status=status.HTTP_400_BAD_REQUEST)
         if application.status in {JobApplication.STATUS_REJECTED, JobApplication.STATUS_CLOSED, JobApplication.STATUS_COMPLETED}:
             return Response({"detail": "This application can no longer receive a hire request."}, status=status.HTTP_400_BAD_REQUEST)
         previous_status = application.status
@@ -744,7 +766,7 @@ class JobHireRequestView(APIView):
             recipient=worker,
             notification_type=Notification.TYPE_HIRING,
             title="Hire request",
-            message=f"{job.household.username} wants to hire you for {job.title}. Please accept or reject this request.",
+            message=f"{get_user_display_name(job.household)} wants to hire you for {job.title}. Please accept or reject this request.",
             actor=job.household,
             related_job_id=job.id,
             related_application_id=application.id,
@@ -820,7 +842,7 @@ class JobApplicationDecisionView(APIView):
                 recipient=application.job.household,
                 notification_type=Notification.TYPE_ACCEPTED,
                 title="Hire request accepted",
-                message=f"{application.worker.username} accepted your hire request for {application.job.title}.",
+                message=f"{get_user_display_name(application.worker)} accepted your hire request for {application.job.title}.",
                 actor=application.worker,
                 related_job_id=application.job_id,
                 related_application_id=application.id,
@@ -838,11 +860,36 @@ class JobApplicationDecisionView(APIView):
                 recipient=application.job.household,
                 notification_type=Notification.TYPE_REJECTION,
                 title="Hire request rejected",
-                message=f"{application.worker.username} rejected your hire request for {application.job.title}.",
+                message=f"{get_user_display_name(application.worker)} rejected your hire request for {application.job.title}.",
                 actor=application.worker,
                 related_job_id=application.job_id,
                 related_application_id=application.id,
                 action_type=Notification.ACTION_JOB_DETAIL,
                 action_url=f"/household/jobs/{application.job_id}",
             )
+        return Response(JobApplicationSerializer(application, context=write_response_context(request)).data)
+
+
+class JobApplicationWithdrawView(APIView):
+    """POST /api/jobs/applications/<id>/withdraw/ {"reason": "..."}
+
+    The worker steps away: takes back a pending application, or backs out of
+    a hire before the job's first day (a reason is required then). See
+    apps.jobs.services.withdraw_application (fourth scan, 2026-11-01)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not JobApplication.objects.filter(pk=pk).exists():
+            return Response({"detail": "Application not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            application = withdraw_application(pk, request.user, request.data.get("reason", ""))
+        except PermissionError:
+            return Response(
+                {"detail": "Only the worker on this application can withdraw it."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except WithdrawError as refused:
+            return Response({"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST)
+        application.refresh_from_db()
         return Response(JobApplicationSerializer(application, context=write_response_context(request)).data)

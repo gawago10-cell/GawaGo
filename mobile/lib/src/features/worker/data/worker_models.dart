@@ -504,6 +504,8 @@ class WorkerApplication {
     required this.canAcceptHireRequest,
     required this.canRequestCompletion,
     required this.canReview,
+    this.canWithdraw = false,
+    this.canBackOut = false,
     required this.status,
     required this.statusStage,
     required this.statusLabel,
@@ -539,6 +541,12 @@ class WorkerApplication {
   final bool canAcceptHireRequest;
   final bool canRequestCompletion;
   final bool canReview;
+
+  /// The worker can take this application back (it's still pending).
+  final bool canWithdraw;
+
+  /// The worker can give this hire up, with a reason, until the first day.
+  final bool canBackOut;
   final String status;
 
   /// Canonical stage/label from apps/jobs/statuses.py -- combines this
@@ -580,6 +588,8 @@ class WorkerApplication {
       canAcceptHireRequest: json['can_accept_hire_request'] == true,
       canRequestCompletion: json['can_request_completion'] == true,
       canReview: json['can_review'] == true,
+      canWithdraw: json['can_withdraw'] == true,
+      canBackOut: json['can_back_out'] == true,
       status: _text(json['status']),
       statusStage: _text(json['status_stage']),
       statusLabel: _text(json['status_label']),

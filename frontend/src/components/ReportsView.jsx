@@ -3,7 +3,7 @@ import React, { useMemo, useState } from "react";
 import { APPLICATION_STATUS_TONE, JOB_STATUS_TONE, appCode, formatMoney, jobCode } from "../utils/adminReportFormatting";
 
 const JOB_STATUS_OPTIONS = ["Open", "Already found a worker", "Waiting for Household Confirmation", "Completed", "Cancelled"];
-const APPLICATION_STATUS_OPTIONS = ["Pending", "Hire Request", "Hired", "Rejected", "Completed", "Closed"];
+const APPLICATION_STATUS_OPTIONS = ["Pending", "Hire Request", "Hired", "Rejected", "Completed", "Closed", "Withdrawn"];
 
 function initials(name) {
   const trimmed = String(name || "").trim();

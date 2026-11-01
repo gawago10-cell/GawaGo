@@ -1,4 +1,8 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Material+Symbols+Outlined:FILL@0..1&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+/* The icon font loads on its own with display=block: under swap its
+   ligatures showed as words ("chat") until the font arrived (fourth scan,
+   2026-11-01). */
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:FILL@0..1&display=block");
 
 :root {
   /* Fonts and workspace colours follow gawago_color_practice.html. */
@@ -16416,3 +16420,126 @@ a,
 .cert-reject-reason { opacity: 0.92; font-size: 11.5px; }
 .home-login-notice { background: #e6eed4; color: #3f5a1c; border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
 
+/* Fourth scan fixes, 2026-11-01. */
+
+/* Styled confirm and reason dialogs sit above any open window. */
+.app-dialog-backdrop { z-index: 1095; }
+.app-dialog-panel { max-width: 460px; }
+.app-dialog-panel .gg-modal-head h2 { font-size: 1.15rem; margin: 0; }
+
+/* Household My Profile between phone and laptop width: the summary card
+   was squeezed to 84px, so it now sits above the form. */
+@media (max-width: 1023px) {
+  .household-profile-page .profile-row { grid-template-columns: minmax(0, 1fr); }
+  .household-profile-page .profile-column,
+  .household-profile-page .profile-edit-card { width: 100%; flex: none; max-width: none; }
+}
+
+/* Household dashboard at tablet width: the grid gave the sidebar 220px
+   while the sidebar itself is held at 260px, so it covered the content. */
+@media (min-width: 768px) and (max-width: 991px) {
+  .household-dashboard-shell { grid-template-columns: 260px minmax(0, 1fr); }
+}
+
+/* Tables that stack into one card per row when their space is too narrow
+   for every column (utils/stackedTables.js fills in each cell's column
+   name). Measured on the table's own space, so a laptop with the sidebar
+   open stacks when it needs to and a wide screen never does. */
+.gg-stack-wrap { container-type: inline-size; container-name: ggstack; }
+@container ggstack (max-width: 780px) {
+  .gg-stack-table:not(.gg-stack-wide) { min-width: 0 !important; }
+  .gg-stack-table:not(.gg-stack-wide) thead { display: none !important; }
+  .gg-stack-table:not(.gg-stack-wide),
+  .gg-stack-table:not(.gg-stack-wide) tbody,
+  .gg-stack-table:not(.gg-stack-wide) tr { display: block !important; width: 100% !important; }
+  .gg-stack-table:not(.gg-stack-wide) tr { padding: 12px 16px; border-bottom: 1px solid var(--gg-line, #e3d6b4); }
+  .gg-stack-table:not(.gg-stack-wide) td {
+    display: grid !important;
+    grid-template-columns: 112px minmax(0, 1fr);
+    justify-items: start;
+    gap: 10px;
+    width: 100% !important;
+    border: 0 !important;
+    padding: 4px 0 !important;
+    text-align: left !important;
+    white-space: normal !important;
+  }
+  .gg-stack-table:not(.gg-stack-wide) td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6b6f5c;
+    padding-top: 2px;
+  }
+  .gg-stack-table:not(.gg-stack-wide) td[data-label=""],
+  .gg-stack-table:not(.gg-stack-wide) td.gg-stack-full { display: block !important; }
+  .gg-stack-table:not(.gg-stack-wide) td[data-label=""]::before,
+  .gg-stack-table:not(.gg-stack-wide) td.gg-stack-full::before { display: none; }
+  .worker-applications-table.gg-stack-table td:first-child { display: block !important; padding-bottom: 6px !important; }
+  .worker-applications-table.gg-stack-table td:first-child::before { display: none; }
+  .worker-applications-table.gg-stack-table .worker-application-description { display: none; }
+}
+@container ggstack (max-width: 980px) {
+  .gg-stack-table.gg-stack-wide { min-width: 0 !important; }
+  .gg-stack-table.gg-stack-wide thead { display: none !important; }
+  .gg-stack-table.gg-stack-wide,
+  .gg-stack-table.gg-stack-wide tbody,
+  .gg-stack-table.gg-stack-wide tr { display: block !important; width: 100% !important; }
+  .gg-stack-table.gg-stack-wide tr { padding: 12px 16px; border-bottom: 1px solid var(--gg-line, #e3d6b4); }
+  .gg-stack-table.gg-stack-wide td {
+    display: grid !important;
+    grid-template-columns: 112px minmax(0, 1fr);
+    justify-items: start;
+    gap: 10px;
+    width: 100% !important;
+    border: 0 !important;
+    padding: 4px 0 !important;
+    text-align: left !important;
+    white-space: normal !important;
+  }
+  .gg-stack-table.gg-stack-wide td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6b6f5c;
+    padding-top: 2px;
+  }
+  .gg-stack-table.gg-stack-wide td[data-label=""],
+  .gg-stack-table.gg-stack-wide td.gg-stack-full { display: block !important; }
+  .gg-stack-table.gg-stack-wide td[data-label=""]::before,
+  .gg-stack-table.gg-stack-wide td.gg-stack-full::before { display: none; }
+}
+
+/* My Applications: the worker's own way to step away from a job. */
+.worker-application-withdraw { font-weight: 700; text-decoration: none; color: #b3412f !important; }
+.worker-application-withdraw:hover { text-decoration: underline; }
+
+/* A match card's request button when the worker can't be asked. */
+.gg-match-hire:disabled,
+.worker-jobs-map-job-actions .worker-jobcard-btn:disabled {
+  opacity: 1;
+  background: #ece6d6 !important;
+  border-color: #ddd3bb !important;
+  color: #6b6f5c !important;
+  cursor: not-allowed;
+}
+
+/* Worker dashboard: empty categories fold behind "Show more" at every
+   width, not only on a phone. */
+.worker-dashboard-home .worker-market-panel:not(.is-expanded) .worker-market-card-folded { display: none; }
+.worker-market-toggle {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px 10px;
+  padding: 10px;
+  border: 1px dashed var(--gg-line-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--gg-ink);
+  font-weight: 700;
+  font-size: 0.9rem;
+}

@@ -181,6 +181,18 @@ class _ReportHeader extends StatelessWidget {
             '${report.periodStart} to ${report.periodEnd}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
           ),
+          const SizedBox(height: 6),
+          const Text(
+            'The value of completed jobs is estimated from their agreed '
+            'rates: a day rate times its working days and workers, a fixed '
+            "rate times its workers. Hourly jobs are counted but not valued, "
+            "since hours aren't recorded. GawaGo does not process payments.",
+            style: TextStyle(
+              color: GawaGoColors.textMuted,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
         ],
       ),
     );
@@ -346,7 +358,15 @@ String _isoDate(DateTime value) {
 }
 
 /// jobsPosted -> Jobs posted
+// Summary keys whose plain humanized name would mislead.
+const _summaryLabels = {
+  'completedJobValue': 'Estimated value of completed jobs',
+  'completedHourlyJobs': 'Completed hourly jobs (not valued)',
+};
+
 String _humanize(String key) {
+  final override = _summaryLabels[key];
+  if (override != null) return override;
   final buffer = StringBuffer();
   for (final rune in key.runes) {
     final char = String.fromCharCode(rune);

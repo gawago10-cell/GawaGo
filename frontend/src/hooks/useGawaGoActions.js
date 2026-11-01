@@ -12,6 +12,8 @@ import {
 import { resolveWorkerSkills, validateWorkerSkills } from "../utils/skillUtils";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
 import { isConfirmedJobPin } from "./useHouseholdJobLocation";
+import { askReason, confirmDialog } from "../components/AppDialogs";
+import { withdrawApplication } from "../services/backendDataService";
 
 function omitSensitiveAccountFields(account) {
   const { password, confirmPassword, ...safeAccount } = account;
@@ -331,6 +333,54 @@ export function useGawaGoActions({
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
         window.alert(error.message || "Unable to complete this action.");
+      }
+    });
+  }
+  // The worker steps away (fourth scan, 2026-11-01): a pending application
+  // is taken back after a confirm; a hire is given up before the job starts,
+  // with a reason the household reads.
+  async function handleWorkerWithdraw(job) {
+    if (!job?.applicationId || !isNumericIdentifier(job.applicationId)) {
+      window.alert("This application is not synced with the backend yet. Please refresh and try again.");
+      return;
+    }
+    const title = job.jobTitle || job.title || job.serviceType || "this job";
+    const household = job.householdName || job.householdUsername || "The household";
+    const backingOut = Boolean(job.canBackOut);
+    let reason = "";
+    if (backingOut) {
+      const answer = await askReason({
+        title: `Back out of ${title}?`,
+        message: `${household} is told you can't take this job, with your reason, so they can hire someone else.`,
+        label: "Why can't you take this job?",
+        placeholder: "e.g. I'm sick and can't work that week.",
+        confirmLabel: "Back out",
+        cancelLabel: "Keep job",
+        tone: "danger",
+        requiredMessage: "Tell the household why you can't take this job.",
+      });
+      if (answer === null) return;
+      reason = answer;
+    } else {
+      const confirmed = await confirmDialog({
+        title: `Withdraw your application for ${title}?`,
+        message: `${household} is told. You can apply again while the job is still taking applicants.`,
+        confirmLabel: "Withdraw",
+        cancelLabel: "Keep application",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+    }
+    runExclusive(`withdraw-${job.applicationId}`, async () => {
+      try {
+        await withdrawApplication(job.applicationId, reason);
+        window.alert(
+          backingOut ? `You backed out of ${title}. ${household} has been told.` : `Your application for ${title} was withdrawn.`,
+        );
+      } catch (error) {
+        window.alert(error.message || "Unable to withdraw from this job. Please try again.");
+      } finally {
+        await refreshJobsFromBackend();
       }
     });
   }
@@ -1162,23 +1212,42 @@ export function useGawaGoActions({
     window.alert("Household profile updated.");
     });
   }
-  function handleCancelJob(jobId) {
+  async function handleCancelJob(jobId) {
     const job = postedJobs.find((item) => item.id === jobId);
     if (!job) {
       return;
     }
     // A hired worker is told why the job is called off (the backend
-    // requires it then).
-    const hasHiredWorker = (job.applications || []).some((application) => application.status === "Hired");
+    // requires it then, and says so in cancel_needs_reason).
+    const hasHiredWorker =
+      job.cancelNeedsReason || (job.applications || []).some((application) => application.status === "Hired");
     let cancelReason = "";
     if (hasHiredWorker) {
-      const answer = window.prompt("Why are you cancelling? The hired worker will see this.", "");
+      const answer = await askReason({
+        title: `Cancel ${job.title || "this job"}?`,
+        message: "The hired worker is told the job is off and why. This can't be undone.",
+        label: "Why are you cancelling?",
+        placeholder: "e.g. The worker didn't arrive on the agreed day.",
+        confirmLabel: "Cancel job",
+        cancelLabel: "Keep job",
+        tone: "danger",
+        requiredMessage: "Please give a reason; the hired worker will see it.",
+      });
       if (answer === null) return;
       cancelReason = answer.trim();
       if (!cancelReason) {
         window.alert("Please give a reason; the hired worker will see it.");
         return;
       }
+    } else {
+      const confirmed = await confirmDialog({
+        title: `Cancel ${job.title || "this job"}?`,
+        message: "Workers no longer see it, and anyone waiting is told. This can't be undone.",
+        confirmLabel: "Cancel job",
+        cancelLabel: "Keep job",
+        tone: "danger",
+      });
+      if (!confirmed) return;
     }
     runExclusive(`cancel-job-${jobId}`, async () => {
       try {
@@ -1750,7 +1819,7 @@ export function useGawaGoActions({
       }
     });
   }
-  function handleAdminRejectVerification(requestId) {
+  async function handleAdminRejectVerification(requestId) {
     if (!getAuthToken()) {
       window.alert("Please log in with a backend admin account before rejecting verification requests.");
       return;
@@ -1759,7 +1828,17 @@ export function useGawaGoActions({
     if (!request) return;
     // prompt() returns null when the admin cancels; the old `|| fallback`
     // turned that into a rejection they never confirmed.
-    const reviewNote = window.prompt("Enter rejection note:", "Please resubmit clearer documents.");
+    // No ready-made note: one click used to send "Please resubmit clearer
+    // documents." whatever was actually wrong (fourth scan, 2026-11-01).
+    const reviewNote = await askReason({
+      title: `Reject ${request.workerName || "this verification"}?`,
+      message: "They will see this note and can send their documents again.",
+      label: "What should they fix?",
+      placeholder: "e.g. The ID photo is cut off at the bottom.",
+      confirmLabel: "Reject",
+      tone: "danger",
+      requiredMessage: "Please give a rejection reason so the applicant knows what to fix.",
+    });
     if (reviewNote === null) return;
     const trimmedNote = reviewNote.trim();
     if (!trimmedNote) {
@@ -1861,6 +1940,7 @@ export function useGawaGoActions({
     handleApplyToJob,
     handleHireWorker,
     handleWorkerHireDecision,
+    handleWorkerWithdraw,
     handleRejectApplication,
     handleLoginSubmit,
     handleWorkerRegisterSubmit,

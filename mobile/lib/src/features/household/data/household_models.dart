@@ -78,6 +78,8 @@ class HouseholdJob {
     required this.canReview,
     this.canMarkDone = false,
     this.markDoneNote = '',
+    this.canCancel = false,
+    this.cancelNeedsReason = false,
     this.expiredNote = '',
     required this.applications,
     required this.images,
@@ -115,6 +117,13 @@ class HouseholdJob {
   /// Why "Mark as done" isn't available yet, e.g. the start date; "" if it is.
   final String markDoneNote;
 
+  /// The household can still call this job off (backend `can_cancel`),
+  /// hired worker or not (fourth scan, 2026-11-01).
+  final bool canCancel;
+
+  /// Cancelling owes the hired worker a reason (`cancel_needs_reason`).
+  final bool cancelNeedsReason;
+
   /// The backend's note when this open job's day passed with nobody hired:
   /// workers no longer see it until the dates change.
   final String expiredNote;
@@ -149,6 +158,11 @@ class HouseholdJob {
       canReview: json['can_review'] == true,
       canMarkDone: json['can_mark_done'] == true,
       markDoneNote: _text(json['mark_done_note'] ?? ''),
+      // An older backend sent no flag; only an open job could be cancelled.
+      canCancel: json.containsKey('can_cancel')
+          ? json['can_cancel'] == true
+          : _text(json['status']) == 'open',
+      cancelNeedsReason: json['cancel_needs_reason'] == true,
       expiredNote: _text(json['expired_note'] ?? ''),
       applications: _list(
         json['applications'],

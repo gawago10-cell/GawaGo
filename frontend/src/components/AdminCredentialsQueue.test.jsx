@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("../services/backendDataService", () => ({
   fetchAdminCertificates: vi.fn(async () => [
@@ -35,7 +35,7 @@ describe("AdminCredentialsQueue", () => {
     const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
     render(<AdminCredentialsQueue />);
     fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
-    expect(alert).toHaveBeenCalledWith("Please give a reason so the worker knows what to fix.");
+    await waitFor(() => expect(alert).toHaveBeenCalledWith("Please give a reason so the worker knows what to fix."));
     expect(reviewCertificate).not.toHaveBeenCalled();
   });
 });

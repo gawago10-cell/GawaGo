@@ -180,35 +180,71 @@ def _build_rating_distribution(worker_profiles):
     ]
 
 
+# How each rate type reads after an amount, worded once for both clients.
+RATE_UNIT_SUFFIX = {
+    JobPosting.RATE_PER_DAY: "/ day",
+    JobPosting.RATE_PER_HOUR: "/ hour",
+    JobPosting.RATE_FIXED: "fixed",
+}
+RATE_TYPE_ORDER = [JobPosting.RATE_PER_DAY, JobPosting.RATE_PER_HOUR, JobPosting.RATE_FIXED]
+
+
 def _build_average_rates_by_category():
-    # A cancelled job's rate was never actually agreed to or paid, so it must
-    # not drag down what households are told to expect for a category
-    # (AGENTS.md IV.A: pricing exists "to support fair pricing"; averaging in
-    # cancelled postings misrepresents live market rates).
+    """The average offered rate for each service and rate type.
+
+    A day rate, an hourly rate and a fixed price can't share an average:
+    one Plumbing post at PHP 950 a day and two at about PHP 110 an hour
+    averaged to PHP 390, which is neither (fourth scan, 2026-11-01). Services
+    are counted under their catalog name, like the Services chart.
+
+    A cancelled job's rate was never actually agreed to or paid, so it must
+    not drag down what households are told to expect for a category
+    (AGENTS.md IV.A: pricing exists "to support fair pricing"; averaging in
+    cancelled postings misrepresents live market rates)."""
     rows = (
         JobPosting.objects.exclude(status=JobPosting.STATUS_CANCELLED)
-        .values("required_skill")
-        .annotate(count=Count("id"), average_rate=Avg("service_rate"))
-        .order_by("-count", "required_skill")
+        .values("required_skill", "rate_type")
+        .annotate(count=Count("id"), total=Sum("service_rate"))
     )
-    return [
-        {
-            "skill": row["required_skill"],
-            "count": row["count"],
-            "averageRate": _decimal_to_float(row["average_rate"]) or 0,
-        }
-        for row in rows
-        if row["required_skill"]
-    ]
+    grouped = {}
+    for row in rows:
+        skill = canonical_skill_label(row["required_skill"])
+        if not skill:
+            continue
+        entry = grouped.setdefault((skill, row["rate_type"]), {"count": 0, "total": Decimal("0")})
+        entry["count"] += row["count"]
+        entry["total"] += row["total"] or Decimal("0")
+    labels = dict(JobPosting.RATE_TYPE_CHOICES)
+    results = []
+    for (skill, rate_type), entry in grouped.items():
+        average = entry["total"] / entry["count"]
+        suffix = RATE_UNIT_SUFFIX.get(rate_type, "")
+        results.append(
+            {
+                "skill": skill,
+                "rateType": rate_type,
+                "rateTypeLabel": labels.get(rate_type, rate_type),
+                "count": entry["count"],
+                "averageRate": float(round(average, 2)),
+                "averageRateLabel": f"PHP {average:,.2f} {suffix}".strip(),
+            }
+        )
+    rank = {rate_type: index for index, rate_type in enumerate(RATE_TYPE_ORDER)}
+    results.sort(key=lambda item: (-item["count"], item["skill"], rank.get(item["rateType"], len(rank))))
+    return results
 
 
 def _build_pricing_trends():
+    """The average day rate on new per-day posts each month. Hourly and fixed
+    rates are on another scale, so they stay in the per-category table
+    instead of skewing this line (fourth scan, 2026-11-01)."""
     monthly_rates = {
         (row["month"].year, row["month"].month): {
             "averageRate": _decimal_to_float(row["average_rate"]) or 0,
             "postings": row["postings"],
         }
         for row in JobPosting.objects.exclude(status=JobPosting.STATUS_CANCELLED)
+        .filter(rate_type=JobPosting.RATE_PER_DAY)
         .annotate(month=TruncMonth("created_at"))
         .values("month")
         .annotate(average_rate=Avg("service_rate"), postings=Count("id"))
@@ -308,7 +344,11 @@ def build_dashboard_metrics():
     )
     rated_worker_count = sum(1 for profile in worker_profiles if profile.rating_count and profile.average_rating is not None)
 
-    open_job_slots = JobPosting.objects.filter(status=JobPosting.STATUS_OPEN).aggregate(total=Sum("worker_slots"))["total"] or 0
+    # The market workers actually see, counted the way the home page counts
+    # it: open jobs and multi-worker jobs with openings left, minus lapsed
+    # jobs and a suspended household's jobs (fourth scan, 2026-11-01).
+    market_jobs = list(market_job_queryset())
+    open_job_slots = sum(max(job.worker_slots - job.hired_so_far, 0) for job in market_jobs)
     total_workers = len(worker_profiles)
     verified_workers = sum(1 for profile in worker_profiles if profile.verification_status == "verified")
     rejected_workers = sum(1 for profile in worker_profiles if profile.verification_status == "rejected")
@@ -358,7 +398,7 @@ def build_dashboard_metrics():
                 "totalWorkers": total_workers,
                 "households": len(household_profiles),
                 "totalJobPostings": len(jobs),
-                "activeJobs": sum(1 for job in jobs if job.status == JobPosting.STATUS_OPEN),
+                "activeJobs": len(market_jobs),
                 "activeApplications": active_application_count(),
                 "completedServices": sum(1 for job in jobs if job.status == JobPosting.STATUS_COMPLETED),
                 "cancelledRequests": sum(1 for job in jobs if job.status == JobPosting.STATUS_CANCELLED),
@@ -398,18 +438,23 @@ def build_dashboard_metrics():
     }
 
 
-def build_public_summary():
-    """Platform totals safe to show signed-out visitors: counts only."""
+def market_job_queryset():
+    """Jobs workers can apply to right now (each annotated with
+    hired_so_far): the one definition the home page and the admin dashboard
+    both count."""
     from apps.accounts.models import currently_suspended_q
     from apps.jobs.services import jobs_accepting_applications
 
+    return jobs_accepting_applications(JobPosting.objects.exclude(currently_suspended_q("household__profile__")))
+
+
+def build_public_summary():
+    """Platform totals safe to show signed-out visitors: counts only."""
     people = UserProfile.objects.filter(
         role__in=[UserProfile.ROLE_WORKER, UserProfile.ROLE_HOUSEHOLD], user__is_active=True, user__is_staff=False
     )
     return {
-        "openJobs": jobs_accepting_applications(
-            JobPosting.objects.exclude(currently_suspended_q("household__profile__"))
-        ).count(),
+        "openJobs": market_job_queryset().count(),
         "verifiedWorkers": people.filter(role=UserProfile.ROLE_WORKER, verification_status="verified").count(),
         "completedJobs": JobPosting.objects.filter(status=JobPosting.STATUS_COMPLETED).count(),
         "totalAccounts": people.count(),

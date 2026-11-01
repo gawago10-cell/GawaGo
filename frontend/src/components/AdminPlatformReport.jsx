@@ -18,7 +18,8 @@ const SUMMARY_FIELDS = [
   ["pendingVerifications", "Pending verifications"],
   ["rejectedVerifications", "Rejected verifications"],
   ["averageWorkerRating", "Average worker rating", "rating"],
-  ["completedJobValue", "Value of completed jobs", "money"],
+  ["completedJobValue", "Estimated value of completed jobs", "money"],
+  ["completedHourlyJobs", "Completed hourly jobs (not valued)"],
 ];
 
 function formatValue(value, kind) {
@@ -90,8 +91,9 @@ export default function AdminPlatformReport() {
         <div>
           <h2>Platform Activity Report</h2>
           <p>
-            What happened over a period, across all households and workers. Money is the agreed rate of completed
-            jobs; GawaGo does not process payments.
+            What happened over a period, across all households and workers. The value of completed jobs is estimated
+            from their agreed rates: a day rate times its working days and workers, a fixed rate times its workers.
+            Hourly jobs are counted but not valued, since hours aren't recorded. GawaGo does not process payments.
           </p>
         </div>
         <div className="admin-reports-header-actions">

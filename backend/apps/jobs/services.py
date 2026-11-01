@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Avg, Count, F, OuterRef, Q, Subquery
 from django.db.models.functions import Coalesce
@@ -269,21 +270,61 @@ def hired_jobs_under_way(worker):
     )
 
 
-def hold_on(job, hired_jobs):
-    """Which of these hired jobs keeps the worker from ``job``, or None.
+# A hired job stops holding its worker this many days after its last day,
+# even if the household never marks it done, so a household that goes quiet
+# can't keep a worker off the market for good (fourth scan, 2026-11-01). The
+# household is reminded to mark it done the day after its last day.
+HOLD_GRACE_DAYS = 3
 
-    A full-time job under way holds them from everything; any other job
-    holds them from jobs sharing one of its days, whatever the job type,
-    since jobs have dates but no hours (panel review, 2026-11-01). A job
-    without a start date can't be checked for days, so only full-time holds
-    apply to it. ``job`` itself never counts."""
-    others = [held for held in hired_jobs if held.id != job.id]
-    full_time = next((held for held in others if is_full_time_job(held)), None)
-    if full_time:
-        return WorkerHold(WorkerHold.FULL_TIME, full_time)
-    days = job_days(job)
-    same_days = next((held for held in others if days_overlap(days, job_days(held))), None)
-    return WorkerHold(WorkerHold.SAME_DAYS, same_days) if same_days else None
+
+def hold_ends_on(days):
+    """The last day a hired job with these days can hold its worker, or None
+    for a job without dates (then only marking it done ends the hold)."""
+    return days[1] + timedelta(days=HOLD_GRACE_DAYS) if days else None
+
+
+def full_time_started(schedule_type, days, today=None) -> bool:
+    """A full-time job takes all of a worker's time from its first day; one
+    without dates is treated as already under way."""
+    return _is_full_time(schedule_type) and (not days or days[0] <= (today or timezone.localdate()))
+
+
+def _hold_kind(target_days, schedule_type, held_days, today):
+    """How a hired job (its schedule type and days) keeps its worker from a
+    job on ``target_days``: WorkerHold.FULL_TIME, WorkerHold.SAME_DAYS or
+    None.
+
+    Past its last day plus HOLD_GRACE_DAYS it holds nothing. Once a
+    full-time job has started it holds the worker from every job until the
+    household marks it done (panel review, 2026-10-31). Before that, and for
+    every other job type, a job only holds its own days, since jobs have
+    dates but no hours (panel review, 2026-11-01): a full-time job booked for
+    next month no longer keeps the worker from a one-day job this week
+    (fourth scan, 2026-11-01). A job without dates can't share days, so only
+    a started full-time job holds the worker from it."""
+    end = hold_ends_on(held_days)
+    if end is not None and end < today:
+        return None
+    if full_time_started(schedule_type, held_days, today):
+        return WorkerHold.FULL_TIME
+    return WorkerHold.SAME_DAYS if days_overlap(target_days, held_days) else None
+
+
+def hold_on(job, hired_jobs, today=None):
+    """Which of these hired jobs keeps the worker from ``job``, or None; a
+    full-time hold wins over a same-days one. ``job`` itself never counts."""
+    today = today or timezone.localdate()
+    target = job_days(job)
+    same_days = None
+    for held in hired_jobs:
+        if held.id == job.id:
+            continue
+        kind = _hold_kind(target, held.schedule_type, job_days(held), today)
+        if kind == WorkerHold.FULL_TIME:
+            return WorkerHold(kind, held)
+        if kind and same_days is None:
+            same_days = WorkerHold(kind, held)
+    return same_days
 
 
 def worker_hold(worker, job):
@@ -293,7 +334,8 @@ def worker_hold(worker, job):
 def workers_held_from(job):
     """Ids of workers another hired job keeps from ``job`` (``hold_on`` for
     every worker at once)."""
-    days = job_days(job)
+    today = timezone.localdate()
+    target = job_days(job)
     rows = (
         JobApplication.objects.filter(status=JobApplication.STATUS_HIRED, job__status__in=UNDERWAY_JOB_STATUSES)
         .exclude(job_id=job.id)
@@ -304,7 +346,7 @@ def workers_held_from(job):
     return {
         worker_id
         for worker_id, schedule_type, start, end, working_days in rows
-        if _is_full_time(schedule_type) or days_overlap(days, _days(start, end, working_days))
+        if _hold_kind(target, schedule_type, _days(start, end, working_days), today)
     }
 
 
@@ -318,10 +360,12 @@ def hold_apply_message(hold) -> str:
     the household is named."""
     household = get_user_display_name(hold.job.household)
     if hold.kind == WorkerHold.FULL_TIME:
-        return (
-            f"You're on a full-time job ({hold.job.title}) until {household} marks it done. "
-            "You can apply to other jobs after that."
-        )
+        message = f"You're on a full-time job ({hold.job.title}) until {household} marks it done."
+        end = hold_ends_on(job_days(hold.job))
+        if end is None:
+            return f"{message} You can apply to other jobs after that."
+        free_from = end + timedelta(days=1)
+        return f"{message} If they don't, you can apply to other jobs again from {format_job_days((free_from, free_from))}."
     return (
         f"You're already hired for {hold.job.title} ({household}) on {format_job_days(job_days(hold.job))}. "
         "You can apply to jobs on other days."
@@ -461,8 +505,9 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
             )
         # The worker's other open applications and invites that this hire
         # rules out close now rather than linger: all of them for a
-        # full-time job, those sharing one of its days otherwise.
-        full_time = is_full_time_job(job)
+        # full-time job that has started, those sharing one of its days
+        # otherwise (see _hold_kind).
+        full_time = full_time_started(job.schedule_type, job_days(job))
         released = close_worker_open_applications(
             application.worker,
             exclude_job_id=job.id,
@@ -638,3 +683,176 @@ def complete_job(job: JobPosting, actor=None, previous_status=None) -> JobPostin
     for application in completed_applications:
         create_household_review_reminder(job, application)
     return job
+
+
+# --- Stepping away from a job (fourth scan, 2026-11-01) --------------------
+
+FINISHED_JOB_STATUSES = (JobPosting.STATUS_COMPLETED, JobPosting.STATUS_CANCELLED)
+WITHDRAW_REASON_MAX_LENGTH = 300
+
+
+class WithdrawError(Exception):
+    """Why the worker can't step away; str() is the message for them."""
+
+
+def can_withdraw_application(application) -> bool:
+    """A worker can take back an application the household hasn't decided on."""
+    return (
+        application.status == JobApplication.STATUS_PENDING
+        and application.job.status not in FINISHED_JOB_STATUSES
+    )
+
+
+def can_back_out_of_hire(application, today=None) -> bool:
+    """A hired worker can back out until the job's first day. After that the
+    household decides: it marks the job done or cancels it. A job without a
+    start date counts as started, as it does for marking it done."""
+    job = application.job
+    return (
+        application.status == JobApplication.STATUS_HIRED
+        and job.status in UNDERWAY_JOB_STATUSES
+        and job.job_start_date is not None
+        and (today or timezone.localdate()) < job.job_start_date
+    )
+
+
+def clean_reason(value) -> str:
+    return " ".join(str(value or "").split())[:WITHDRAW_REASON_MAX_LENGTH]
+
+
+def withdraw_application(application_id: int, worker, reason: str = "") -> JobApplication:
+    """The worker steps away: a pending application is taken back, or a hire
+    is given up before the job starts (a reason is then required, since the
+    household was counting on them). A job left with nobody hired opens
+    again so the household can hire someone else."""
+    reason = clean_reason(reason)
+    with transaction.atomic():
+        job_id = JobApplication.objects.only("job_id").get(pk=application_id).job_id
+        job = JobPosting.objects.select_for_update().select_related("household").get(pk=job_id)
+        application = JobApplication.objects.select_for_update().select_related("worker").get(pk=application_id)
+        application.job = job
+        if application.worker_id != worker.id:
+            raise PermissionError
+        backing_out = application.status == JobApplication.STATUS_HIRED
+        if application.status == JobApplication.STATUS_HIRE_REQUESTED:
+            raise WithdrawError("This is an invitation. Decline it instead.")
+        if backing_out:
+            if not can_back_out_of_hire(application):
+                raise WithdrawError(
+                    "This job has started, so you can't back out of it here. "
+                    "Talk to the household; they can mark it done or cancel it."
+                )
+            if not reason:
+                raise WithdrawError("Tell the household why you can't take this job.")
+        elif not can_withdraw_application(application):
+            raise WithdrawError("This application can't be withdrawn any more.")
+
+        previous_status = application.status
+        application.status = JobApplication.STATUS_WITHDRAWN
+        application.save(update_fields=["status", "updated_at"])
+        record_application_status_event(application, previous_status, application.status, actor=worker, note=reason)
+
+        reopened = False
+        if (
+            backing_out
+            and job.status in UNDERWAY_JOB_STATUSES
+            and not job.applications.filter(status=JobApplication.STATUS_HIRED).exists()
+        ):
+            previous_job_status = job.status
+            job.status = JobPosting.STATUS_OPEN
+            job.save(update_fields=["status"])
+            record_job_status_event(
+                job, previous_job_status, job.status, actor=worker, note="The hired worker backed out before the job started."
+            )
+            reopened = True
+
+    worker_name = get_user_display_name(worker)
+    if backing_out:
+        create_notification(
+            recipient=job.household,
+            notification_type=Notification.TYPE_APPLICATION,
+            title="Worker backed out",
+            message=(
+                f"{worker_name} can't take {job.title} after all and backed out before it started. Reason: {reason}"
+                + (" The job is open again, so you can hire someone else." if reopened else "")
+            ),
+            actor=worker,
+            related_job_id=job.id,
+            related_application_id=application.id,
+            action_type=Notification.ACTION_JOB_DETAIL,
+            action_url=f"/household/jobs/{job.id}/applications",
+        )
+    else:
+        create_notification(
+            recipient=job.household,
+            notification_type=Notification.TYPE_APPLICATION,
+            title="Application withdrawn",
+            message=f"{worker_name} withdrew their application for {job.title}.",
+            actor=worker,
+            related_job_id=job.id,
+            related_application_id=application.id,
+            action_type=Notification.ACTION_JOB_DETAIL,
+            action_url=f"/household/jobs/{job.id}/applications",
+        )
+    return application
+
+
+# --- Reminding the household to mark a job done ----------------------------
+
+MARK_DONE_REMINDER_TITLE = "Mark the job as done"
+MARK_DONE_REMINDER_COOLDOWN_SECONDS = 300
+MARK_DONE_REMINDER_LOCK_KEY = "jobs:mark_done_reminders_lock"
+
+
+def send_due_mark_done_reminders(today=None) -> int:
+    """The day after a hired job's last day, remind its household once to
+    mark it done or cancel it (fourth scan, 2026-11-01). Without this a job
+    nobody closed stayed "In progress" for good."""
+    today = today or timezone.localdate()
+    jobs = (
+        JobPosting.objects.filter(
+            status__in=UNDERWAY_JOB_STATUSES,
+            job_start_date__lt=today,
+            applications__status=JobApplication.STATUS_HIRED,
+        )
+        .distinct()
+        .select_related("household")
+    )
+    sent = 0
+    for job in jobs:
+        days = job_days(job)
+        if not days or days[1] >= today:
+            continue
+        already_reminded = Notification.objects.filter(
+            recipient_id=job.household_id,
+            notification_type=Notification.TYPE_COMPLETION,
+            related_job_id=job.id,
+            title=MARK_DONE_REMINDER_TITLE,
+        ).exists()
+        if already_reminded:
+            continue
+        create_notification(
+            recipient=job.household,
+            notification_type=Notification.TYPE_COMPLETION,
+            title=MARK_DONE_REMINDER_TITLE,
+            message=(
+                f"{job.title} was set to end on {format_job_days((days[1], days[1]))}. "
+                "If the work is finished, mark it as done so you can review your worker. "
+                "If it didn't happen, cancel it and say why."
+            ),
+            related_job_id=job.id,
+            action_type=Notification.ACTION_JOB_DETAIL,
+            action_url=f"/household/jobs/{job.id}",
+            requires_action=True,
+        )
+        sent += 1
+    return sent
+
+
+def send_due_mark_done_reminders_on_read() -> int:
+    """Run the reminder pass from ordinary reads, at most once per cooldown
+    window, the same way the default-rating sweep runs (no scheduler on the
+    free hosting plan)."""
+    if not cache.add(MARK_DONE_REMINDER_LOCK_KEY, True, MARK_DONE_REMINDER_COOLDOWN_SECONDS):
+        return 0
+    return send_due_mark_done_reminders()

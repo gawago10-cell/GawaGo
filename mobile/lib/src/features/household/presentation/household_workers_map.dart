@@ -71,6 +71,7 @@ class HouseholdWorkersMap extends StatefulWidget {
     required this.workers,
     required this.onViewProfile,
     required this.onHire,
+    this.requestBlockedLabel,
     this.jobLatitude,
     this.jobLongitude,
   });
@@ -78,6 +79,9 @@ class HouseholdWorkersMap extends StatefulWidget {
   final List<RecommendedWorker> workers;
   final ValueChanged<RecommendedWorker> onViewProfile;
   final ValueChanged<RecommendedWorker> onHire;
+
+  /// Why a worker can't be asked, as the button label; null when they can.
+  final String? Function(RecommendedWorker worker)? requestBlockedLabel;
 
   /// The household owns this job, so its site is their own address -- pinned
   /// exactly, unlike the candidates around it.
@@ -202,6 +206,7 @@ class _HouseholdWorkersMapState extends State<HouseholdWorkersMap> {
                       area: selected,
                       onViewProfile: widget.onViewProfile,
                       onHire: widget.onHire,
+                      requestBlockedLabel: widget.requestBlockedLabel,
                       onClose: () => setState(() => _selectedKey = null),
                     ),
                   ),
@@ -364,12 +369,14 @@ class _AreaPanel extends StatelessWidget {
     required this.onViewProfile,
     required this.onHire,
     required this.onClose,
+    this.requestBlockedLabel,
   });
 
   final WorkerMapArea area;
   final ValueChanged<RecommendedWorker> onViewProfile;
   final ValueChanged<RecommendedWorker> onHire;
   final VoidCallback onClose;
+  final String? Function(RecommendedWorker worker)? requestBlockedLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -427,6 +434,7 @@ class _AreaPanel extends StatelessWidget {
                     worker: worker,
                     onViewProfile: () => onViewProfile(worker),
                     onHire: () => onHire(worker),
+                    blockedLabel: requestBlockedLabel?.call(worker),
                   );
                 },
               ),
@@ -443,11 +451,13 @@ class _AreaWorkerTile extends StatelessWidget {
     required this.worker,
     required this.onViewProfile,
     required this.onHire,
+    this.blockedLabel,
   });
 
   final RecommendedWorker worker;
   final VoidCallback onViewProfile;
   final VoidCallback onHire;
+  final String? blockedLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -597,8 +607,8 @@ class _AreaWorkerTile extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton(
-                  onPressed: onHire,
-                  child: const Text('Send Request'),
+                  onPressed: blockedLabel == null ? onHire : null,
+                  child: Text(blockedLabel ?? 'Send Request'),
                 ),
               ),
             ],

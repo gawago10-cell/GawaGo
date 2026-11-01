@@ -8,6 +8,7 @@ export function getApplicationStatusLabel(status) {
     hired: "Hired",
     rejected: "Rejected",
     closed: "Closed",
+    withdrawn: "Withdrawn",
     completed: "Hired", // Display completed as Hired to avoid confusion with job completion
   };
   return statusMap[status] || status;

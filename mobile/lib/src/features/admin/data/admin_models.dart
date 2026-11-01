@@ -103,11 +103,16 @@ class AdminAnalyticsItem {
     required this.value,
     required this.unit,
     this.noData = false,
+    this.valueLabel = '',
   });
 
   final String label;
   final double value;
   final String unit;
+
+  /// The backend's own wording for the value, e.g. "PHP 950.00 / day" on a
+  /// rate row, so a day rate and an hourly rate never read alike.
+  final String valueLabel;
 
   /// A rate row for a month with no posts: there is no rate to show.
   final bool noData;
@@ -143,6 +148,7 @@ class AdminAnalyticsItem {
       value: _number(rawValue) ?? 0,
       unit: unit,
       noData: json.containsKey('averageRate') && json['averageRate'] == null,
+      valueLabel: _text(json['averageRateLabel'], ''),
     );
   }
 }

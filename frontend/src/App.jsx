@@ -101,6 +101,7 @@ import { useGawaGoDomEffects } from "./hooks/useGawaGoDomEffects";
 import { useGawaGoPersistence } from "./hooks/useGawaGoPersistence";
 import useViewRouting from "./hooks/useViewRouting";
 import ChatWidget from "./components/ChatWidget";
+import { AppDialogHost } from "./components/AppDialogs";
 
 const AppViews = lazy(() => import("./components/AppViews"));
 const ForgotPasswordView = lazy(() => import("./components/ForgotPasswordView"));
@@ -746,6 +747,8 @@ function App() {
             applicationStatus: application.status,
             applicationStatusLabel: application.statusLabel || "",
             applicationId: application.id,
+            canWithdraw: application.canWithdraw,
+            canBackOut: application.canBackOut,
           })),
       )
     : [];
@@ -1208,6 +1211,7 @@ function App() {
     handleApplyToJob,
     handleHireWorker,
     handleWorkerHireDecision,
+    handleWorkerWithdraw,
     handleRejectApplication,
     handleLoginSubmit,
     handleWorkerRegisterSubmit,
@@ -1560,6 +1564,7 @@ function App() {
   const renderWithToasts = (content) => (
     <>
       <GawaGoToastHost toasts={appToasts} onDismiss={dismissToast} />
+      <AppDialogHost />
       {content}
       <ChatWidget currentUser={currentUser} />
     </>
@@ -1578,6 +1583,7 @@ function App() {
           handleApplyToJob={handleApplyToJob}
           handleLogout={handleLogout}
           handleWorkerHireDecision={handleWorkerHireDecision}
+          handleWorkerWithdraw={handleWorkerWithdraw}
           openWorkerApplications={openWorkerApplications}
           openWorkerDashboard={openWorkerDashboard}
           openWorkerFindJobs={openWorkerFindJobs}
@@ -1707,6 +1713,7 @@ function App() {
       handleAdminRejectVerification={handleAdminRejectVerification}
       handleApplyToJob={handleApplyToJob}
       handleCancelJob={handleCancelJob}
+      handleWorkerWithdraw={handleWorkerWithdraw}
       handleConfirmJobCompleted={handleConfirmJobCompleted}
       handleHireWorker={handleHireWorker}
       handleHouseholdChange={handleHouseholdChange}

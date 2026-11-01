@@ -479,7 +479,7 @@ class _DashboardState extends State<_Dashboard> {
     if (!_jobsInFlight.add(job.id)) return;
     try {
       var reason = '';
-      if (job.hiredCount > 0) {
+      if (job.cancelNeedsReason || job.hiredCount > 0) {
         final answer = await showReasonDialog(
           context,
           title: 'Cancel this job?',
@@ -1061,6 +1061,25 @@ class _InProcessJobCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 12.5,
                     color: GawaGoColors.textMuted,
+                  ),
+                ),
+              ),
+            ],
+            if (job.canCancel) ...[
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  onPressed: onCancel,
+                  style: TextButton.styleFrom(
+                    foregroundColor: GawaGoColors.danger,
+                    padding: EdgeInsets.zero,
+                  ),
+                  child: const Text(
+                    'Cancel Job',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.5,
+                    ),
                   ),
                 ),
               ),
@@ -3424,19 +3443,35 @@ class _JobDetailState extends State<_JobDetail> {
                         );
                       }
                     : null,
-                onCancel: job.status == 'open' || job.status == 'assigned'
+                onCancel: job.canCancel
                     ? () async {
-                        final confirmed = await _confirmDialog(
-                          context,
-                          title: 'Cancel this job?',
-                          message: "This can't be undone.",
-                          destructive: true,
-                        );
-                        if (!confirmed) return;
+                        var reason = '';
+                        if (job.cancelNeedsReason) {
+                          final answer = await showReasonDialog(
+                            context,
+                            title: 'Cancel this job?',
+                            message:
+                                'The hired worker will see your reason. '
+                                "This can't be undone.",
+                            label: 'Why are you cancelling?',
+                            actionLabel: 'Cancel Job',
+                          );
+                          if (answer == null || !mounted) return;
+                          reason = answer;
+                        } else {
+                          final confirmed = await _confirmDialog(
+                            context,
+                            title: 'Cancel this job?',
+                            message: "This can't be undone.",
+                            destructive: true,
+                          );
+                          if (!confirmed) return;
+                        }
                         await _run(
                           () => widget.repository.updateJobStatus(
                             job.id,
                             'cancelled',
+                            reason: reason,
                           ),
                         );
                       }
@@ -4252,7 +4287,8 @@ List<HouseholdApplication> _visibleApplicants(HouseholdJob job) => job
     .where(
       (application) =>
           application.status.toLowerCase() != 'rejected' &&
-          application.status.toLowerCase() != 'closed',
+          application.status.toLowerCase() != 'closed' &&
+          application.status.toLowerCase() != 'withdrawn',
     )
     .toList();
 
@@ -4432,6 +4468,10 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
                                 worker,
                               )?.status.toLowerCase() ==
                               'hire_requested',
+                          requestBlockedLabel: _inviteBlockedLabel(
+                            job,
+                            worker,
+                          ),
                           onViewProfile: () => _showWorkerMatchProfile(
                             context,
                             repository: repository,
@@ -6480,6 +6520,22 @@ class _HouseholdNotificationPreview extends StatelessWidget {
 
 TileLayer _tiles() => osmTileLayer();
 
+/// Why a match card can't ask this worker, as the button's label, or null
+/// when it can (fourth scan, 2026-11-01). The button used to stay live for
+/// these and only then refuse.
+String? _inviteBlockedLabel(HouseholdJob job, RecommendedWorker worker) {
+  final status =
+      _applicationForWorker(job, worker)?.status.trim().toLowerCase() ?? '';
+  if (status == 'hired' || status == 'completed') return 'Hired';
+  if (status == 'hire_requested') return 'Request Sent';
+  if (status == 'withdrawn') return 'Withdrew';
+  if (status == 'rejected' || status == 'closed') return 'Not Available';
+  if (worker.verificationStatus.trim().toLowerCase() != 'verified') {
+    return 'Not Verified Yet';
+  }
+  return null;
+}
+
 HouseholdApplication? _applicationForWorker(
   HouseholdJob job,
   RecommendedWorker worker,
@@ -6875,6 +6931,10 @@ class _JobMatchesState extends State<_JobMatches> {
                           onChanged: widget.onChanged,
                         ),
                         onHire: (worker) => _sendRequest(worker),
+                        requestBlockedLabel: (worker) =>
+                            _sentWorkerIds.contains(worker.id)
+                            ? 'Request Sent'
+                            : _inviteBlockedLabel(widget.job, worker),
                       ),
                     ),
                   ],
@@ -6933,6 +6993,9 @@ class _JobMatchesState extends State<_JobMatches> {
                                   worker,
                                 )?.status.toLowerCase() ==
                                 'hire_requested',
+                        requestBlockedLabel: _sentWorkerIds.contains(worker.id)
+                            ? null
+                            : _inviteBlockedLabel(widget.job, worker),
                         onViewProfile: () => _showWorkerMatchProfile(
                           context,
                           repository: widget.repository,
@@ -7139,6 +7202,22 @@ Future<bool> _hireRecommendedWorker({
     notify('A hire request was already sent to this worker.');
     return false;
   }
+  if (existingStatus == 'withdrawn') {
+    notify('This worker withdrew from this job.');
+    return false;
+  }
+  if (!context.mounted) return false;
+  final confirmed = await _confirmDialog(
+    context,
+    title: existingStatus == 'pending'
+        ? 'Accept ${worker.name}?'
+        : 'Send a hire request to ${worker.name}?',
+    message: existingStatus == 'pending'
+        ? 'They applied, so they will be hired and the job moves to In '
+              'progress.'
+        : 'They will be asked to accept or decline ${job.title}.',
+  );
+  if (!confirmed) return false;
 
   try {
     // Same hybrid rule as the website: a worker who applied is hired

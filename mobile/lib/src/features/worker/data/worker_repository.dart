@@ -61,6 +61,15 @@ class WorkerRepository {
     return data.map((item) => WorkerApplication.fromJson(item)).toList();
   }
 
+  /// Takes back a pending application, or backs out of a hire before the
+  /// job starts (the backend requires a reason then).
+  Future<void> withdraw(int applicationId, {String reason = ''}) async {
+    await GawaGoApi.post(
+      '/jobs/applications/$applicationId/withdraw/',
+      body: {'reason': reason},
+    );
+  }
+
   Future<void> decideHireRequest(int applicationId, String decision) async {
     await GawaGoApi.patch(
       '/jobs/applications/$applicationId/decision/',
