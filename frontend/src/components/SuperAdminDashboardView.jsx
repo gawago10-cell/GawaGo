@@ -42,6 +42,19 @@ const EMPTY_ADMIN_FORM = {
   password: "",
 };
 
+// Rating Distribution is one measure (worker count) across an ordered scale
+// (5 stars down to 1), so it gets a sequential ramp -- one hue, more-is-
+// better reads darker -- rather than the flat fill it had before. Built by
+// tinting --gg-leaf-deep toward white; index 0 matches the backend's fixed
+// [5, 4, 3, 2, 1]-star order (apps/analytics/services.py _build_rating_distribution).
+const RATING_DISTRIBUTION_COLORS = [
+  "rgba(92, 122, 52, 1)", // 5 stars
+  "rgba(92, 122, 52, 0.78)", // 4 stars
+  "rgba(92, 122, 52, 0.58)", // 3 stars
+  "rgba(92, 122, 52, 0.4)", // 2 stars
+  "rgba(92, 122, 52, 0.25)", // 1 star
+];
+
 export default function SuperAdminDashboardView({
   currentUser,
   dashboardMetrics,
@@ -72,6 +85,7 @@ export default function SuperAdminDashboardView({
   const [auditLogs, setAuditLogs] = React.useState([]);
   const [auditLoading, setAuditLoading] = React.useState(false);
   const [auditError, setAuditError] = React.useState("");
+  const [showAllRates, setShowAllRates] = React.useState(false);
   React.useEffect(() => {
     if (superAdminSection !== "audit") return;
     let cancelled = false;
@@ -201,6 +215,10 @@ export default function SuperAdminDashboardView({
   const ratingDistribution = analytics.ratingDistribution || [];
   const rateTransparency = analytics.rateTransparency || {};
   const jobCategories = rateTransparency.averageRatesByCategory || analytics.serviceRateSummary || [];
+  // The first few keep this card level with its row; the rest open on request
+  // instead of hiding behind a scroll.
+  const RATE_ROWS_SHOWN = 4;
+  const visibleJobCategories = showAllRates ? jobCategories : jobCategories.slice(0, RATE_ROWS_SHOWN);
   const pricingTrends = rateTransparency.pricingTrends || [];
   const averageWorkerRating = analyticsSummary.averageWorkerRating || "No ratings yet";
   const ratedWorkerCount = analyticsSummary.ratedWorkerCount ?? 0;
@@ -1027,7 +1045,23 @@ export default function SuperAdminDashboardView({
                           <div className="profile-card-head">Average Worker Rating</div>
                           <p className="analytics-chart-note">The average overall rating across all rated workers.</p>
                           <div className="analytics-rating-summary">
-                            <p className="analytics-rating-value mb-1">{averageWorkerRating}</p>
+                            <p className="analytics-rating-value mb-0">{averageWorkerRating}</p>
+                            {ratedWorkerCount > 0 && (
+                              <div className="analytics-rating-stars" role="img" aria-label={`${averageWorkerRating} out of 5 stars`}>
+                                <span className="analytics-rating-stars-track" aria-hidden="true">
+                                  ★★★★★
+                                </span>
+                                <span
+                                  className="analytics-rating-stars-fill"
+                                  aria-hidden="true"
+                                  style={{
+                                    width: `${(Math.max(0, Math.min(5, Number(averageWorkerRating) || 0)) / 5) * 100}%`,
+                                  }}
+                                >
+                                  ★★★★★
+                                </span>
+                              </div>
+                            )}
                             <p className="small text-muted mb-0">{ratedWorkerCount} rated worker profile(s)</p>
                           </div>
                         </div>
@@ -1063,14 +1097,21 @@ export default function SuperAdminDashboardView({
                                   }}
                                 />
                                 <Tooltip />
-                                <Bar dataKey="count" fill="#9ebf5e" radius={[8, 8, 0, 0]} />
+                                <Bar dataKey="count" radius={[8, 8, 0, 0]}>
+                                  {ratingDistribution.map((entry, index) => (
+                                    <Cell
+                                      key={entry.stars}
+                                      fill={RATING_DISTRIBUTION_COLORS[index] || RATING_DISTRIBUTION_COLORS[RATING_DISTRIBUTION_COLORS.length - 1]}
+                                    />
+                                  ))}
+                                </Bar>
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
                         </div>
                       </div>
                       <div className="col-xl-4">
-                        <div className="profile-card analytics-card h-100">
+                        <div className="profile-card analytics-card analytics-rates-card h-100">
                           <div className="profile-card-head">Average Rates by Category</div>
                           <p className="analytics-chart-note">
                             The average rate households offer for each service, and how many job posts it comes from.
@@ -1080,17 +1121,17 @@ export default function SuperAdminDashboardView({
                               <thead>
                                 <tr>
                                   <th>Category</th>
-                                  <th>Posts</th>
-                                  <th>Average Rate</th>
+                                  <th className="text-end">Posts</th>
+                                  <th className="text-end">Average Rate</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {jobCategories.length > 0 ? (
-                                  jobCategories.map((item) => (
+                                  visibleJobCategories.map((item) => (
                                     <tr key={item.skill}>
                                       <td>{item.skill}</td>
-                                      <td>{item.count}</td>
-                                      <td>{formatCurrency(item.averageRate)}</td>
+                                      <td className="text-end">{item.count}</td>
+                                      <td className="text-end">{formatCurrency(item.averageRate)}</td>
                                     </tr>
                                   ))
                                 ) : (
@@ -1103,6 +1144,16 @@ export default function SuperAdminDashboardView({
                               </tbody>
                             </table>
                           </div>
+                          {jobCategories.length > RATE_ROWS_SHOWN && (
+                            <button
+                              type="button"
+                              className="analytics-rates-toggle"
+                              aria-expanded={showAllRates}
+                              onClick={() => setShowAllRates((open) => !open)}
+                            >
+                              {showAllRates ? "Show fewer" : `Show all ${jobCategories.length} categories`}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

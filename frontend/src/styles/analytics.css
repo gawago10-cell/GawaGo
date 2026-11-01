@@ -428,8 +428,10 @@
 
 .analytics-rating-summary {
   display: grid;
-  place-items: center;
-  min-height: 15rem;
+  justify-items: center;
+  align-content: center;
+  gap: 0.6rem;
+  min-height: 12rem;
   padding: 1rem;
   text-align: center;
 }
@@ -439,6 +441,54 @@
   font-size: 3rem;
   font-weight: 800;
   line-height: 1;
+}
+
+/* A smooth proportional fill (not discrete whole/half stars) over the same
+   glyph row -- the muted track sizes the box, the green fill sits on top
+   clipped to rating/5. */
+.analytics-rating-stars {
+  position: relative;
+  display: inline-block;
+  font-size: 1.3rem;
+  line-height: 1;
+  letter-spacing: 0.14em;
+}
+
+.analytics-rating-stars-track {
+  color: var(--gg-tayabas-border, #e0d8cc);
+}
+
+.analytics-rating-stars-fill {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--gg-leaf-deep, #5c7a34);
+}
+
+/* Average Rates by Category shows its first rows and a "Show all" button,
+   so a growing skill catalog can't stretch this row's two sibling cards into
+   dead space again (2026-11-01). */
+.analytics-rates-toggle {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-top: 1px solid #e7dfd3;
+  background: transparent;
+  color: var(--gg-leaf-text, #4a632a);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.analytics-rates-toggle:is(:hover, :focus-visible) {
+  background: var(--gg-leaf-tint, rgba(158, 191, 94, 0.14));
+}
+
+.analytics-rates-card td.text-end,
+.analytics-rates-card th.text-end {
+  white-space: nowrap;
 }
 
 .verification-detail-panel {
@@ -500,7 +550,7 @@
   }
 
   .analytics-rating-summary {
-    min-height: 10rem;
+    min-height: 9rem;
   }
 }
 
