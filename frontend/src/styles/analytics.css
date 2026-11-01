@@ -466,24 +466,37 @@
   color: var(--gg-leaf-deep, #5c7a34);
 }
 
-/* Average Rates by Category shows its first rows and a "Show all" button,
-   so a growing skill catalog can't stretch this row's two sibling cards into
-   dead space again (2026-11-01). */
-.analytics-rates-toggle {
-  display: block;
-  width: 100%;
-  padding: 0.6rem 1rem;
-  border: 0;
-  border-top: 1px solid #e7dfd3;
-  background: transparent;
-  color: var(--gg-leaf-text, #4a632a);
-  font-size: 0.85rem;
-  font-weight: 700;
-  text-align: center;
+/* Average Rates by Category: the table takes whatever height its row
+   leaves (the rating and distribution cards set it) and scrolls inside,
+   with the header pinned, so a long category list never stretches the
+   row. 12rem is its floor when the cards stack on narrower screens. */
+.analytics-rates-card {
+  display: flex;
+  flex-direction: column;
 }
 
-.analytics-rates-toggle:is(:hover, :focus-visible) {
-  background: var(--gg-leaf-tint, rgba(158, 191, 94, 0.14));
+.analytics-rates-card .table-responsive {
+  flex: 1 1 0;
+  min-height: 12rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gg-leaf, #9ebf5e) transparent;
+}
+
+.analytics-rates-card .table-responsive:focus-visible {
+  outline: 2px solid var(--gg-leaf-deep, #5c7a34);
+  outline-offset: -2px;
+}
+
+/* The header colour sits on <thead> and the cells are transparent
+   (.worker-dashboard .table thead th in main.css, !important), so a pinned
+   cell needs its own fill or the rows show through it; the extra classes
+   outrank that rule. */
+.superadmin-analytics .analytics-rates-card .table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--gg-tayabas-header, #f1e7cc) !important;
 }
 
 .analytics-rates-card td.text-end,

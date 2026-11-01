@@ -85,7 +85,6 @@ export default function SuperAdminDashboardView({
   const [auditLogs, setAuditLogs] = React.useState([]);
   const [auditLoading, setAuditLoading] = React.useState(false);
   const [auditError, setAuditError] = React.useState("");
-  const [showAllRates, setShowAllRates] = React.useState(false);
   React.useEffect(() => {
     if (superAdminSection !== "audit") return;
     let cancelled = false;
@@ -215,10 +214,6 @@ export default function SuperAdminDashboardView({
   const ratingDistribution = analytics.ratingDistribution || [];
   const rateTransparency = analytics.rateTransparency || {};
   const jobCategories = rateTransparency.averageRatesByCategory || analytics.serviceRateSummary || [];
-  // The first few keep this card level with its row; the rest open on request
-  // instead of hiding behind a scroll.
-  const RATE_ROWS_SHOWN = 4;
-  const visibleJobCategories = showAllRates ? jobCategories : jobCategories.slice(0, RATE_ROWS_SHOWN);
   const pricingTrends = rateTransparency.pricingTrends || [];
   const averageWorkerRating = analyticsSummary.averageWorkerRating || "No ratings yet";
   const ratedWorkerCount = analyticsSummary.ratedWorkerCount ?? 0;
@@ -1116,7 +1111,7 @@ export default function SuperAdminDashboardView({
                           <p className="analytics-chart-note">
                             The average rate households offer for each service, and how many job posts it comes from.
                           </p>
-                          <div className="table-responsive">
+                          <div className="table-responsive" tabIndex={0} aria-label="Average rates by category (scrolls)">
                             <table className="table align-middle mb-0 analytics-table">
                               <thead>
                                 <tr>
@@ -1127,7 +1122,7 @@ export default function SuperAdminDashboardView({
                               </thead>
                               <tbody>
                                 {jobCategories.length > 0 ? (
-                                  visibleJobCategories.map((item) => (
+                                  jobCategories.map((item) => (
                                     <tr key={item.skill}>
                                       <td>{item.skill}</td>
                                       <td className="text-end">{item.count}</td>
@@ -1144,16 +1139,6 @@ export default function SuperAdminDashboardView({
                               </tbody>
                             </table>
                           </div>
-                          {jobCategories.length > RATE_ROWS_SHOWN && (
-                            <button
-                              type="button"
-                              className="analytics-rates-toggle"
-                              aria-expanded={showAllRates}
-                              onClick={() => setShowAllRates((open) => !open)}
-                            >
-                              {showAllRates ? "Show fewer" : `Show all ${jobCategories.length} categories`}
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
