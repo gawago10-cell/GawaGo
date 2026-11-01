@@ -1224,7 +1224,7 @@ export function useGawaGoActions({
     let cancelReason = "";
     if (hasHiredWorker) {
       const answer = await askReason({
-        title: `Cancel ${job.title || "this job"}?`,
+        title: `Cancel ${job.jobTitle || job.title || "this job"}?`,
         message: "The hired worker is told the job is off and why. This can't be undone.",
         label: "Why are you cancelling?",
         placeholder: "e.g. The worker didn't arrive on the agreed day.",
@@ -1241,7 +1241,7 @@ export function useGawaGoActions({
       }
     } else {
       const confirmed = await confirmDialog({
-        title: `Cancel ${job.title || "this job"}?`,
+        title: `Cancel ${job.jobTitle || job.title || "this job"}?`,
         message: "Workers no longer see it, and anyone waiting is told. This can't be undone.",
         confirmLabel: "Cancel job",
         cancelLabel: "Keep job",

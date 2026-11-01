@@ -1473,7 +1473,7 @@ export default function AppViews({
           }
         : {
             title: `Send a hire request to ${workerName}?`,
-            message: `They will be asked to accept or decline ${selectedJob?.title || "this job"}.`,
+            message: `They will be asked to accept or decline ${selectedJob?.jobTitle || selectedJob?.title || "this job"}.`,
             confirmLabel: "Send request",
           },
     );
