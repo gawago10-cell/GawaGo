@@ -69,6 +69,8 @@ describe("view guard", () => {
   it("sends signed-out users and unknown roles to login, never a worker screen", () => {
     expect(resolveGuardedView(null, "worker-dashboard")).toBe("login");
     expect(resolveGuardedView(null, "home")).toBeNull();
+    // The sign-up code step comes before there is a session.
+    expect(resolveGuardedView(null, "confirm-email")).toBeNull();
     expect(resolveGuardedView({ role: "moderator" }, "worker-dashboard")).toBe("login");
     expect(dashboardViewForRole(null)).toBe("login");
   });
@@ -83,25 +85,27 @@ describe("admin sidebar", () => {
   function renderAdminSidebar(adminSection, handlers = {}) {
     const openAdminDashboard = handlers.openAdminDashboard || vi.fn();
     const openAdminWorkersHistory = handlers.openAdminWorkersHistory || vi.fn();
+    const openAdminAccount = handlers.openAdminAccount || vi.fn();
     render(
       <DashboardSidebar
         brand="Admin Panel"
-        items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory })}
+        items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory, openAdminAccount })}
       />,
     );
-    return { openAdminDashboard, openAdminWorkersHistory };
+    return { openAdminDashboard, openAdminWorkersHistory, openAdminAccount };
   }
 
   it("lists only admin pages -- no My Complaints", () => {
     renderAdminSidebar("verification");
     const labels = screen.getAllByRole("button").map((button) => button.textContent.trim());
-    expect(labels).toEqual(["Verification Queue", "Workers History"]);
+    expect(labels).toEqual(["Verification Queue", "Workers History", "My Account"]);
     expect(screen.queryByText("My Complaints")).toBeNull();
   });
 
   it.each([
     ["verification", "Verification Queue"],
     ["history", "Workers History"],
+    ["account", "My Account"],
   ])("highlights exactly one item in the %s section", (section, activeLabel) => {
     renderAdminSidebar(section);
     const active = screen.getAllByRole("button").filter((button) => button.getAttribute("aria-current") === "page");
@@ -113,6 +117,13 @@ describe("admin sidebar", () => {
     const { openAdminWorkersHistory, openAdminDashboard } = renderAdminSidebar("verification");
     fireEvent.click(screen.getByText("Workers History"));
     expect(openAdminWorkersHistory).toHaveBeenCalledTimes(1);
+    expect(openAdminDashboard).not.toHaveBeenCalled();
+  });
+
+  it("My Account opens the admin's change-password page", () => {
+    const { openAdminAccount, openAdminDashboard } = renderAdminSidebar("verification");
+    fireEvent.click(screen.getByText("My Account"));
+    expect(openAdminAccount).toHaveBeenCalledTimes(1);
     expect(openAdminDashboard).not.toHaveBeenCalled();
   });
 });

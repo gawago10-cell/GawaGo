@@ -62,8 +62,16 @@ class HouseholdRepository {
     );
   }
 
-  Future<void> updateJobStatus(int jobId, String status) async {
-    await GawaGoApi.patch('/jobs/$jobId/', body: {'status': status});
+  /// Cancelling a job with a hired worker needs [reason]; the worker reads it.
+  Future<void> updateJobStatus(
+    int jobId,
+    String status, {
+    String reason = '',
+  }) async {
+    await GawaGoApi.patch(
+      '/jobs/$jobId/',
+      body: {'status': status, if (reason.isNotEmpty) 'cancel_reason': reason},
+    );
   }
 
   /// Edits an open job. The backend refuses changes once a worker is hired

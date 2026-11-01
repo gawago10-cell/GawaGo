@@ -15,6 +15,8 @@ import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
+import '../../../shared/widgets/change_password_dialog.dart';
+import '../../../shared/widgets/rejected_submission_note.dart';
 import '../../../shared/widgets/job_image_gallery.dart';
 import '../../../shared/widgets/job_schedule_box.dart';
 import '../../../shared/widgets/list_map_view_toggle.dart';
@@ -258,16 +260,22 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
               ),
             )
             .toList(),
-        accountDestinations: _accountPages
-            .map(
-              (page) => GawaGoDrawerDestination(
-                icon: _icon(page),
-                label: _navLabel(page),
-                selected: page == _page,
-                onTap: () => _select(page),
-              ),
-            )
-            .toList(),
+        accountDestinations: [
+          ..._accountPages.map(
+            (page) => GawaGoDrawerDestination(
+              icon: _icon(page),
+              label: _navLabel(page),
+              selected: page == _page,
+              onTap: () => _select(page),
+            ),
+          ),
+          GawaGoDrawerDestination(
+            icon: Icons.lock_outline,
+            label: 'Change Password',
+            selected: false,
+            onTap: () => showChangePasswordDialog(context),
+          ),
+        ],
         onLogout: _logout,
         actions: _page == _WorkerPage.notifications
             ? [
@@ -4735,6 +4743,17 @@ class _CertificationTile extends StatelessWidget {
                           ),
                         ),
                       ],
+                      if (certificate.verificationStatus == 'rejected' &&
+                          certificate.verificationNotes.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Reason: ${certificate.verificationNotes}',
+                          style: const TextStyle(
+                            color: GawaGoColors.textMuted,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -6084,6 +6103,10 @@ class _WorkerVerificationState extends State<_WorkerVerification> {
                 ),
               )
             else ...[
+              if (latest != null) ...[
+                RejectedSubmissionNote(reason: latest.reviewNote),
+                const SizedBox(height: 12),
+              ],
               const _WorkerVerificationIntro(),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(

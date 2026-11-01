@@ -2072,7 +2072,7 @@ class JobLifecycleSafeguardTests(TestCase):
     def test_status_change_still_allowed_after_hiring(self):
         self._hire()
 
-        response = self.client.patch(reverse("job-detail", args=[self.job.id]), {"status": "cancelled"}, format="json")
+        response = self.client.patch(reverse("job-detail", args=[self.job.id]), {"status": "cancelled", "cancel_reason": "Plans changed."}, format="json")
 
         self.assertEqual(response.status_code, 200)
 
@@ -2107,7 +2107,7 @@ class JobLifecycleSafeguardTests(TestCase):
     def test_hired_worker_is_notified_when_job_is_cancelled(self):
         self._hire()
 
-        self.client.patch(reverse("job-detail", args=[self.job.id]), {"status": "cancelled"}, format="json")
+        self.client.patch(reverse("job-detail", args=[self.job.id]), {"status": "cancelled", "cancel_reason": "Plans changed."}, format="json")
 
         self.assertTrue(Notification.objects.filter(recipient=self.worker, title="Job cancelled").exists())
 
@@ -3097,4 +3097,40 @@ class SecondScanFixTests(TestCase):
         review(5, "3.5", 2, system=True)
         review(6, "3.5", 1, system=True)
         self.assertEqual(calculate_rating_trend(self.worker), "neutral")
+
+
+class CancelReasonTests(TestCase):
+    """Cancelling a job with a hired worker needs a reason the worker reads
+    (third scan, 2026-11-01)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.home = User.objects.create_user(username="cr-home", password="password", first_name="Emman", last_name="Aviles")
+        UserProfile.objects.create(user=self.home, role=UserProfile.ROLE_HOUSEHOLD, verification_status="verified")
+        self.worker = User.objects.create_user(username="cr-worker", password="password")
+        UserProfile.objects.create(user=self.worker, role=UserProfile.ROLE_WORKER, verification_status="verified")
+        self.job = JobPosting.objects.create(
+            household=self.home, title="Fix faucet", job_type="Plumbing", required_skill="Plumbing", schedule="One-Time",
+            location_label="Isabang, Tayabas", latitude="13.9622745", longitude="121.5632841", service_rate="500.00",
+            status=JobPosting.STATUS_ASSIGNED,
+        )
+        JobApplication.objects.create(job=self.job, worker=self.worker, status=JobApplication.STATUS_HIRED)
+        self.client.force_authenticate(user=self.home)
+
+    def test_a_hired_job_needs_a_reason_to_cancel(self):
+        url = reverse("job-detail", args=[self.job.id])
+        refused = self.client.patch(url, {"status": "cancelled"}, format="json")
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("cancel_reason", refused.data)
+
+        done = self.client.patch(url, {"status": "cancelled", "cancel_reason": "The building fixed it."}, format="json")
+        self.assertEqual(done.status_code, 200)
+        notice = Notification.objects.get(recipient=self.worker, title="Job cancelled")
+        self.assertEqual(notice.message, "Emman Aviles cancelled Fix faucet. Reason: The building fixed it.")
+
+    def test_a_job_with_nobody_hired_cancels_without_a_reason(self):
+        JobApplication.objects.filter(job=self.job).update(status=JobApplication.STATUS_PENDING)
+        JobPosting.objects.filter(pk=self.job.pk).update(status=JobPosting.STATUS_OPEN)
+        response = self.client.patch(reverse("job-detail", args=[self.job.id]), {"status": "cancelled"}, format="json")
+        self.assertEqual(response.status_code, 200)
 

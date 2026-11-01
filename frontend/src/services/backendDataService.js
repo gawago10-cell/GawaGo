@@ -252,6 +252,8 @@ export async function fetchMyPortfolio() {
       issueDate: item.issue_date || "",
       expiryDate: item.expiry_date || "",
       verificationStatus: item.verification_status || "pending",
+      // The admin's reason when it was rejected (shown to the worker).
+      verificationNotes: item.verification_notes || "",
       isVerified: Boolean(item.is_verified),
       certificatePreview: item.certificate_file_url || "",
       fileType: item.certificate_file_type || "",
@@ -331,6 +333,39 @@ export async function fetchRecommendedWorkers(jobId, rank) {
   }
   const data = await readResponseData(response);
   return Array.isArray(data?.results) ? data.results : [];
+}
+
+/** Change the signed-in account's password. */
+export async function changePassword(currentPassword, newPassword) {
+  const response = await apiRequest("accounts/me/password/", {
+    method: "POST",
+    auth: true,
+    body: { current_password: currentPassword, new_password: newPassword },
+  });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "Unable to change your password."));
+  }
+  return data;
+}
+
+/** The sign-up code emailed when REQUIRE_SIGNUP_EMAIL_CODE is on. */
+export async function verifySignupCode(email, token) {
+  const response = await apiRequest("accounts/verify-signup/", { method: "POST", body: { email, token } });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "That code didn't work."));
+  }
+  return data;
+}
+
+export async function resendSignupCode(email) {
+  const response = await apiRequest("accounts/resend-signup-code/", { method: "POST", body: { email } });
+  const data = await readResponseData(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data, "Unable to send another code."));
+  }
+  return data;
 }
 
 /** Home page totals anyone may see: counts only, no profiles. */

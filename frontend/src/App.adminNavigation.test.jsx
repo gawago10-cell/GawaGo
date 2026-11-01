@@ -72,7 +72,7 @@ describe("staff admin navigation", () => {
     await logIn("staff");
 
     await waitFor(() => expect(screen.getByText("Admin Panel")).toBeTruthy());
-    expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History"]);
+    expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History", "My Account"]);
     expect(screen.queryByText("My Complaints")).toBeNull();
     expect(screen.queryByText("Find Jobs")).toBeNull();
     expect(activeLabels()).toEqual(["Verification Queue"]);
@@ -99,7 +99,7 @@ describe("staff admin navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: /Back/ }));
     await waitFor(() => expect(activeLabels()).toEqual(["Verification Queue"]));
     expect(screen.getByText("Admin Panel")).toBeTruthy();
-    expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History"]);
+    expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History", "My Account"]);
   });
 });
 
@@ -131,7 +131,7 @@ describe("a newly created admin's first sign-in", () => {
     await logIn("new-admin");
 
     await waitFor(() => expect(screen.getByText("Admin Panel")).toBeTruthy());
-    expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History"]);
+    expect(sidebarLabels()).toEqual(["Verification Queue", "Workers History", "My Account"]);
     expect(screen.queryByText("Find Jobs")).toBeNull();
   });
 });

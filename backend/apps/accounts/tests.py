@@ -12,6 +12,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
 from apps.accounts.models import (
@@ -1397,3 +1398,127 @@ class SkillListSyncTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(self.profile_skills(), ["Ironing"])
+
+
+class ThirdScanAccountTests(TestCase):
+    """Fixes from the third scan of 2026-11-01: changing a password, certificates
+    that need a document and a rejection reason, who may open a certificate,
+    and the optional sign-up email code."""
+
+    def setUp(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client = APIClient()
+        self.worker = User.objects.create_user(username="t3-worker", password="OldPass#2026", email="w@example.com")
+        UserProfile.objects.create(user=self.worker, role=UserProfile.ROLE_WORKER, verification_status="verified")
+        self.other_worker = User.objects.create_user(username="t3-other", password="x-Pass#2026")
+        UserProfile.objects.create(user=self.other_worker, role=UserProfile.ROLE_WORKER)
+        self.household = User.objects.create_user(username="t3-home", password="x-Pass#2026")
+        UserProfile.objects.create(user=self.household, role=UserProfile.ROLE_HOUSEHOLD)
+        self.admin = User.objects.create_user(username="t3-super", password="x-Pass#2026", is_staff=True, is_superuser=True)
+        self.png = lambda: SimpleUploadedFile("cert.png", PNG_BYTES, content_type="image/png")
+
+    def auth(self, user):
+        self.client.force_authenticate(user=user)
+
+    def test_a_signed_in_user_can_change_their_password(self):
+        self.auth(self.worker)
+        url = reverse("change-password")
+        wrong = self.client.post(url, {"current_password": "nope", "new_password": "NewPass#2027"}, format="json")
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIn("current_password", wrong.data)
+        weak = self.client.post(url, {"current_password": "OldPass#2026", "new_password": "12345678"}, format="json")
+        self.assertEqual(weak.status_code, 400)
+        ok = self.client.post(url, {"current_password": "OldPass#2026", "new_password": "NewPass#2027"}, format="json")
+        self.assertEqual(ok.status_code, 200)
+        self.worker.refresh_from_db()
+        self.assertTrue(self.worker.check_password("NewPass#2027"))
+        self.assertTrue(Notification.objects.filter(recipient=self.worker, title="Password changed").exists())
+
+    def test_a_certificate_needs_a_document_to_be_sent_or_approved(self):
+        from apps.accounts.models import WorkerCertification
+
+        self.auth(self.worker)
+        url = reverse("worker-certification")
+        no_file = self.client.post(url, {"certificate_type": "tesda", "certificate_name": "Cookery NC II"}, format="multipart")
+        self.assertEqual(no_file.status_code, 400)
+        self.assertIn("certificate_file", no_file.data)
+
+        # One sent before the rule, with no file, can't be approved.
+        legacy = WorkerCertification.objects.create(worker=self.worker, certificate_name="Old one")
+        self.auth(self.admin)
+        approve = self.client.patch(
+            reverse("certificate-admin-verify", args=[legacy.id]), {"verification_status": "approved"}, format="json"
+        )
+        self.assertEqual(approve.status_code, 400)
+        self.assertIn("no document", approve.data["detail"])
+
+    def test_a_rejection_needs_a_reason_and_the_worker_reads_it(self):
+        self.auth(self.worker)
+        sent = self.client.post(
+            reverse("worker-certification"),
+            {"certificate_type": "tesda", "certificate_name": "Housekeeping NC II", "certificate_file": self.png()},
+            format="multipart",
+        )
+        self.assertEqual(sent.status_code, 201)
+        self.auth(self.admin)
+        url = reverse("certificate-admin-verify", args=[sent.data["id"]])
+        self.assertEqual(self.client.patch(url, {"verification_status": "rejected"}, format="json").status_code, 400)
+        rejected = self.client.patch(
+            url, {"verification_status": "rejected", "verification_notes": "The photo is blurry."}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 200)
+        notice = Notification.objects.get(recipient=self.worker, title="Certificate Rejected")
+        self.assertIn("Reason: The photo is blurry.", notice.message)
+
+    def test_households_may_open_an_approved_certificate_but_other_workers_may_not(self):
+        self.auth(self.worker)
+        sent = self.client.post(
+            reverse("worker-certification"),
+            {"certificate_type": "tesda", "certificate_name": "Housekeeping NC II", "certificate_file": self.png()},
+            format="multipart",
+        )
+        self.auth(self.admin)
+        self.client.patch(reverse("certificate-admin-verify", args=[sent.data["id"]]), {"verification_status": "approved"}, format="json")
+        file_url = reverse("worker-certification-file", args=[sent.data["id"]])
+        for user, expected in ((self.household, 200), (self.worker, 200), (self.admin, 200), (self.other_worker, 404)):
+            self.auth(user)
+            self.assertEqual(self.client.get(file_url).status_code, expected, user.username)
+
+    @override_settings(REQUIRE_SIGNUP_EMAIL_CODE=True, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_with_the_setting_on_a_new_account_waits_for_its_email_code(self):
+        import re
+
+        self.client.force_authenticate(user=None)
+        payload = {
+            "username": "t3-new", "email": "new@example.com", "password": "Signup#2026", "role": "household",
+            "first_name": "New", "last_name": "Home", "phone": "09170000000", "location_label": "Isabang, Tayabas City",
+            "latitude": "13.9622745", "longitude": "121.5632841",
+        }
+        created = self.client.post(reverse("register"), payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertTrue(created.data["verification_required"])
+        self.assertFalse(User.objects.get(username="t3-new").is_active)
+
+        login = self.client.post(reverse("login"), {"username": "t3-new", "password": "Signup#2026"}, format="json")
+        self.assertEqual(login.status_code, 403)
+        self.assertTrue(login.data["verification_required"])
+
+        code = re.search(r"code is: (\d{6})", mail.outbox[-1].body).group(1)
+        self.assertEqual(self.client.post(reverse("verify-signup"), {"email": "new@example.com", "token": code}, format="json").status_code, 200)
+        self.assertEqual(self.client.post(reverse("login"), {"username": "t3-new", "password": "Signup#2026"}, format="json").status_code, 200)
+
+    def test_with_the_setting_off_sign_up_works_as_before(self):
+        created = self.client.post(
+            reverse("register"),
+            {
+                "username": "t3-plain", "email": "plain@example.com", "password": "Signup#2026", "role": "household",
+                "first_name": "Plain", "last_name": "Home", "phone": "09170000001", "location_label": "Isabang, Tayabas City",
+                "latitude": "13.9622745", "longitude": "121.5632841",
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertNotIn("verification_required", created.data)
+        self.assertTrue(User.objects.get(username="t3-plain").is_active)
+

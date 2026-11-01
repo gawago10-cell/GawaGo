@@ -104,6 +104,7 @@ import ChatWidget from "./components/ChatWidget";
 
 const AppViews = lazy(() => import("./components/AppViews"));
 const ForgotPasswordView = lazy(() => import("./components/ForgotPasswordView"));
+const ConfirmEmailView = lazy(() => import("./components/ConfirmEmailView"));
 const SELECTED_JOB_STORAGE_KEY = "gawago-selected-job";
 const SuperAdminDashboardView = lazy(() => import("./components/SuperAdminDashboardView"));
 const MyComplaintsView = lazy(() => import("./components/MyComplaintsView"));
@@ -205,6 +206,8 @@ function App() {
   });
   const [loginError, setLoginError] = useState("");
   const [forgotPasswordStep, setForgotPasswordStep] = useState("email");
+  // The address waiting on its sign-up code (REQUIRE_SIGNUP_EMAIL_CODE).
+  const [pendingSignupEmail, setPendingSignupEmail] = useState("");
   const [forgotPasswordForm, setForgotPasswordForm] = useState({
     email: "",
     token: "",
@@ -1116,6 +1119,7 @@ function App() {
     markNotificationRead,
     openAdminDashboard,
     openAdminWorkersHistory,
+    openAdminAccount,
     openFilePreview,
     openForgotPassword,
     openHouseholdDashboard,
@@ -1224,6 +1228,7 @@ function App() {
     isSubmittingJob,
     isActionPending,
   } = useGawaGoActions({
+    setPendingSignupEmail,
     EMPTY_HOUSEHOLD_FORM,
     EMPTY_HOUSEHOLD_REVIEW_FORM,
     EMPTY_WORKER_FEEDBACK_FORM,
@@ -1615,6 +1620,22 @@ function App() {
       </Suspense>
     );
   }
+  if (view === "confirm-email") {
+    return renderWithToasts(
+      <Suspense fallback={<ViewLoading />}>
+        <ConfirmEmailView
+          email={pendingSignupEmail}
+          onOpenLogin={openLogin}
+          onConfirmed={() => {
+            setPendingSignupEmail("");
+            openLogin();
+            window.alert("Email confirmed. You can now log in.");
+          }}
+        />
+      </Suspense>,
+    );
+  }
+
   if (view === "forgot-password") {
     return renderWithToasts(
       <Suspense fallback={<ViewLoading />}>
@@ -1735,6 +1756,7 @@ function App() {
       markNotificationRead={markNotificationRead}
       openAdminDashboard={openAdminDashboard}
       openAdminWorkersHistory={openAdminWorkersHistory}
+      openAdminAccount={openAdminAccount}
       openFilePreview={openFilePreview}
       openForgotPassword={openForgotPassword}
       openHouseholdDashboard={openHouseholdDashboard}

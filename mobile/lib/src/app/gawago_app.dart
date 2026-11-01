@@ -981,7 +981,7 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
 
     setState(() => _isSubmitting = true);
     try {
-      await GawaGoApi.register(
+      final created = await GawaGoApi.register(
         role: isWorker ? 'worker' : 'household',
         firstName: _firstNameController.text,
         lastName: _lastNameController.text,
@@ -1002,6 +1002,23 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
         longitude: _selectedLocation?.longitude,
       );
       if (!mounted) return;
+      if (created['verification_required'] == true) {
+        final confirmed = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => ConfirmEmailScreen(
+              email: created['email']?.toString() ?? _emailController.text,
+            ),
+          ),
+        );
+        if (!mounted) return;
+        _showMessage(
+          confirmed == true
+              ? 'Email confirmed. Please login to continue.'
+              : 'Account created. Enter the emailed code when you log in.',
+        );
+        widget.onLogin();
+        return;
+      }
       _showMessage('Account created. Please login to continue.');
       widget.onLogin();
     } catch (error) {
@@ -2037,6 +2054,22 @@ class _LoginPanelState extends State<_LoginPanel> {
         MaterialPageRoute(builder: (_) => const _SessionGate()),
         (route) => false,
       );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      if (error.needsEmailCode) {
+        final confirmed = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => ConfirmEmailScreen(
+              email: error.data?['email']?.toString() ?? '',
+            ),
+          ),
+        );
+        if (mounted && confirmed == true) {
+          _showMessage('Email confirmed. You can log in now.');
+        }
+        return;
+      }
+      _showMessage(friendlyApiError(error));
     } catch (error) {
       if (!mounted) return;
       _showMessage(friendlyApiError(error));
@@ -2180,6 +2213,158 @@ class _LoginPanelState extends State<_LoginPanel> {
 /// 3-step reset screen matching the web app's forgot-password page exactly:
 /// enter email, enter the OTP in boxed digit fields, then set a new
 /// password -- each its own step rather than one combined dialog.
+/// The step after sign-up when the backend holds a new account until its
+/// emailed code is entered (REQUIRE_SIGNUP_EMAIL_CODE). Pops true once the
+/// code is accepted.
+class ConfirmEmailScreen extends StatefulWidget {
+  const ConfirmEmailScreen({super.key, required this.email});
+
+  final String email;
+
+  @override
+  State<ConfirmEmailScreen> createState() => _ConfirmEmailScreenState();
+}
+
+class _ConfirmEmailScreenState extends State<ConfirmEmailScreen> {
+  static const _codeLength = 6;
+
+  String _code = '';
+  bool _busy = false;
+  String? _notice;
+  String? _error;
+
+  Future<void> _confirm() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      await GawaGoApi.verifySignupCode(email: widget.email, token: _code);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted) setState(() => _error = friendlyApiError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resend() async {
+    setState(() {
+      _error = null;
+      _notice = null;
+    });
+    try {
+      await GawaGoApi.resendSignupCode(widget.email);
+      if (mounted) {
+        setState(
+          () => _notice = 'A new code is on its way to ${widget.email}.',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = friendlyApiError(error));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: GawaGoColors.deepGreen,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(26, 28, 26, 30),
+                decoration: BoxDecoration(
+                  color: GawaGoColors.cardGreen.withValues(alpha: 0.97),
+                  borderRadius: BorderRadius.circular(17),
+                  border: Border.all(color: GawaGoColors.borderGreen),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        _BackChip(
+                          label: 'Back',
+                          onPressed: () => Navigator.of(context).pop(false),
+                        ),
+                        const Text(
+                          'Confirm your email',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 21,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    if (_notice != null) ...[
+                      _InlineBanner(text: _notice!, isError: false),
+                      const SizedBox(height: 14),
+                    ],
+                    if (_error != null) ...[
+                      _InlineBanner(text: _error!, isError: true),
+                      const SizedBox(height: 14),
+                    ],
+                    Text(
+                      'Enter the $_codeLength-digit code',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'We sent it to ${widget.email.isEmpty ? "your email" : widget.email}.',
+                      style: const TextStyle(
+                        color: GawaGoColors.mutedText,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    OtpCodeField(
+                      length: _codeLength,
+                      enabled: !_busy,
+                      onChanged: (value) => setState(() => _code = value),
+                    ),
+                    const SizedBox(height: 20),
+                    _PrimaryButton(
+                      label: _busy ? 'Checking...' : 'Confirm Email',
+                      onPressed: (_busy || _code.length != _codeLength)
+                          ? null
+                          : _confirm,
+                    ),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: TextButton(
+                        onPressed: _busy ? null : _resend,
+                        child: const Text("Didn't get a code? Send another"),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 
@@ -2579,7 +2764,10 @@ class _FormLabel extends StatelessWidget {
         children: const [
           TextSpan(
             text: '\u00A0*',
-            style: TextStyle(color: _signupErrorColor, fontWeight: FontWeight.w900),
+            style: TextStyle(
+              color: _signupErrorColor,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ],
       ),
@@ -2709,7 +2897,9 @@ class _StatsCard extends StatefulWidget {
 }
 
 class _StatsCardState extends State<_StatsCard> {
-  final Future<List<dynamic>> _jobs = GawaGoApi.getList('/jobs/?accepting=true');
+  final Future<List<dynamic>> _jobs = GawaGoApi.getList(
+    '/jobs/?accepting=true',
+  );
 
   @override
   Widget build(BuildContext context) {

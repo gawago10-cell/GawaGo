@@ -158,12 +158,16 @@ export default function AdminCredentialsQueue() {
     try {
       let notes = "";
       if (decision === "rejected") {
-        const answer = window.prompt("Reason for rejecting (shown to the worker, optional):", "");
+        const answer = window.prompt("Reason for rejecting (the worker will see this):", "");
         // Cancel means "don't reject", not "reject with no reason".
         if (answer === null) {
           return;
         }
-        notes = answer;
+        notes = answer.trim();
+        if (!notes) {
+          window.alert("Please give a reason so the worker knows what to fix.");
+          return;
+        }
       }
       const updated = await reviewCertificate(card.id, { status: decision, notes });
       setCertificates((prev) => prev.map((item) => (item.id === card.id ? updated : item)));
@@ -323,9 +327,15 @@ function CredentialCard({ card, saving, onApprove, onReject }) {
             View Document
           </button>
         ) : (
-          <span className="admin-credential-btn ghost disabled">No file</span>
+          <span className="admin-credential-btn ghost disabled">No document attached</span>
         )}
-        <button type="button" className="admin-credential-btn approve" disabled={saving} onClick={onApprove}>
+        <button
+          type="button"
+          className="admin-credential-btn approve"
+          disabled={saving || !card.fileUrl}
+          title={card.fileUrl ? undefined : "There's no document to review"}
+          onClick={onApprove}
+        >
           Approve
         </button>
         <button type="button" className="admin-credential-btn reject" disabled={saving} onClick={onReject}>

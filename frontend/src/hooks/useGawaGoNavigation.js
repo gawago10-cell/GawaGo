@@ -168,6 +168,11 @@ export function useGawaGoNavigation({
     setView("admin-dashboard");
   }
 
+  function openAdminAccount() {
+    setAdminSection("account");
+    setView("admin-dashboard");
+  }
+
   function openHouseholdDashboard() {
     setView("household-dashboard");
   }
@@ -363,6 +368,7 @@ export function useGawaGoNavigation({
     markNotificationRead,
     openAdminDashboard,
     openAdminWorkersHistory,
+    openAdminAccount,
     openFilePreview,
     openForgotPassword,
     openHouseholdDashboard,

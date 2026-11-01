@@ -18,7 +18,14 @@ const DASHBOARD_VIEW = {
 };
 
 // Reachable with or without an account.
-const PUBLIC_VIEWS = new Set(["home", "login", "forgot-password", "register-worker", "register-household"]);
+const PUBLIC_VIEWS = new Set([
+  "home",
+  "login",
+  "forgot-password",
+  "confirm-email",
+  "register-worker",
+  "register-household",
+]);
 
 // Views not covered by a role prefix below.
 const SHARED_VIEW_ROLES = {
@@ -98,12 +105,12 @@ export function resolveGuardedView(user, view) {
 }
 
 /** The staff-admin sidebar. Exactly one item is active per section. */
-export function buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory }) {
-  return [
+export function buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory, openAdminAccount }) {
+  const items = [
     {
       id: "verification",
       label: "Verification Queue",
-      active: adminSection !== "history",
+      active: adminSection !== "history" && adminSection !== "account",
       onClick: openAdminDashboard,
     },
     {
@@ -113,4 +120,9 @@ export function buildAdminNavItems({ adminSection, openAdminDashboard, openAdmin
       onClick: openAdminWorkersHistory,
     },
   ];
+  // Where an admin changes the temporary password they were given.
+  if (openAdminAccount) {
+    items.push({ id: "account", label: "My Account", active: adminSection === "account", onClick: openAdminAccount });
+  }
+  return items;
 }

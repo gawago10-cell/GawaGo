@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/errors/api_error.dart';
 import '../../../core/theme/gawago_colors.dart';
 import '../../../shared/widgets/async_state.dart';
+import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/authenticated_image.dart';
 import '../data/admin_models.dart';
 import '../data/admin_repository.dart';
@@ -41,9 +42,11 @@ class _AdminCredentialsQueueState extends State<AdminCredentialsQueue> {
     });
   }
 
-  Future<String?> _askRejectReason() => showDialog<String>(
-    context: context,
-    builder: (_) => const _RejectReasonDialog(),
+  Future<String?> _askRejectReason() => showReasonDialog(
+    context,
+    title: 'Reject this certificate?',
+    label: 'Reason (the worker will see this)',
+    actionLabel: 'Reject',
   );
 
   Future<void> _decide(AdminCertificate certificate, String status) async {
@@ -200,7 +203,15 @@ class _CertificateCard extends StatelessWidget {
           if (certificate.fileUrl.isNotEmpty && certificate.fileType == 'image')
             AuthenticatedImage(url: certificate.fileUrl, height: 170)
           else if (certificate.fileUrl.isNotEmpty)
-            CertificateFileNote(isPdf: certificate.fileType == 'pdf'),
+            CertificateFileNote(isPdf: certificate.fileType == 'pdf')
+          else
+            const Padding(
+              padding: EdgeInsets.fromLTRB(14, 14, 14, 0),
+              child: Text(
+                'No document attached. Reject it and ask the worker to attach the certificate.',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(14),
             child: Column(
@@ -290,7 +301,10 @@ class _CertificateCard extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: saving || certificate.status == 'approved'
+                        onPressed:
+                            saving ||
+                                certificate.status == 'approved' ||
+                                certificate.fileUrl.isEmpty
                             ? null
                             : onApprove,
                         child: Text(saving ? 'Saving…' : 'Approve'),
@@ -303,50 +317,6 @@ class _CertificateCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Asks for an optional rejection reason. Its own widget so the text
-/// controller lives exactly as long as the dialog, including its closing
-/// animation.
-class _RejectReasonDialog extends StatefulWidget {
-  const _RejectReasonDialog();
-
-  @override
-  State<_RejectReasonDialog> createState() => _RejectReasonDialogState();
-}
-
-class _RejectReasonDialogState extends State<_RejectReasonDialog> {
-  final _reason = TextEditingController();
-
-  @override
-  void dispose() {
-    _reason.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Reject this certificate?'),
-      content: TextField(
-        controller: _reason,
-        maxLines: 3,
-        decoration: const InputDecoration(
-          labelText: 'Reason (shown to the worker, optional)',
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, _reason.text),
-          child: const Text('Reject'),
-        ),
-      ],
     );
   }
 }

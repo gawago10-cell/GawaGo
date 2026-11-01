@@ -19,6 +19,7 @@ function omitSensitiveAccountFields(account) {
 }
 
 export function useGawaGoActions({
+  setPendingSignupEmail,
   EMPTY_HOUSEHOLD_FORM,
   EMPTY_HOUSEHOLD_REVIEW_FORM,
   EMPTY_WORKER_FEEDBACK_FORM,
@@ -494,6 +495,11 @@ export function useGawaGoActions({
           },
         });
         const data = await readResponseData(response);
+        if (!response.ok && data?.verification_required) {
+          setPendingSignupEmail?.(data.email || "");
+          setView("confirm-email");
+          return;
+        }
         if (!response.ok) {
           const loginError = new Error(data?.detail || "Login failed.");
           loginError.status = response.status;
@@ -605,6 +611,12 @@ export function useGawaGoActions({
         if (!response.ok) {
           throw new Error(getApiErrorMessage(data, "Unable to create worker account."));
         }
+        if (data?.verification_required) {
+          setWorkerForm(EMPTY_WORKER_FORM);
+          setPendingSignupEmail?.(data.email || "");
+          setView("confirm-email");
+          return;
+        }
         const backendWorker = normalizeBackendWorkerPayload({
           user: data?.user,
           profile: data?.profile,
@@ -698,6 +710,12 @@ export function useGawaGoActions({
         const data = await readResponseData(response);
         if (!response.ok) {
           throw new Error(getApiErrorMessage(data, "Unable to create household account."));
+        }
+        if (data?.verification_required) {
+          setHouseholdForm(EMPTY_HOUSEHOLD_FORM);
+          setPendingSignupEmail?.(data.email || "");
+          setView("confirm-email");
+          return;
         }
         const householdAccount = {
           ...omitSensitiveAccountFields(householdForm),
@@ -1149,6 +1167,19 @@ export function useGawaGoActions({
     if (!job) {
       return;
     }
+    // A hired worker is told why the job is called off (the backend
+    // requires it then).
+    const hasHiredWorker = (job.applications || []).some((application) => application.status === "Hired");
+    let cancelReason = "";
+    if (hasHiredWorker) {
+      const answer = window.prompt("Why are you cancelling? The hired worker will see this.", "");
+      if (answer === null) return;
+      cancelReason = answer.trim();
+      if (!cancelReason) {
+        window.alert("Please give a reason; the hired worker will see it.");
+        return;
+      }
+    }
     runExclusive(`cancel-job-${jobId}`, async () => {
       try {
         const response = await apiRequest(`jobs/${jobId}/`, {
@@ -1156,6 +1187,7 @@ export function useGawaGoActions({
           auth: true,
           body: {
             status: "cancelled",
+            ...(cancelReason ? { cancel_reason: cancelReason } : {}),
           },
         });
         const data = await readResponseData(response);

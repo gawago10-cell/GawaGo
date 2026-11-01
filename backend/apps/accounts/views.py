@@ -31,12 +31,14 @@ from apps.accounts.serializers import (
     MAX_WORKER_SKILLS,
     AdminAccountCreateSerializer,
     AdminAccountSerializer,
+    ChangePasswordSerializer,
     ForgotPasswordRequestSerializer,
     LoginSerializer,
     PasswordResetRequestSerializer,
     PublicUserProfileSerializer,
     RegisterSerializer,
     ProfileUpdateSerializer,
+    ResendSignupCodeSerializer,
     ResetPasswordSerializer,
     SignupVerificationRequestSerializer,
     UserProfileSerializer,
@@ -60,12 +62,15 @@ from apps.accounts.services import (
     SuspensionValidationError,
     apply_account_suspension,
     create_password_reset_request,
+    create_signup_verification_request,
     ensure_portfolio_skills,
     parse_blocked_flag,
     skill_key,
     send_password_reset_email,
+    send_signup_verification_email,
     validate_latest_reset_request,
 )
+from django.conf import settings
 from apps.common.authentication import create_jwt_token, decode_jwt_token, revoke_token
 from apps.common.permissions import IsPlatformAdmin, IsPlatformSuperAdmin, is_platform_admin, is_platform_superadmin
 from apps.reviews.services import assign_due_default_worker_ratings_on_read
@@ -315,6 +320,18 @@ class RegisterView(APIView):
                 {"detail": "That username or email was just taken. Please try again."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if getattr(settings, "REQUIRE_SIGNUP_EMAIL_CODE", False):
+            user.is_active = False
+            user.save(update_fields=["is_active"])
+            _send_signup_code(user)
+            return Response(
+                {
+                    "detail": f"Account created. Enter the 6-digit code we sent to {user.email} to finish.",
+                    "verification_required": True,
+                    "email": user.email,
+                },
+                status=status.HTTP_201_CREATED,
+            )
         return Response(
             {
                 "detail": "Account created. You can now log in.",
@@ -369,6 +386,20 @@ class LoginView(APIView):
             password=password,
         )
         if not user:
+            if (
+                matched_user
+                and not matched_user.is_active
+                and matched_user.check_password(password)
+                and SignupVerificationRequest.objects.filter(user=matched_user, verified_at__isnull=True).exists()
+            ):
+                return Response(
+                    {
+                        "detail": "Confirm your email first: enter the 6-digit code we sent to it.",
+                        "verification_required": True,
+                        "email": matched_user.email,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             cache.set(failure_key, cache.get(failure_key, 0) + 1, LOGIN_LOCKOUT_SECONDS)
             return Response({"detail": "Invalid username or password."}, status=status.HTTP_400_BAD_REQUEST)
         cache.delete(failure_key)
@@ -408,6 +439,67 @@ class VerifySignupView(APIView):
         request_obj.user.is_active = True
         request_obj.user.save(update_fields=["is_active"])
         return Response({"detail": "Email verified and account activated."}, status=status.HTTP_200_OK)
+
+
+def _send_signup_code(user):
+    """Email a fresh sign-up code; a mail failure leaves the account held
+    and the person can ask for another code."""
+    _request_obj, token = create_signup_verification_request(user)
+    try:
+        send_signup_verification_email(user, token)
+    except Exception:
+        logger.exception("signup code email failed for user=%s", user.id)
+
+
+class ResendSignupCodeView(APIView):
+    """POST {email}: a new sign-up code for an account still waiting on one.
+    The same reply either way, so it can't be used to find accounts."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    def post(self, request):
+        serializer = ResendSignupCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].strip().lower()
+        user = User.objects.filter(email__iexact=email, is_active=False).first()
+        if user and SignupVerificationRequest.objects.filter(user=user, verified_at__isnull=True).exists():
+            _send_signup_code(user)
+        return Response({"detail": "If that account is waiting for a code, a new one has been sent."})
+
+
+class ChangePasswordView(APIView):
+    """POST {current_password, new_password} for the signed-in account. There
+    was no way to change a password except Forgot password, though Add Admin
+    tells new admins to change theirs (third scan, 2026-11-01)."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response({"current_password": ["That isn't your current password."]}, status=status.HTTP_400_BAD_REQUEST)
+        new_password = serializer.validated_data["new_password"]
+        if user.check_password(new_password):
+            return Response({"new_password": ["Choose a password different from your current one."]}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as error:
+            return Response({"new_password": list(error.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        create_notification(
+            recipient=user,
+            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+            title="Password changed",
+            message="Your GawaGo password was changed. If this wasn't you, reset it from the login page right away.",
+        )
+        return Response({"detail": "Your password was updated."})
 
 
 class ForgotPasswordRequestView(APIView):
@@ -874,6 +966,12 @@ class WorkerCertificationFileView(APIView):
         is_owner_or_admin = cert.worker_id == request.user.id or is_platform_admin(request.user)
         if not is_owner_or_admin and cert.verification_status != WorkerCertification.STATUS_APPROVED:
             return Response({"detail": "Certificate not found."}, status=status.HTTP_404_NOT_FOUND)
+        # Households deciding whom to hire may open an approved document;
+        # other workers see that it's verified but not the file, which can
+        # carry a birth date or address (third scan, 2026-11-01).
+        viewer_role = getattr(getattr(request.user, "profile", None), "role", "")
+        if not is_owner_or_admin and viewer_role != UserProfile.ROLE_HOUSEHOLD:
+            return Response({"detail": "Certificate not found."}, status=status.HTTP_404_NOT_FOUND)
         content_type = mimetypes.guess_type(cert.certificate_file.name)[0] or "application/octet-stream"
         response = FileResponse(cert.certificate_file.open("rb"), content_type=content_type)
         response["Content-Disposition"] = "inline"
@@ -1033,11 +1131,22 @@ class CertificateVerificationAdminView(APIView):
         verification_status = request.data.get("verification_status")
         if verification_status not in [WorkerCertification.STATUS_APPROVED, WorkerCertification.STATUS_REJECTED]:
             return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+        notes = " ".join(str(request.data.get("verification_notes", "") or "").split())
+        if verification_status == WorkerCertification.STATUS_APPROVED and not cert.certificate_file:
+            return Response(
+                {"detail": "There's no document to review. Reject it and ask the worker to attach the certificate."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if verification_status == WorkerCertification.STATUS_REJECTED and not notes:
+            return Response(
+                {"verification_notes": ["Give a reason so the worker knows what to fix."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         cert.verification_status = verification_status
         cert.verified_by = user
         cert.verified_at = timezone.now()
-        cert.verification_notes = request.data.get("verification_notes", "")
+        cert.verification_notes = notes
 
         # Derived, not accumulated: rejecting a previously approved credential
         # has to drop the verified badge too.
@@ -1049,7 +1158,10 @@ class CertificateVerificationAdminView(APIView):
             recipient=cert.worker,
             notification_type=Notification.TYPE_VERIFICATION,
             title="Certificate Verified" if verification_status == WorkerCertification.STATUS_APPROVED else "Certificate Rejected",
-            message=f"Your certificate '{cert.certificate_name}' has been {verification_status}.",
+            message=(
+                f"Your certificate '{cert.certificate_name}' has been {verification_status}."
+                + (f" Reason: {notes}" if verification_status == WorkerCertification.STATUS_REJECTED else "")
+            ),
             actor=user,
         )
         log_admin_action(

@@ -171,6 +171,37 @@ class GawaGoApi {
     );
   }
 
+  /// The sign-up code emailed when the backend holds new accounts until
+  /// their address is confirmed.
+  static Future<void> verifySignupCode({
+    required String email,
+    required String token,
+  }) async {
+    await post(
+      '/accounts/verify-signup/',
+      authenticated: false,
+      body: {'email': email.trim(), 'token': token.trim()},
+    );
+  }
+
+  static Future<void> resendSignupCode(String email) async {
+    await post(
+      '/accounts/resend-signup-code/',
+      authenticated: false,
+      body: {'email': email.trim()},
+    );
+  }
+
+  static Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await post(
+      '/accounts/me/password/',
+      body: {'current_password': currentPassword, 'new_password': newPassword},
+    );
+  }
+
   static Future<Map<String, dynamic>> get(
     String path, {
     bool authenticated = true,
@@ -516,6 +547,7 @@ class GawaGoApi {
           : _errorMessage(body),
       statusCode: response.statusCode,
       type: type,
+      data: body is Map<String, dynamic> ? body : null,
     );
   }
 

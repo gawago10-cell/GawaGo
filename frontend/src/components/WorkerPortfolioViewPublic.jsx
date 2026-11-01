@@ -385,7 +385,7 @@ export default function WorkerPortfolioViewPublic({
               <div key={cert.id} className="cert-item-public">
                 <div className="cert-name">{cert.certificate_name}</div>
                 <div className="cert-issuer">{cert.issuer}</div>
-                <div className="cert-date">Issued {cert.issue_date}</div>
+                {cert.issue_date && <div className="cert-date">Issued {cert.issue_date}</div>}
                 {cert.is_verified && (
                   <div className="cert-badge">✓ Verified</div>
                 )}

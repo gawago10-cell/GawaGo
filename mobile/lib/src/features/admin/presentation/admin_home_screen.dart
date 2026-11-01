@@ -6,6 +6,7 @@ import '../../../core/storage/session_storage.dart';
 import '../../../core/theme/gawago_colors.dart';
 import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
+import '../../../shared/widgets/change_password_dialog.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/report_view.dart';
 import '../../../shared/widgets/responsive_metric_grid.dart';
@@ -86,7 +87,14 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       child: AuthenticatedScaffold(
         roleLabel: widget.isSuperAdmin ? 'Super Admin' : 'Administrator',
         mainDestinations: mainDestinations,
-        accountDestinations: const [],
+        accountDestinations: [
+          GawaGoDrawerDestination(
+            icon: Icons.lock_outline,
+            label: 'Change Password',
+            selected: false,
+            onTap: () => showChangePasswordDialog(context),
+          ),
+        ],
         onLogout: _logout,
         title: 'GawaGo Admin',
         child: switch (_page) {

@@ -242,7 +242,9 @@ class HiringAndCancellationTests(TestCase):
         hired = JobApplication.objects.create(job=self.job, worker=hired_worker, status=JobApplication.STATUS_HIRED)
 
         response = client_for(self.household).patch(
-            reverse("job-detail", args=[self.job.id]), {"status": "cancelled"}, format="json"
+            reverse("job-detail", args=[self.job.id]),
+            {"status": "cancelled", "cancel_reason": "Plans changed."},
+            format="json",
         )
 
         self.assertEqual(response.status_code, 200, response.data)

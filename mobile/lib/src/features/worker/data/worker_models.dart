@@ -806,6 +806,7 @@ class WorkerCertificate {
     required this.isVerified,
     required this.verificationStatus,
     this.fileType = '',
+    this.verificationNotes = '',
   });
 
   final int id;
@@ -823,6 +824,9 @@ class WorkerCertificate {
   /// is an authenticated API route with no extension, so the type can't be
   /// read off the URL.
   final String fileType;
+
+  /// The admin's reason when it was rejected (only the owner gets it).
+  final String verificationNotes;
 
   /// Server-side choices, paired with the labels the admin queue shows.
   static const typeOptions = <String, String>{
@@ -851,6 +855,7 @@ class WorkerCertificate {
       isVerified: json['is_verified'] == true,
       verificationStatus: _text(json['verification_status'], 'pending'),
       fileType: _text(json['certificate_file_type'] ?? ''),
+      verificationNotes: _text(json['verification_notes'] ?? ''),
     );
   }
 }

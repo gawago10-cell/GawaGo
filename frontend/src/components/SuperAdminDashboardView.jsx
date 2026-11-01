@@ -1,4 +1,5 @@
 import React from "react";
+import ChangePasswordCard from "./ChangePasswordCard";
 import {
   Bar,
   BarChart,
@@ -1341,6 +1342,11 @@ export default function SuperAdminDashboardView({
                       </table>
                     </div>
                   )}
+                </div>
+              )}
+              {superAdminSection === "adminmgmt" && (
+                <div className="mt-3" style={{ maxWidth: 520 }}>
+                  <ChangePasswordCard />
                 </div>
               )}
 

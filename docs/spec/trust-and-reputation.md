@@ -25,9 +25,11 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
 - Workers can build a public portfolio with:
   - A bio and years of experience.
   - Individually listed skills with a proficiency level (beginner, intermediate, expert) and an aggregated household rating per skill. These are the same skills as the worker's (at most 3) profile skills that matching reads: adding, removing or renaming a portfolio skill changes the profile list, and saving profile skills gives each one a portfolio entry (with no proficiency until the worker sets one). A skill that has household ratings is unlisted rather than deleted when removed, so its rating history returns if it is listed again. Ratings belong to the skill they were given for: renaming a rated skill lists the new name as a fresh skill and leaves the ratings on the old one.
-  - Certifications and credentials (TESDA certificate, professional license, credential, certification, or other), each uploaded with supporting files and subject to admin approval before showing a verified badge.
+  - Certifications and credentials (TESDA certificate, professional license, credential, certification, or other), each uploaded with supporting files and subject to admin approval before showing a verified badge. A certificate needs its photo or PDF to be sent, and one without a file can't be approved (the admin is told to reject it). Rejecting needs a reason, which the worker reads in the notice and under the certificate. The file itself opens only for its worker, admins and households (third scan, 2026-11-01).
   - Work-sample images, including optional before/after pairs.
   - Employment history: completed jobs with the hiring household, location, and the skill ratings received.
+- A rejected identity submission shows the admin's reason above the resubmit form on web and mobile.
+- Signed-in users change their own password (current password, then a new one that passes the password rules) from their profile on web, from the menu on mobile, and from My Account (staff admin) or Admin Management (superadmin) (third scan, 2026-11-01).
 - Identity verification supports multiple government ID types (national ID, passport, driver's license, voter ID, TIN, UMID, postal ID, or other); administrators review and approve or reject each submission. Households and workers share one Verification Queue, which admins filter with All / Households / Workers tabs (each with its count) on web and mobile.
 
 ### D. Dispute Resolution

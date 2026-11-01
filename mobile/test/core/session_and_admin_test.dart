@@ -46,19 +46,21 @@ class _FakeAdminRepository extends AdminRepository {
   }
 }
 
-AdminCertificate _certificate() => AdminCertificate.fromJson({
-  'id': 7,
-  'worker_username': 'nina',
-  'worker_name': 'Nina Worker',
-  'worker_location_label': 'Wakas',
-  'certificate_type_label': 'TESDA Certificate',
-  'certificate_name': 'NC II Housekeeping',
-  'issuer': 'TESDA',
-  'certificate_file_url':
-      'http://host/api/accounts/portfolio/certifications/7/file/',
-  'certificate_file_type': 'pdf',
-  'verification_status': 'pending',
-});
+AdminCertificate _certificate({bool withFile = true}) =>
+    AdminCertificate.fromJson({
+      'id': 7,
+      'worker_username': 'nina',
+      'worker_name': 'Nina Worker',
+      'worker_location_label': 'Wakas',
+      'certificate_type_label': 'TESDA Certificate',
+      'certificate_name': 'NC II Housekeeping',
+      'issuer': 'TESDA',
+      'certificate_file_url': withFile
+          ? 'http://host/api/accounts/portfolio/certifications/7/file/'
+          : '',
+      'certificate_file_type': withFile ? 'pdf' : '',
+      'verification_status': 'pending',
+    });
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -244,8 +246,13 @@ void main() {
   });
 
   group('admin credentials queue', () {
-    Future<_FakeAdminRepository> pump(WidgetTester tester) async {
-      final repository = _FakeAdminRepository([_certificate()]);
+    Future<_FakeAdminRepository> pump(
+      WidgetTester tester, {
+      bool withFile = true,
+    }) async {
+      final repository = _FakeAdminRepository([
+        _certificate(withFile: withFile),
+      ]);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(body: AdminCredentialsQueue(repository: repository)),
@@ -272,10 +279,35 @@ void main() {
 
       await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Cancel'));
+      await tester.tap(find.text('Back'));
       await tester.pumpAndSettle();
 
       expect(repository.reviews, isEmpty);
+    });
+
+    testWidgets('Reject stays off until a reason is typed', (tester) async {
+      await pump(tester);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
+      await tester.pumpAndSettle();
+      final reject = find.widgetWithText(FilledButton, 'Reject');
+      expect(tester.widget<FilledButton>(reject).onPressed, isNull);
+      await tester.enterText(find.byType(TextField), '   ');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(reject).onPressed, isNull);
+      await tester.enterText(find.byType(TextField), 'Blurry scan');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(reject).onPressed, isNotNull);
+    });
+
+    testWidgets('a certificate with no document cannot be approved', (
+      tester,
+    ) async {
+      await pump(tester, withFile: false);
+
+      expect(find.textContaining('No document attached'), findsOneWidget);
+      final approve = find.widgetWithText(FilledButton, 'Approve');
+      expect(tester.widget<FilledButton>(approve).onPressed, isNull);
     });
 
     testWidgets('rejecting sends the reason', (tester) async {
@@ -284,6 +316,7 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Blurry scan');
+      await tester.pump();
       await tester.tap(find.widgetWithText(FilledButton, 'Reject'));
       await tester.pumpAndSettle();
 

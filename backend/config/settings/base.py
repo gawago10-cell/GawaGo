@@ -291,6 +291,11 @@ PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
 # Never during tests, whatever the environment says: the suite saves a lot of
 # images, and letting those reach the real account would make every run slow,
 # dependent on the network, and quietly consume the plan's credits.
+# Ask new accounts for the 6-digit code emailed at sign-up before their first
+# login (third scan, 2026-11-01). Off until production can send email (Brevo):
+# with it on and no email, nobody could finish signing up.
+REQUIRE_SIGNUP_EMAIL_CODE = os.environ.get("REQUIRE_SIGNUP_EMAIL_CODE", "False") == "True"
+
 USE_CLOUDINARY = (
     os.environ.get("USE_CLOUDINARY", "False") == "True" and not USE_SQLITE_FOR_TESTS
 )

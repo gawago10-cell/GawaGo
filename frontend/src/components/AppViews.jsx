@@ -18,6 +18,7 @@ import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./Verifi
 import RequiredMark, { hasAnswer } from "./RequiredMark";
 import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
 import RateGuideHint from "./RateGuideHint";
+import ChangePasswordCard from "./ChangePasswordCard";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import {
@@ -136,6 +137,7 @@ export default function AppViews({
   markNotificationRead,
   openAdminDashboard,
   openAdminWorkersHistory,
+  openAdminAccount,
   openFilePreview,
   openForgotPassword,
   openHouseholdDashboard,
@@ -3187,6 +3189,9 @@ export default function AppViews({
                                     <div>
                                       <p className="text-white mb-1 small fw-bold">{cert.name}</p>
                                       <CertificateStatusBadge cert={cert} />
+                                      {cert.verificationStatus === "rejected" && cert.verificationNotes && (
+                                        <p className="text-white small mb-0 mt-1 cert-reject-reason">Reason: {cert.verificationNotes}</p>
+                                      )}
                                     </div>
                                     {workerProfileEditing && (
                                       <div className="d-flex gap-1">
@@ -3311,6 +3316,11 @@ export default function AppViews({
                         )}
                       </div>
                     </div>
+                  </div>
+                </div>
+                <div className="row g-3 mt-2">
+                  <div className="col-12">
+                    <ChangePasswordCard className="card border-0 shadow-sm" headClassName="card-header bg-success text-white fw-bold" />
                   </div>
                 </div>
                 {workerPhotoModalOpen && workerMiniPhoto && (
@@ -4240,6 +4250,15 @@ export default function AppViews({
                     <div className="verification-card">
                       <div className="verification-card-head">Submit Verification Documents</div>
                       <form className="p-3 p-md-4" onSubmit={handleVerificationSubmit}>
+                        {verificationAccount?.verificationSubmission?.status === "Rejected" && (
+                          <div className="verification-rejected-note mb-3" role="status">
+                            <strong>Your last submission was rejected.</strong>{" "}
+                            {verificationAccount.verificationSubmission.reviewNote
+                              ? `Reason: \u201c${verificationAccount.verificationSubmission.reviewNote}\u201d `
+                              : ""}
+                            Fix this and submit again; an admin will review it.
+                          </div>
+                        )}
                         <div className="verification-note mb-3">
                           <p className="mb-0 small">
                             <strong>Why get verified?</strong>{" "}
@@ -4749,13 +4768,13 @@ export default function AppViews({
             <div className="worker-layout">
               <DashboardSidebar
                 brand="Admin Panel"
-                items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory })}
+                items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory, openAdminAccount })}
                 footerAction={{ label: "Log Out", onClick: handleLogout }}
               />
               <div className="worker-content">
                 <div className="worker-topbar">
                   <h1 className="h4 mb-0">
-                    {adminSection === "history" ? "Workers History" : "Verification Dashboard"}
+                    {adminSection === "history" ? "Workers History" : adminSection === "account" ? "My Account" : "Verification Dashboard"}
                   </h1>
                   <div className="worker-user-meta d-flex align-items-center gap-2">
                     <span className="badge text-bg-dark">Admin</span>
@@ -4769,7 +4788,11 @@ export default function AppViews({
                     </button>
                   </div>
                 </div>
-                {adminSection === "verification" ? (
+                {adminSection === "account" ? (
+                  <div className="mt-3" style={{ maxWidth: 520 }}>
+                    <ChangePasswordCard className="card border-0 shadow-sm" headClassName="card-header fw-bold" />
+                  </div>
+                ) : adminSection === "verification" ? (
                   <React.Fragment>
                     <div className="row g-3 mt-1">
                       <div className="col-md-6 col-xl-3">
@@ -5542,6 +5565,7 @@ export default function AppViews({
                     </article>
                   </div>
                 </section>
+                <ChangePasswordCard className="profile-card household-change-password" headClassName="profile-card-header" />
                 </main>
               </div>
             </div>

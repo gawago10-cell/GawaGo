@@ -505,6 +505,15 @@ class ResetPasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(min_length=8)
 
 
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField()
+    new_password = serializers.CharField(min_length=8)
+
+
+class ResendSignupCodeSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
 class VerifySignupSerializer(serializers.Serializer):
     email = serializers.EmailField()
     token = serializers.CharField(min_length=6, max_length=12)
@@ -587,6 +596,16 @@ class WorkerCertificationSerializer(serializers.ModelSerializer):
             return validate_document_upload(value)
         except UploadRejected as rejected:
             raise serializers.ValidationError(str(rejected)) from rejected
+
+    def validate(self, attrs):
+        # A credential is only as good as the document behind it: one sent
+        # with a name and no file could be approved and shown as "Verified"
+        # with nothing seen (third scan, 2026-11-01).
+        if self.instance is None and not attrs.get("certificate_file"):
+            raise serializers.ValidationError(
+                {"certificate_file": "Attach a photo or PDF of the certificate so an admin can check it."}
+            )
+        return attrs
 
     def validate_certificate_name(self, value):
         return sanitize_text(value)

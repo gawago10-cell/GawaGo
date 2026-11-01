@@ -30,6 +30,7 @@ from apps.jobs.services import (
     HiringWorkerVerificationError,
     close_open_applications,
     complete_job,
+    get_user_display_name,
     hire_application,
     hold_apply_message,
     hold_hire_message,
@@ -299,6 +300,18 @@ class JobViewSet(viewsets.ModelViewSet):
                 .get(pk=serializer.instance.pk)
             )
             should_complete = False
+            cancel_reason = " ".join(str(self.request.data.get("cancel_reason", "") or "").split())[:300]
+            # A worker already hired is owed an explanation when the job is
+            # called off (third scan, 2026-11-01).
+            if (
+                requested_status == JobPosting.STATUS_CANCELLED
+                and current_status != JobPosting.STATUS_CANCELLED
+                and not cancel_reason
+                and serializer.instance.applications.filter(status=JobApplication.STATUS_HIRED).exists()
+            ):
+                raise ValidationError(
+                    {"cancel_reason": "Tell the hired worker why the job is cancelled."}
+                )
             if requested_status is not None:
                 allowed_statuses = ALLOWED_JOB_STATUS_TRANSITIONS.get(current_status, {current_status})
                 if requested_status not in allowed_statuses:
@@ -332,7 +345,7 @@ class JobViewSet(viewsets.ModelViewSet):
             elif status_changed:
                 record_job_status_event(job, previous_status, job.status, actor=actor)
         if status_changed and job.status == JobPosting.STATUS_CANCELLED:
-            self._notify_cancellation(job, actor=actor)
+            self._notify_cancellation(job, actor=actor, reason=cancel_reason)
             # Nobody stays "pending" on a job that no longer exists, the same
             # as when a job completes. Hired applications are kept as the
             # record of who was booked; their stage already reads Cancelled.
@@ -340,11 +353,11 @@ class JobViewSet(viewsets.ModelViewSet):
         if acted_as_admin and status_changed:
             self._notify_owner_of_admin_action(job, actor, job.status)
 
-    def _notify_cancellation(self, job, actor=None):
+    def _notify_cancellation(self, job, actor=None, reason=""):
         # Name whoever actually cancelled: an administrator acting on a
         # report used to be reported to the worker as the household.
         by_admin = actor is not None and actor.is_staff and actor.id != job.household_id
-        who = "An administrator" if by_admin else job.household.username
+        who = "An administrator" if by_admin else get_user_display_name(job.household)
         active = job.applications.select_related("worker").filter(
             status__in=[
                 JobApplication.STATUS_PENDING,
@@ -357,7 +370,7 @@ class JobViewSet(viewsets.ModelViewSet):
                 recipient=application.worker,
                 notification_type=Notification.TYPE_REJECTION,
                 title="Job cancelled",
-                message=f"{who} cancelled {job.title}.",
+                message=f"{who} cancelled {job.title}." + (f" Reason: {reason}" if reason else ""),
                 actor=actor or job.household,
                 related_job_id=job.id,
                 related_application_id=application.id,

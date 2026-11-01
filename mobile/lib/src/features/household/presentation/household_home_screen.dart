@@ -17,6 +17,8 @@ import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
+import '../../../shared/widgets/change_password_dialog.dart';
+import '../../../shared/widgets/rejected_submission_note.dart';
 import '../../../shared/widgets/job_schedule_box.dart';
 import '../../../shared/widgets/list_map_view_toggle.dart';
 import '../../../shared/widgets/location_route_map.dart';
@@ -30,6 +32,7 @@ import '../../../shared/widgets/rate_review_dialog.dart';
 import '../../../shared/widgets/rate_skills_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
+import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/status_card.dart';
 import '../../../shared/widgets/worker_cards.dart';
 import '../../chat/presentation/conversations_view.dart';
@@ -222,16 +225,22 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen>
               ),
             )
             .toList(),
-        accountDestinations: _accountPages
-            .map(
-              (page) => GawaGoDrawerDestination(
-                icon: _icon(page),
-                label: _navLabel(page),
-                selected: page == _page,
-                onTap: () => _select(page),
-              ),
-            )
-            .toList(),
+        accountDestinations: [
+          ..._accountPages.map(
+            (page) => GawaGoDrawerDestination(
+              icon: _icon(page),
+              label: _navLabel(page),
+              selected: page == _page,
+              onTap: () => _select(page),
+            ),
+          ),
+          GawaGoDrawerDestination(
+            icon: Icons.lock_outline,
+            label: 'Change Password',
+            selected: false,
+            onTap: () => showChangePasswordDialog(context),
+          ),
+        ],
         onLogout: _logout,
         actions: _page == _Page.notifications
             ? [
@@ -469,15 +478,33 @@ class _DashboardState extends State<_Dashboard> {
     // dialog covers the button and would open (and send) a second one.
     if (!_jobsInFlight.add(job.id)) return;
     try {
-      final confirmed = await _confirmDialog(
-        context,
-        title: 'Cancel this job?',
-        message: "This can't be undone.",
-        destructive: true,
-      );
-      if (!confirmed) return;
+      var reason = '';
+      if (job.hiredCount > 0) {
+        final answer = await showReasonDialog(
+          context,
+          title: 'Cancel this job?',
+          message:
+              "The hired worker will see your reason. This can't be undone.",
+          label: 'Why are you cancelling?',
+          actionLabel: 'Cancel Job',
+        );
+        if (answer == null || !mounted) return;
+        reason = answer;
+      } else {
+        final confirmed = await _confirmDialog(
+          context,
+          title: 'Cancel this job?',
+          message: "This can't be undone.",
+          destructive: true,
+        );
+        if (!confirmed) return;
+      }
       try {
-        await widget.repository.updateJobStatus(job.id, 'cancelled');
+        await widget.repository.updateJobStatus(
+          job.id,
+          'cancelled',
+          reason: reason,
+        );
         _reload();
       } catch (error) {
         _showError(error);
@@ -5829,6 +5856,10 @@ class _VerificationState extends State<_Verification> {
                 status: latest.status,
               )
             else ...[
+              if (latest != null) ...[
+                RejectedSubmissionNote(reason: latest.reviewNote),
+                const SizedBox(height: 12),
+              ],
               const _VerificationIntro(
                 text:
                     'Verification helps workers trust that job postings come from a reviewed household account.',
