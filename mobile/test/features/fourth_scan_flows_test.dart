@@ -148,6 +148,62 @@ void main() {
       'cancel_reason': 'The worker did not show up.',
     });
   });
+
+  testWidgets('a household that has not rated its worker cannot post', (
+    tester,
+  ) async {
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'household-token', role: 'household'),
+    );
+    final posts = <http.Request>[];
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        if (request.method == 'POST') posts.add(request);
+        if (request.url.path.endsWith('/jobs/posting-status/')) {
+          return _json({
+            'can_post': false,
+            'kind': 'rate',
+            'job_id': 31,
+            'job_title': 'Fence Painting',
+            'message':
+                'Rate Juan Worker for Fence Painting before you post another job.',
+          });
+        }
+        return _householdResponses(request);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    // The page's map keeps animating, so pumpAndSettle would never settle.
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Post a Job').last);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    expect(find.text('Rate your worker first.'), findsOneWidget);
+    expect(
+      find.text(
+        'Rate Juan Worker for Fence Painting before you post another job.',
+      ),
+      findsOneWidget,
+    );
+    final postButton = find.widgetWithText(FilledButton, 'Post Job');
+    expect(tester.widget<FilledButton>(postButton).onPressed, isNull);
+
+    await tester.ensureVisible(find.text('Go to My Jobs'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Go to My Jobs'));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('Rate your worker first.'), findsNothing);
+    expect(posts, isEmpty);
+  });
 }
 
 Future<http.Response> _workerResponses(

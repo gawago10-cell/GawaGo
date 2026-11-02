@@ -57,6 +57,37 @@ class HouseholdProfile {
   }
 }
 
+/// Whether the household can post a job now (backend
+/// `jobs/posting-status/`): a hired job past its last day has to be marked
+/// done, and a finished job's workers rated, first (2026-11-02).
+class PostingStatus {
+  const PostingStatus({
+    required this.canPost,
+    this.kind = '',
+    this.jobId,
+    this.jobTitle = '',
+    this.message = '',
+  });
+
+  final bool canPost;
+
+  /// "mark_done" or "rate"; "" when posting is open.
+  final String kind;
+  final int? jobId;
+  final String jobTitle;
+  final String message;
+
+  factory PostingStatus.fromJson(Map<String, dynamic> json) {
+    return PostingStatus(
+      canPost: json['can_post'] != false,
+      kind: _text(json['kind'] ?? ''),
+      jobId: json['job_id'] == null ? null : _integer(json['job_id']),
+      jobTitle: _text(json['job_title'] ?? ''),
+      message: _text(json['message'] ?? ''),
+    );
+  }
+}
+
 class HouseholdJob {
   const HouseholdJob({
     required this.id,

@@ -36,6 +36,7 @@ import { formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, format
 import { getVerificationNavLabel } from "../utils/normalizers";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
 import { confirmDialog } from "./AppDialogs";
+import { usePostingStatus } from "../hooks/usePostingStatus";
 
 const HOUSEHOLD_DISMISSED_NOTIFICATIONS_KEY = "gawago-household-dismissed-notifications";
 const WORKER_DISMISSED_NOTIFICATIONS_KEY = "gawago-worker-dismissed-notifications";
@@ -1448,6 +1449,10 @@ export default function AppViews({
   // What a match card's request button can do for this worker (fourth scan,
   // 2026-11-01). It used to offer "Send a Request" to workers who can't be
   // invited (not verified, already invited) and only then refuse.
+  // A household closes out a finished hire (marked done and rated) before it
+  // posts another job (2026-11-02).
+  const postingStatus = usePostingStatus(view === "household-post-job" && currentUser?.role === "household");
+  const postingBlocked = postingStatus?.can_post === false;
   const getMatchInviteState = (worker) => {
     const status = selectedJob ? findJobApplicationForWorker(selectedJob, worker)?.status : "";
     if (status === "Hired" || status === "Completed") return { label: "Hired", disabled: true };
@@ -5113,6 +5118,23 @@ export default function AppViews({
               <div className="worker-content">
                 <div className="profile-card household-post-job-card">
                   <h1 className="household-post-job-title">Post a New Job</h1>
+                  {postingBlocked && (
+                    <div className="household-post-blocked" role="alert">
+                      <p>
+                        <strong>
+                          {postingStatus.kind === "rate" ? "Rate your worker first." : "Finish your last job first."}
+                        </strong>{" "}
+                        {postingStatus.message}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-success"
+                        onClick={postingStatus.kind === "rate" ? openHouseholdMyJobs : openHouseholdDashboard}
+                      >
+                        {postingStatus.kind === "rate" ? "Go to My Jobs" : "Go to the job"}
+                      </button>
+                    </div>
+                  )}
                   <form className="p-3 p-md-4 household-job-form-shell" onSubmit={handleHouseholdJobSubmit}>
                     <div className="row g-3 household-job-fields">
                       <div className="col-12">
@@ -5330,7 +5352,7 @@ export default function AppViews({
                       <JobImageUpload maxImages={5} maxFileSize={5 * 1024 * 1024} onImagesChange={householdJobImages.onChange} />
                     </div>
                     <div className="household-post-actions">
-                      <button type="submit" className="btn btn-primary" disabled={isSubmittingJob}>
+                      <button type="submit" className="btn btn-primary" disabled={isSubmittingJob || postingBlocked}>
                         {isSubmittingJob ? "Posting..." : "Post Job"}
                       </button>
                       <button

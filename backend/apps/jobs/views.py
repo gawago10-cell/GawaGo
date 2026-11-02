@@ -42,6 +42,7 @@ from apps.jobs.services import (
     lapsed_apply_message,
     lapsed_hire_message,
     notify_applicants_of_changed_terms,
+    posting_block,
     rate_guide,
     record_application_status_event,
     record_job_status_event,
@@ -234,6 +235,12 @@ class JobViewSet(viewsets.ModelViewSet):
         requested_status = serializer.validated_data.get("status", JobPosting.STATUS_OPEN)
         if requested_status != JobPosting.STATUS_OPEN:
             return Response({"detail": "New job postings must start as open."}, status=status.HTTP_400_BAD_REQUEST)
+        block = posting_block(household)
+        if block:
+            return Response(
+                {"detail": block["message"], "block_kind": block["kind"], "blocked_job_id": block["job"].id},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         data = serializer.validated_data
         # The same posting twice (a double tap, or a retry after a timeout the
         # server had actually finished) used to create a second job and notify
@@ -435,6 +442,27 @@ class JobViewSet(viewsets.ModelViewSet):
                 target_id=instance.id,
             )
         instance.delete()
+
+
+class JobPostingStatusView(APIView):
+    """GET /api/jobs/posting-status/: whether the signed-in household can post
+    a job now, and if not, which job it has to close out first."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        block = posting_block(request.user)
+        if not block:
+            return Response({"can_post": True, "kind": "", "job_id": None, "job_title": "", "message": ""})
+        return Response(
+            {
+                "can_post": False,
+                "kind": block["kind"],
+                "job_id": block["job"].id,
+                "job_title": block["job"].title,
+                "message": block["message"],
+            }
+        )
 
 
 class JobRateGuideView(APIView):

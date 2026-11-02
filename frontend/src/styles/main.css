@@ -16543,3 +16543,19 @@ a,
   font-weight: 700;
   font-size: 0.9rem;
 }
+
+/* Post a Job while a finished hire still waits to be marked done or rated. */
+.household-post-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0 16px 4px;
+  padding: 12px 14px;
+  border: 1px solid #ecd2a2;
+  border-radius: 12px;
+  background: #fff3df;
+  color: #7a5216;
+  font-size: 14px;
+}
+.household-post-blocked p { margin: 0; flex: 1 1 260px; }

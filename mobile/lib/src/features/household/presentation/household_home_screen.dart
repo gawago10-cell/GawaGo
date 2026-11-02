@@ -317,6 +317,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen>
       _Page.postJob => _PostJob(
         repository: _repository,
         onCancel: () => _select(_Page.dashboard),
+        onOpenJobs: () => _select(_Page.jobs),
         onCreated: _openJobMatches,
         onNetworkUncertainty: () => _select(_Page.jobs),
       ),
@@ -1517,12 +1518,16 @@ class _PostJob extends StatefulWidget {
     required this.repository,
     required this.onCreated,
     required this.onCancel,
+    this.onOpenJobs,
     this.onNetworkUncertainty,
   });
 
   final HouseholdRepository repository;
   final ValueChanged<HouseholdJob> onCreated;
   final VoidCallback onCancel;
+
+  /// Opens My Jobs, where a finished job's worker is rated.
+  final VoidCallback? onOpenJobs;
 
   /// Called when the connection dropped before the server confirmed, so the
   /// job may or may not exist and the household should go and look.
@@ -1561,6 +1566,24 @@ class _PostJobState extends State<_PostJob> {
   LatLng? _pin;
   final List<String> _imagePaths = [];
   bool _posting = false;
+
+  // Set when a finished hire still waits to be marked done or rated; the
+  // backend refuses the post until then (2026-11-02).
+  PostingStatus? _postingStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.repository.getPostingStatus().then(
+      (status) {
+        if (mounted) setState(() => _postingStatus = status);
+      },
+      // The backend still refuses the post with the same message.
+      onError: (_) {},
+    );
+  }
+
+  bool get _postBlocked => _postingStatus?.canPost == false;
 
   // Mirrors the web client's JobImageUpload (maxImages=5, maxFileSize=5MB) --
   // the backend enforces neither, so without this mobile could post jobs
@@ -1881,6 +1904,15 @@ class _PostJobState extends State<_PostJob> {
                     ),
                   ),
                   const SizedBox(height: 24),
+                  if (_postBlocked) ...[
+                    _PostBlockedNote(
+                      status: _postingStatus!,
+                      onOpen: _postingStatus!.kind == 'rate'
+                          ? (widget.onOpenJobs ?? widget.onCancel)
+                          : widget.onCancel,
+                    ),
+                    const SizedBox(height: 18),
+                  ],
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= 720;
@@ -1976,7 +2008,7 @@ class _PostJobState extends State<_PostJob> {
                     runSpacing: 10,
                     children: [
                       FilledButton(
-                        onPressed: _posting ? null : _submit,
+                        onPressed: _posting || _postBlocked ? null : _submit,
                         style: FilledButton.styleFrom(
                           backgroundColor: GawaGoColors.primary,
                           foregroundColor: GawaGoColors.onPrimary,
@@ -2013,6 +2045,55 @@ class _PostJobState extends State<_PostJob> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Why the household can't post yet, with a way to the job to close out.
+class _PostBlockedNote extends StatelessWidget {
+  const _PostBlockedNote({required this.status, required this.onOpen});
+
+  final PostingStatus status;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final rate = status.kind == 'rate';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3DF),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFECD2A2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            rate ? 'Rate your worker first.' : 'Finish your last job first.',
+            style: const TextStyle(
+              color: Color(0xFF7A5216),
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            status.message,
+            style: const TextStyle(color: Color(0xFF7A5216), fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: onOpen,
+            style: FilledButton.styleFrom(
+              backgroundColor: GawaGoColors.primary,
+              foregroundColor: GawaGoColors.onPrimary,
+            ),
+            child: Text(rate ? 'Go to My Jobs' : 'Go to the job'),
+          ),
+        ],
+      ),
     );
   }
 }

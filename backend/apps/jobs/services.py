@@ -856,3 +856,83 @@ def send_due_mark_done_reminders_on_read() -> int:
     if not cache.add(MARK_DONE_REMINDER_LOCK_KEY, True, MARK_DONE_REMINDER_COOLDOWN_SECONDS):
         return 0
     return send_due_mark_done_reminders()
+
+
+# --- Closing out a job before posting another (2026-11-02) -----------------
+
+POST_BLOCK_MARK_DONE = "mark_done"
+POST_BLOCK_RATE = "rate"
+
+
+def _names(users):
+    names = [get_user_display_name(user) for user in users]
+    return ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else (names[0] if names else "your worker")
+
+
+def posting_block(household, today=None):
+    """Why this household can't post a new job yet, or None.
+
+    A household finishes one hire before it starts another: a hired job whose
+    last day has passed must be marked done, and a finished job's workers must
+    be rated by the household. The automatic 3.5 placeholder doesn't count as
+    a rating (a real review replaces it), the same rule as ``can_review``. A
+    job still running, or one that hasn't started, blocks nothing.
+
+    Returns ``{"kind", "job", "message"}`` for the oldest job still waiting,
+    so the clients can send the household straight to it."""
+    today = today or timezone.localdate()
+
+    hired = (
+        JobPosting.objects.filter(
+            household=household,
+            status__in=UNDERWAY_JOB_STATUSES,
+            job_start_date__lt=today,
+            applications__status=JobApplication.STATUS_HIRED,
+        )
+        .distinct()
+        .order_by("job_start_date", "id")
+    )
+    for job in hired:
+        if job_has_lapsed(job, today):
+            return {
+                "kind": POST_BLOCK_MARK_DONE,
+                "job": job,
+                "message": (
+                    f"{job.title} was set to end on {format_job_days((job_days(job)[1], job_days(job)[1]))}. "
+                    "Mark it as done, or cancel it, and rate your worker before you post another job."
+                ),
+            }
+
+    completed = (
+        JobPosting.objects.filter(
+            household=household,
+            status=JobPosting.STATUS_COMPLETED,
+            applications__status=JobApplication.STATUS_COMPLETED,
+        )
+        .distinct()
+        .order_by("completed_at", "id")
+    )
+    for job in completed:
+        workers = [
+            application.worker
+            for application in job.applications.select_related("worker").filter(
+                status=JobApplication.STATUS_COMPLETED
+            )
+        ]
+        rated = set(
+            Review.objects.filter(
+                job=job,
+                author=household,
+                author_role=Review.ROLE_HOUSEHOLD,
+                target_role=Review.ROLE_WORKER,
+                is_system_generated=False,
+            ).values_list("target_id", flat=True)
+        )
+        unrated = [worker for worker in workers if worker.id not in rated]
+        if unrated:
+            return {
+                "kind": POST_BLOCK_RATE,
+                "job": job,
+                "message": f"Rate {_names(unrated)} for {job.title} before you post another job.",
+            }
+    return None

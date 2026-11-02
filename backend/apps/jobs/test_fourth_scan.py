@@ -466,3 +466,138 @@ class NotificationNamesTests(TestCase):
         self.assertIn("Ben Cruz applied", applied.message)
         self.assertIn("Ana Reyes wants to hire you", invited.message)
         self.assertNotIn("s4-name", applied.message + invited.message)
+
+
+class PostingNeedsClosedOutJobsTests(TestCase):
+    """2026-11-02: a household rates its worker (and marks the job done)
+    before it posts another job."""
+
+    def setUp(self):
+        self.household = make_user("po-home", UserProfile.ROLE_HOUSEHOLD)
+        self.worker = make_user("po-worker", UserProfile.ROLE_WORKER)
+        self.worker.first_name, self.worker.last_name = "Ben", "Cruz"
+        self.worker.save()
+
+    def payload(self, **overrides):
+        values = {
+            "title": "New job", "job_type": "House Cleaning", "required_skill": "House Cleaning",
+            "schedule": "One-Time starting soon", "location_label": "Isabang, Tayabas",
+            "latitude": "13.9622745", "longitude": "121.5632841", "service_rate": "600.00",
+            "schedule_type": "One-Time",
+        }
+        values.update(overrides)
+        return values
+
+    def post(self):
+        return client_for(self.household).post(reverse("job-list"), self.payload(), format="json")
+
+    def status(self):
+        return client_for(self.household).get(reverse("job-posting-status")).data
+
+    def hired_job(self, start_offset, end_offset, status=JobPosting.STATUS_ASSIGNED):
+        job = make_job(
+            self.household, title="Fence Painting", status=status,
+            job_start_date=days_from_today(start_offset), job_end_date=days_from_today(end_offset),
+        )
+        JobApplication.objects.create(job=job, worker=self.worker, status=JobApplication.STATUS_HIRED)
+        return job
+
+    def completed_job(self):
+        job = make_job(self.household, title="Fence Painting", status=JobPosting.STATUS_COMPLETED)
+        JobApplication.objects.create(job=job, worker=self.worker, status=JobApplication.STATUS_COMPLETED)
+        return job
+
+    def review(self, job, system=False):
+        from apps.reviews.models import Review
+
+        return Review.objects.create(
+            job=job, author=self.household, target=self.worker, author_role=Review.ROLE_HOUSEHOLD,
+            target_role=Review.ROLE_WORKER, rating=Decimal("4.0"), is_system_generated=system,
+        )
+
+    def test_a_household_with_nothing_pending_can_post(self):
+        self.assertTrue(self.status()["can_post"])
+        self.assertEqual(self.post().status_code, 201)
+
+    def test_a_job_past_its_last_day_must_be_marked_done_first(self):
+        job = self.hired_job(-4, -1)
+
+        response = self.post()
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["block_kind"], "mark_done")
+        self.assertEqual(response.data["blocked_job_id"], job.id)
+        self.assertIn("Mark it as done", response.data["detail"])
+        self.assertFalse(JobPosting.objects.filter(title="New job").exists())
+        self.assertEqual(self.status()["job_title"], "Fence Painting")
+
+    def test_a_job_still_running_or_not_started_blocks_nothing(self):
+        self.hired_job(-1, 2)
+        self.hired_job(3, 5)
+
+        self.assertEqual(self.post().status_code, 201)
+
+    def test_a_finished_job_must_be_rated_first(self):
+        job = self.completed_job()
+
+        response = self.post()
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["block_kind"], "rate")
+        self.assertEqual(response.data["blocked_job_id"], job.id)
+        self.assertIn("Rate Ben Cruz for Fence Painting", response.data["detail"])
+
+    def test_the_automatic_placeholder_rating_does_not_unblock(self):
+        job = self.completed_job()
+        self.review(job, system=True)
+
+        self.assertEqual(self.post().status_code, 403)
+
+    def test_a_real_review_unblocks_posting(self):
+        job = self.completed_job()
+        self.review(job)
+
+        self.assertTrue(self.status()["can_post"])
+        self.assertEqual(self.post().status_code, 201)
+
+    def test_marking_done_then_rating_clears_the_block_step_by_step(self):
+        job = self.hired_job(-4, -1)
+        self.assertEqual(self.status()["kind"], "mark_done")
+
+        client_for(self.household).patch(
+            reverse("job-detail", args=[job.id]), {"status": "completed"}, format="json"
+        )
+        self.assertEqual(self.status()["kind"], "rate")
+
+        self.review(job)
+        self.assertTrue(self.status()["can_post"])
+
+    def test_cancelling_the_job_clears_the_mark_done_block(self):
+        job = self.hired_job(-4, -1)
+
+        response = client_for(self.household).patch(
+            reverse("job-detail", args=[job.id]),
+            {"status": "cancelled", "cancel_reason": "The worker never came."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(self.status()["can_post"])
+
+    def test_every_unrated_worker_on_a_crew_job_is_named(self):
+        other = make_user("po-worker2", UserProfile.ROLE_WORKER)
+        other.first_name, other.last_name = "Cara", "Diaz"
+        other.save()
+        job = self.completed_job()
+        JobApplication.objects.create(job=job, worker=other, status=JobApplication.STATUS_COMPLETED)
+        self.review(job)
+
+        self.assertIn("Cara Diaz", self.status()["message"])
+        self.assertNotIn("Ben Cruz", self.status()["message"])
+
+    def test_another_households_unrated_job_blocks_nobody_else(self):
+        elsewhere = make_user("po-other-home", UserProfile.ROLE_HOUSEHOLD)
+        job = make_job(elsewhere, status=JobPosting.STATUS_COMPLETED)
+        JobApplication.objects.create(job=job, worker=self.worker, status=JobApplication.STATUS_COMPLETED)
+
+        self.assertTrue(self.status()["can_post"])

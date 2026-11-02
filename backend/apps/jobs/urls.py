@@ -8,12 +8,14 @@ from apps.jobs.views import (
     JobApplicationWithdrawView,
     JobCompletionRequestView,
     JobHireRequestView,
+    JobPostingStatusView,
     JobRateGuideView,
     JobViewSet,
 )
 
 urlpatterns = [
     path("", JobViewSet.as_view({"get": "list", "post": "create"}), name="job-list"),
+    path("posting-status/", JobPostingStatusView.as_view(), name="job-posting-status"),
     path("rate-guide/", JobRateGuideView.as_view(), name="job-rate-guide"),
     path("<int:pk>/", JobViewSet.as_view({"get": "retrieve", "patch": "partial_update", "put": "update", "delete": "destroy"}), name="job-detail"),
     path("<int:job_id>/apply/", JobApplicationView.as_view(), name="job-apply"),

@@ -640,6 +640,16 @@ function buildReportQuery({ start, end } = {}) {
   return query ? `?${query}` : "";
 }
 
+/** Whether the household can post a job now, and if not, which job to close
+ * out first: {can_post, kind: "mark_done" | "rate", job_id, job_title, message}. */
+export async function fetchPostingStatus() {
+  const response = await apiRequest("jobs/posting-status/", { auth: true, suppressUnauthorized: true });
+  if (!response.ok) {
+    return null;
+  }
+  return readResponseData(response);
+}
+
 export async function fetchPlatformReport(period) {
   const response = await apiRequest(`reports/platform/${buildReportQuery(period)}`, {
     auth: true,

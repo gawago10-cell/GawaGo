@@ -29,6 +29,10 @@ class HouseholdRepository {
     return data.map((item) => HouseholdJob.fromJson(item)).toList();
   }
 
+  Future<PostingStatus> getPostingStatus() async {
+    return PostingStatus.fromJson(await GawaGoApi.get('/jobs/posting-status/'));
+  }
+
   Future<HouseholdJob> getJob(int id) async {
     return HouseholdJob.fromJson(await GawaGoApi.get('/jobs/$id/'));
   }
