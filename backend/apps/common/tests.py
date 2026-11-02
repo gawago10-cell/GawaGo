@@ -225,12 +225,12 @@ class BrevoAPIEmailBackendTests(TestCase):
 
 
 class CloudinaryStorageTests(TestCase):
-    """Cloudinary backs PUBLIC uploads only. A delivery URL is public to
-    anyone holding it, so routing government IDs, worker certificates or
-    complaint evidence through it would undo the private-media fix --
-    these lock that boundary in place."""
+    """The public Cloudinary storage backs public uploads only. A delivery URL
+    is public to anyone holding it, so government IDs, worker certificates
+    and complaint evidence pin PrivateMediaStorage instead (its Cloudinary
+    mode is covered in test_private_storage) -- these lock that boundary."""
 
-    def test_private_media_never_uses_cloudinary(self):
+    def test_private_media_never_uses_public_storage(self):
         from apps.accounts.models import UserProfile, WorkerCertification
         from apps.common.models import VerificationRequest
         from apps.complaints.models import ComplaintEvidence

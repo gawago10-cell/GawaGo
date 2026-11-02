@@ -236,8 +236,15 @@ class VerificationRequestDocumentView(APIView):
         # The type comes from the stored file, whose extension was validated
         # on upload -- never from the uploader-chosen display name, which
         # could claim .html and make the document render as a page.
+        try:
+            file = document.open("rb")
+        except FileNotFoundError:
+            return Response(
+                {"detail": "This document is no longer stored on the server, so it can't be opened."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         content_type = mimetypes.guess_type(document.name)[0] or "application/octet-stream"
-        response = FileResponse(document.open("rb"), content_type=content_type)
+        response = FileResponse(file, content_type=content_type)
         response["Content-Disposition"] = "inline"
         response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "private, no-store"

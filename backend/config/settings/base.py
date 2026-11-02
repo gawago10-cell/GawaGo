@@ -283,10 +283,11 @@ PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
 # matters where the filesystem is ephemeral (Render/Railway free tier), and
 # uploads would otherwise be lost on every redeploy.
 #
-# This replaces the *default* storage only. Government IDs, worker
-# certificates and complaint evidence pin PrivateMediaStorage on the field, so
-# they stay on local disk behind permission-checked views whatever this is set
-# to -- a Cloudinary delivery URL is public to anyone holding it.
+# Government IDs, worker certificates and complaint evidence pin
+# PrivateMediaStorage on the field. With this on they go to Cloudinary too, but
+# as "authenticated" assets with no public URL: only the backend, holding the
+# secret, can fetch them, and it serves them through permission-checked views.
+# Without it, a free-plan redeploy wiped every uploaded ID.
 #
 # Never during tests, whatever the environment says: the suite saves a lot of
 # images, and letting those reach the real account would make every run slow,

@@ -1,7 +1,7 @@
 import csv
 import mimetypes
 
-from django.http import FileResponse, Http404, HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -207,7 +207,10 @@ class ComplaintEvidenceView(APIView):
         try:
             file = evidence.image.open("rb")
         except FileNotFoundError:
-            raise Http404("Evidence file is missing.")
+            return Response(
+                {"detail": "This evidence photo is no longer stored on the server, so it can't be opened."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         content_type = mimetypes.guess_type(evidence.image.name)[0] or "application/octet-stream"
         response = FileResponse(file, content_type=content_type)
         response["Content-Disposition"] = "inline"

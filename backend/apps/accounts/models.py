@@ -252,7 +252,7 @@ def portfolio_item_path(instance, filename):
 def certificate_file_path(instance, filename):
     # Credential files (TESDA certs, licenses) often carry the worker's full
     # legal name and ID numbers, so unlike a work-sample photo these live in
-    # PRIVATE_MEDIA_ROOT and are only ever returned by a permission-checked
+    # private storage and are only ever returned by a permission-checked
     # view (WorkerCertificationFileView), never a public /media/ URL.
     return f"certifications/{instance.worker_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
 

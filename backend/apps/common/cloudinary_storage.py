@@ -5,12 +5,12 @@ last release is 0.3.0 (2020) and it configures itself through
 `DEFAULT_FILE_STORAGE`, which Django removed in 5.1. This project runs Django
 6.x, so it talks to Cloudinary's own SDK (actively maintained) directly.
 
-**This must never back private media.** Government IDs, worker certificates and
-complaint evidence use `apps.complaints.storage.PrivateMediaStorage`, whose
-`url()` raises on purpose so no public link can exist for them -- a Cloudinary
-delivery URL is public to anyone holding it, which would undo exactly the
-private-media fix. Wire this up as the *default* storage only; the
-private fields pin their own storage on the field and are unaffected.
+**This must never back private media.** Its uploads are public: a delivery URL
+works for anyone holding it. Government IDs, worker certificates and complaint
+evidence pin `apps.complaints.storage.PrivateMediaStorage` on the field instead;
+its Cloudinary mode stores "authenticated" assets that only the backend can
+fetch, and its `url()` raises so no link can leak. Wire this up as the
+*default* storage only.
 """
 
 from django.core.files.storage import Storage

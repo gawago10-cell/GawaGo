@@ -972,8 +972,15 @@ class WorkerCertificationFileView(APIView):
         viewer_role = getattr(getattr(request.user, "profile", None), "role", "")
         if not is_owner_or_admin and viewer_role != UserProfile.ROLE_HOUSEHOLD:
             return Response({"detail": "Certificate not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            file = cert.certificate_file.open("rb")
+        except FileNotFoundError:
+            return Response(
+                {"detail": "This certificate file is no longer stored on the server, so it can't be opened."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         content_type = mimetypes.guess_type(cert.certificate_file.name)[0] or "application/octet-stream"
-        response = FileResponse(cert.certificate_file.open("rb"), content_type=content_type)
+        response = FileResponse(file, content_type=content_type)
         response["Content-Disposition"] = "inline"
         response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "private, no-store"

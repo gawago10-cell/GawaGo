@@ -25,7 +25,11 @@ export async function openProtectedFile(fileUrl) {
   try {
     const response = await apiRequest(apiPath, { auth: true });
     if (!response.ok) {
-      window.alert("You are not allowed to view this document, or it is no longer available.");
+      const body = await response.json().catch(() => null);
+      window.alert(
+        (typeof body?.detail === "string" && body.detail) ||
+          "You are not allowed to view this document, or it is no longer available.",
+      );
       return;
     }
     const blob = await response.blob();
