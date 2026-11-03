@@ -6,6 +6,7 @@ from django.core import mail
 from django.test import override_settings
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import UserProfile
@@ -15,6 +16,10 @@ from apps.jobs.services import complete_job
 from apps.matching.models import RouteDistanceCache
 from apps.notifications.models import Notification
 from apps.reviews.models import Review
+
+
+# A start date a week out: every posted job needs one (flow audit, 2026-11-04).
+SOON = (timezone.localdate() + timezone.timedelta(days=7)).isoformat()
 
 
 class JobPermissionTests(TestCase):
@@ -732,6 +737,7 @@ class JobPermissionTests(TestCase):
             reverse("job-list"),
             {
                 "title": "Worker-created job",
+                "job_start_date": SOON,
                 "job_type": "House Cleaning",
                 "required_skill": "House Cleaning",
                 "schedule": "2030-06-02 09:00",
@@ -778,6 +784,7 @@ class JobPermissionTests(TestCase):
         self.client.force_authenticate(user=self.household)
         base = {
             "title": "Negative numbers job",
+            "job_start_date": SOON,
             "job_type": "House Cleaning",
             "required_skill": "House Cleaning",
             "schedule": "One-Time",
@@ -872,6 +879,7 @@ class JobPermissionTests(TestCase):
             reverse("job-list"),
             {
                 "title": "Pre-completed job",
+                "job_start_date": SOON,
                 "job_type": "House Cleaning",
                 "required_skill": "House Cleaning",
                 "schedule": "2026-06-02 09:00",
@@ -2122,7 +2130,7 @@ class JobRateTypeTests(TestCase):
         response = self.client.post(reverse("job-list"), {
             "title": "Hourly help", "job_type": "Laundry", "required_skill": "Laundry", "schedule": "Mon",
             "location_label": "Isabang", "latitude": "13.96", "longitude": "121.56",
-            "service_rate": "120", "rate_type": "per_hour",
+            "service_rate": "120", "rate_type": "per_hour", "job_start_date": SOON,
         }, format="json")
 
         self.assertEqual(response.status_code, 201, response.data)
@@ -2135,7 +2143,7 @@ class JobRateTypeTests(TestCase):
         response = self.client.post(reverse("job-list"), {
             "title": "x", "job_type": "Laundry", "required_skill": "Laundry", "schedule": "Mon",
             "location_label": "Isabang", "latitude": "13.96", "longitude": "121.56",
-            "service_rate": "120", "rate_type": "per_lifetime",
+            "service_rate": "120", "rate_type": "per_lifetime", "job_start_date": SOON,
         }, format="json")
 
         self.assertEqual(response.status_code, 400)
@@ -2286,6 +2294,7 @@ class DuplicateJobPostingTests(TestCase):
             "job_type": "House Cleaning",
             "required_skill": "House Cleaning",
             "schedule": "Saturday",
+            "job_start_date": SOON,
             "location_label": "Alitao, Tayabas City",
             "latitude": "13.9622745",
             "longitude": "121.5632841",

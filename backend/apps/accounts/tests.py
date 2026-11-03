@@ -1236,6 +1236,7 @@ class InputHardeningTests(TestCase):
             "title": "t", "job_type": "Laundry", "required_skill": "Laundry", "schedule": "Mon",
             "location_label": "Isabang", "latitude": "13.96", "longitude": "121.56",
             "service_rate": "100", "worker_slots": 10**12,
+            "job_start_date": (timezone.localdate() + timedelta(days=7)).isoformat(),
         }, format="json")
         self.assertEqual(response.status_code, 400)
 

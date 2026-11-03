@@ -23,6 +23,7 @@ from apps.jobs.serializers import (
 from apps.jobs.services import (
     HiringApplicationStateError,
     HiringCapacityReached,
+    HiringHouseholdSuspendedError,
     HiringJobLapsedError,
     HiringJobStateError,
     HiringWorkerSuspendedError,
@@ -340,13 +341,18 @@ class JobViewSet(viewsets.ModelViewSet):
                         }
                     )
                 should_complete = current_status != JobPosting.STATUS_COMPLETED and requested_status == JobPosting.STATUS_COMPLETED
+                # Marking a job done says the work happened and opens reviews,
+                # so only the household that hired can say it; an
+                # administrator can still cancel (flow audit, 2026-11-04).
+                if should_complete and actor.id != serializer.instance.household_id:
+                    raise PermissionDenied("Only the household that posted this job can mark it as done.")
                 if should_complete and not serializer.instance.applications.filter(status=JobApplication.STATUS_HIRED).exists():
                     raise ValidationError({"status": "Only jobs with hired workers can be completed."})
                 if should_complete:
                     not_started = job_not_started_message(serializer.instance)
                     if not_started:
                         raise ValidationError({"status": not_started})
-                if should_complete and not actor.is_staff:
+                if should_complete:
                     household_profile = getattr(actor, "profile", None)
                     if not household_profile or household_profile.verification_status != "verified":
                         raise PermissionDenied("Your household account must be verified before you can complete a job.")
@@ -475,6 +481,13 @@ class JobRateGuideView(APIView):
         return Response(rate_guide(request.query_params.get("skill", ""), request.query_params.get("rate_type", "")))
 
 
+# Applications the worker may reopen by applying again (flow audit,
+# 2026-11-04): ones they withdrew, and ones closed automatically when the job
+# filled or another hire took their days. A back-out that reopened a slot
+# used to leave those workers locked out of it for good.
+REAPPLY_STATUSES = {JobApplication.STATUS_WITHDRAWN, JobApplication.STATUS_CLOSED}
+
+
 class JobApplicationView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -520,10 +533,11 @@ class JobApplicationView(APIView):
             defaults={"note": serializer.validated_data.get("note", "")},
         )
         if not created:
-            if application.status != JobApplication.STATUS_WITHDRAWN:
+            if application.status not in REAPPLY_STATUSES:
                 return Response({"detail": "Worker already applied."}, status=status.HTTP_400_BAD_REQUEST)
             # A worker who withdrew can change their mind while the job is
-            # still taking applicants.
+            # still taking applicants, and one closed out when the job filled
+            # (or by another hire) can try again once it has room for them.
             previous_status = application.status
             application.status = JobApplication.STATUS_PENDING
             application.note = serializer.validated_data.get("note", "")
@@ -664,6 +678,8 @@ class JobApplicationStatusView(APIView):
                 )
             except HiringJobLapsedError:
                 return Response({"detail": lapsed_hire_message(application.job)}, status=status.HTTP_400_BAD_REQUEST)
+            except HiringHouseholdSuspendedError:
+                return Response({"detail": "Your account can't hire right now."}, status=status.HTTP_403_FORBIDDEN)
             except HiringJobStateError:
                 return Response({"detail": "Applications cannot be updated for completed or cancelled jobs."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringApplicationStateError:
@@ -782,7 +798,10 @@ class JobHireRequestView(APIView):
             return Response({"detail": "A hire request was already sent to this worker."}, status=status.HTTP_400_BAD_REQUEST)
         if application.status == JobApplication.STATUS_WITHDRAWN:
             return Response({"detail": "This worker withdrew from this job."}, status=status.HTTP_400_BAD_REQUEST)
-        if application.status in {JobApplication.STATUS_REJECTED, JobApplication.STATUS_CLOSED, JobApplication.STATUS_COMPLETED}:
+        # A closed application was the system's doing (the job filled, or the
+        # worker was busy), so the household may still invite them now that
+        # there is room; a rejection was the household's own answer.
+        if application.status in {JobApplication.STATUS_REJECTED, JobApplication.STATUS_COMPLETED}:
             return Response({"detail": "This application can no longer receive a hire request."}, status=status.HTTP_400_BAD_REQUEST)
         previous_status = application.status
         application.status = JobApplication.STATUS_HIRE_REQUESTED
@@ -862,7 +881,7 @@ class JobApplicationDecisionView(APIView):
                 )
             except HiringJobLapsedError:
                 return Response({"detail": lapsed_apply_message(application.job)}, status=status.HTTP_400_BAD_REQUEST)
-            except HiringJobStateError:
+            except (HiringHouseholdSuspendedError, HiringJobStateError):
                 return Response({"detail": "This job is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
             except HiringApplicationStateError:
                 return Response({"detail": "This hire request is no longer pending."}, status=status.HTTP_400_BAD_REQUEST)

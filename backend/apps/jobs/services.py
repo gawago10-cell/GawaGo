@@ -38,6 +38,10 @@ class HiringWorkerSuspendedError(HiringError):
     pass
 
 
+class HiringHouseholdSuspendedError(HiringError):
+    """The household can't use GawaGo right now, so its job takes nobody new."""
+
+
 class HiringJobLapsedError(HiringError):
     """The job's days have passed, so nobody new can be hired for it."""
 
@@ -417,9 +421,27 @@ def record_job_status_event(job, from_status, to_status, actor=None, note=""):
     )
 
 
+AWAITING_DECISION_STATUSES = (JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED)
+
+
+def settle_application_notifications(application_ids):
+    """An application that stopped waiting on a decision no longer needs
+    anyone's response: its hire request (or "New worker application") left
+    "Needs your response" up for good, with blank job details once the job
+    left the worker's list (flow audit, 2026-11-04). Review prompts keep
+    theirs; the review clears them."""
+    return (
+        Notification.objects.filter(related_application_id__in=list(application_ids), requires_action=True)
+        .exclude(action_type=Notification.ACTION_REVIEW)
+        .update(requires_action=False)
+    )
+
+
 def record_application_status_event(application, from_status, to_status, actor=None, note=""):
     if from_status == to_status:
         return None
+    if to_status not in AWAITING_DECISION_STATUSES:
+        settle_application_notifications([application.id])
     return JobStatusEvent.objects.create(
         job_id=application.job_id,
         application=application,
@@ -468,6 +490,11 @@ def hire_application(application_id: int, expected_status: str, actor=None) -> J
         # path already refuses them, and an instant accept must too.
         if worker_profile.refresh_block_status():
             raise HiringWorkerSuspendedError
+        # An invitation sent before the household was suspended can't be
+        # accepted into a job nobody can manage (flow audit, 2026-11-04).
+        household_profile = getattr(job.household, "profile", None)
+        if household_profile and household_profile.refresh_block_status():
+            raise HiringHouseholdSuspendedError
         hold = worker_hold(application.worker, job)
         if hold:
             raise HiringWorkerUnavailableError(hold)
@@ -795,6 +822,119 @@ def withdraw_application(application_id: int, worker, reason: str = "") -> JobAp
             action_url=f"/household/jobs/{job.id}/applications",
         )
     return application
+
+
+# --- When an account is suspended (flow audit, 2026-11-04) -----------------
+
+def _open_on_jobs(applications):
+    return applications.select_related("job", "job__household", "worker").filter(
+        status__in=[JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED],
+        job__status__in=[JobPosting.STATUS_OPEN, *UNDERWAY_JOB_STATUSES],
+    )
+
+
+def _hires_still_ahead(applications):
+    """Hires on jobs not yet done whose hold hasn't lapsed (see HOLD_GRACE_DAYS)."""
+    today = timezone.localdate()
+    hires = applications.select_related("job", "job__household", "worker").filter(
+        status=JobApplication.STATUS_HIRED, job__status__in=UNDERWAY_JOB_STATUSES
+    )
+    return [
+        hire for hire in hires
+        if (hold_ends_on(job_days(hire.job)) is None or hold_ends_on(job_days(hire.job)) >= today)
+    ]
+
+
+def _when(job):
+    days = job_days(job)
+    return f" on {format_job_days(days)}" if days else ""
+
+
+def release_suspended_account(user):
+    """What a suspension means for the people this account deals with.
+
+    Applications and invitations still waiting on a decision close, since the
+    suspended side can't act on them: a worker could otherwise accept an
+    invitation from a household that can no longer sign in. The other side of
+    each hire is told the job may not go ahead, but the hire itself stays: a
+    timed suspension can end before the job's day, and the household decides
+    whether to cancel (D1, flow audit, 2026-11-04). Complaints are
+    confidential, so nobody is told why or that a report was involved."""
+    profile = getattr(user, "profile", None)
+    if profile is None:
+        return
+    name = get_user_display_name(user)
+    note = "Closed automatically: the other party can't use GawaGo right now."
+    if profile.role == UserProfile.ROLE_HOUSEHOLD:
+        closed = list(_open_on_jobs(JobApplication.objects.filter(job__household=user)))
+        for application in closed:
+            previous_status = application.status
+            application.status = JobApplication.STATUS_CLOSED
+            application.save(update_fields=["status", "updated_at"])
+            record_application_status_event(application, previous_status, application.status, note=note)
+            create_notification(
+                recipient=application.worker,
+                notification_type=Notification.TYPE_REJECTION,
+                title="Job not available",
+                message=(
+                    f"{name} isn't taking workers for {application.job.title} right now, so "
+                    f"{'their invitation' if previous_status == JobApplication.STATUS_HIRE_REQUESTED else 'your application'} "
+                    "has been closed. If the job opens again, you can apply again."
+                ),
+                actor=None,
+                related_job_id=application.job_id,
+                related_application_id=application.id,
+                action_type=Notification.ACTION_JOB_DETAIL,
+                action_url=f"/worker/jobs/{application.job_id}",
+            )
+        for hire in _hires_still_ahead(JobApplication.objects.filter(job__household=user)):
+            message = (
+                f"{name} can't use GawaGo for now, so {hire.job.title}{_when(hire.job)} may not go ahead. "
+                "Check with them directly before the job day."
+            )
+            if can_back_out_of_hire(hire):
+                message += " You can still back out before it starts."
+            create_notification(
+                recipient=hire.worker,
+                notification_type=Notification.TYPE_APPLICATION,
+                title="Your job may not go ahead",
+                message=message,
+                related_job_id=hire.job_id,
+                related_application_id=hire.id,
+                action_type=Notification.ACTION_JOB_DETAIL,
+                action_url=f"/worker/jobs/{hire.job_id}",
+            )
+    elif profile.role == UserProfile.ROLE_WORKER:
+        closed = list(_open_on_jobs(JobApplication.objects.filter(worker=user)))
+        for application in closed:
+            previous_status = application.status
+            application.status = JobApplication.STATUS_CLOSED
+            application.save(update_fields=["status", "updated_at"])
+            record_application_status_event(application, previous_status, application.status, note=note)
+            create_notification(
+                recipient=application.job.household,
+                notification_type=Notification.TYPE_APPLICATION,
+                title="Application closed",
+                message=f"{name} isn't available right now. Their application for {application.job.title} has been closed.",
+                related_job_id=application.job_id,
+                related_application_id=application.id,
+                action_type=Notification.ACTION_JOB_DETAIL,
+                action_url=f"/household/jobs/{application.job_id}/applications",
+            )
+        for hire in _hires_still_ahead(JobApplication.objects.filter(worker=user)):
+            create_notification(
+                recipient=hire.job.household,
+                notification_type=Notification.TYPE_APPLICATION,
+                title="Your worker may not be available",
+                message=(
+                    f"{name} can't use GawaGo for now, so they may not be able to do {hire.job.title}{_when(hire.job)}. "
+                    "You can wait for them, or cancel the job, saying why, and post it again."
+                ),
+                related_job_id=hire.job_id,
+                related_application_id=hire.id,
+                action_type=Notification.ACTION_JOB_DETAIL,
+                action_url=f"/household/jobs/{hire.job_id}",
+            )
 
 
 # --- Reminding the household to mark a job done ----------------------------

@@ -66,8 +66,11 @@ export default function WorkerJobDetailView({
   const currentWorkerApplicationStatus = job?.applicationStatus || currentWorkerApplication?.status || "";
   const currentWorkerApplicationId = job?.applicationId || currentWorkerApplication?.id || null;
   const hasRejectedHireRequest = currentWorkerApplicationStatus === "Rejected";
-  // A worker who withdrew may apply again while the job takes applicants.
-  const hasWithdrawn = currentWorkerApplicationStatus === "Withdrawn";
+  // A worker who withdrew, or was closed out when the job filled, may apply
+  // again while the job takes applicants (the backend's canApply says so).
+  const hasWithdrawn =
+    currentWorkerApplicationStatus === "Withdrawn" ||
+    (currentWorkerApplicationStatus === "Closed" && Boolean(job?.canApply));
   const alreadyApplied = hasApplication && !hasWithdrawn;
   const canWithdraw = Boolean(job?.canWithdraw ?? currentWorkerApplication?.canWithdraw);
   const canBackOut = Boolean(job?.canBackOut ?? currentWorkerApplication?.canBackOut);

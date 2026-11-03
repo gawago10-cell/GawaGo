@@ -78,6 +78,44 @@ class RoadRoutingProviderTests(TestCase):
         )
         self.assertIn("geometries=geojson", urlopen.call_args.args[0].full_url)
 
+    def _osrm_reply(self, snapped_meters):
+        payload = {
+            "code": "Ok",
+            "waypoints": [{"distance": meters} for meters in snapped_meters],
+            "routes": [{"distance": 8027.0, "geometry": {"coordinates": [[121.53, 14.05], [121.54, 14.06]]}}],
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        return FakeResponse()
+
+    @override_settings(OSRM_DIRECTIONS_URL="https://router.example/route/v1/driving")
+    def test_a_pin_far_from_any_road_is_measured_in_a_straight_line(self):
+        """OSRM snapped an off-road pin to roads kilometres away: a worker
+        0.39 km from the job read as 8 km (flow audit, 2026-11-04)."""
+        with patch("apps.matching.services.request.urlopen", return_value=self._osrm_reply([2638, 40])):
+            route = fetch_osrm_route(14.0537324, 121.5336725, 14.0567, 121.5356)
+
+        self.assertAlmostEqual(route["distance_km"], 0.39, places=2)
+        self.assertEqual(route["route_points"], [])
+
+    @override_settings(OSRM_DIRECTIONS_URL="https://router.example/route/v1/driving")
+    def test_pins_near_roads_keep_the_road_distance(self):
+        """A longer road than the straight line is the spec'd measure (AGENTS.md I.B)."""
+        with patch("apps.matching.services.request.urlopen", return_value=self._osrm_reply([120, 350])):
+            route = fetch_osrm_route(14.0537324, 121.5336725, 14.0567, 121.5356)
+
+        self.assertEqual(route["distance_km"], 8.027)
+        self.assertEqual(len(route["route_points"]), 2)
+
     OSRM_RESULT = {"distance_km": 3.58, "route_points": [[13.96, 121.56], [13.98, 121.58]]}
 
     @override_settings(OPENROUTESERVICE_API_KEY="a-configured-key")
@@ -713,6 +751,8 @@ class JobMatchNotificationTaskTests(TestCase):
 
     def make_worker(self, username, skills=("House Cleaning",), latitude=JOB_SITE[0], longitude=JOB_SITE[1], **extra):
         user = User.objects.create_user(username=username, password="password")
+        # Only verified workers are alerted (flow audit, 2026-11-04).
+        extra.setdefault("verification_status", "verified")
         UserProfile.objects.create(
             user=user, role=UserProfile.ROLE_WORKER, skills=list(skills), latitude=latitude, longitude=longitude, **extra
         )
@@ -734,6 +774,7 @@ class JobMatchNotificationTaskTests(TestCase):
                 "title": "Cleaning job", "job_type": "House Cleaning", "required_skill": "House Cleaning",
                 "schedule": "Saturday", "location_label": "Isabang, Tayabas", "latitude": JOB_SITE[0],
                 "longitude": JOB_SITE[1], "service_rate": "500.00", "geographic_boundary": "10km", "max_distance_km": 10,
+                "job_start_date": (timezone.localdate() + timedelta(days=3)).isoformat(),
             },
             content_type="application/json",
         )

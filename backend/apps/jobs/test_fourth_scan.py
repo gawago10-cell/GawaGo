@@ -483,7 +483,7 @@ class PostingNeedsClosedOutJobsTests(TestCase):
             "title": "New job", "job_type": "House Cleaning", "required_skill": "House Cleaning",
             "schedule": "One-Time starting soon", "location_label": "Isabang, Tayabas",
             "latitude": "13.9622745", "longitude": "121.5632841", "service_rate": "600.00",
-            "schedule_type": "One-Time",
+            "schedule_type": "One-Time", "job_start_date": days_from_today(7).isoformat(),
         }
         values.update(overrides)
         return values

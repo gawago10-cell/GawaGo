@@ -633,6 +633,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"max_distance_km": "Change the search radius with geographic_boundary (1km, 2km, 5km, 10km or unlimited)."}
             )
+        if "job_start_date" in attrs and not attrs["job_start_date"]:
+            raise serializers.ValidationError({"job_start_date": "Choose the day the job starts."})
         _reject_past_dates(attrs)
         _validate_job_dates(attrs, instance)
         # Posting writes the schedule as "<type> starting <date>"; an edit
@@ -774,8 +776,11 @@ class JobPostingSerializer(serializers.ModelSerializer):
     def _could_apply(self, obj, user, profile):
         if profile.verification_status != "verified" or not self.get_accepting_applications(obj):
             return False
-        # A worker who withdrew may apply again (fourth scan, 2026-11-01).
-        return not obj.applications.filter(worker=user).exclude(status=JobApplication.STATUS_WITHDRAWN).exists()
+        # A worker who withdrew, or was closed out when the job filled, may
+        # apply again (fourth scan, 2026-11-01; flow audit, 2026-11-04).
+        return not obj.applications.filter(worker=user).exclude(
+            status__in=[JobApplication.STATUS_WITHDRAWN, JobApplication.STATUS_CLOSED]
+        ).exists()
 
     def get_can_apply(self, obj):
         is_worker, user, profile = self.is_authenticated_worker()
@@ -956,8 +961,12 @@ class JobCreateSerializer(serializers.Serializer):
         return validate_offered_rate(value)
 
     def validate(self, attrs):
-        if not attrs.get("schedule") and not attrs.get("job_start_date"):
-            raise serializers.ValidationError({"schedule": "Schedule text or a job start date is required."})
+        # Every rule that keeps a job honest runs off its dates: it lapses,
+        # holds its worker, blocks the next post until it is marked done, and
+        # can't be finished before it starts. Both clients always send a start
+        # date; the API now insists too (flow audit, 2026-11-04).
+        if not attrs.get("job_start_date"):
+            raise serializers.ValidationError({"job_start_date": "Choose the day the job starts."})
         # "Other" is the clients' choice for typing a service outside the
         # catalog; a job "needing Other" can't be matched to any worker.
         if is_other_placeholder(attrs.get("required_skill")):

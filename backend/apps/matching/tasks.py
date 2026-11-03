@@ -36,6 +36,9 @@ def eligible_workers(job):
     return (
         UserProfile.objects.select_related("user")
         .filter(role=UserProfile.ROLE_WORKER, user__is_staff=False, user__is_active=True)
+        # Only verified workers can apply, so only they hear about a job
+        # (flow audit, 2026-11-04).
+        .filter(verification_status="verified")
         .not_suspended()
         # No "a job near you" alert for a job they can't apply to.
         .exclude(user_id__in=workers_held_from(job))

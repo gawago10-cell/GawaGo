@@ -109,6 +109,11 @@ def apply_account_suspension(profile: UserProfile, *, blocked=True, reason="", d
     profile.blocked_reason = reason if blocked else ""
     profile.blocked_until = blocked_until
     profile.save(update_fields=["is_blocked", "blocked_at", "blocked_reason", "blocked_until"])
+    if blocked and not was_blocked:
+        # Imported here because jobs imports accounts.
+        from apps.jobs.services import release_suspended_account
+
+        release_suspended_account(profile.user)
 
     if blocked:
         title = f"Account suspended for {duration_days} days" if blocked_until else "Account blocked"

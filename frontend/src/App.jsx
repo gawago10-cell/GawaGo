@@ -720,7 +720,11 @@ function App() {
   ]);
   const verificationNotifications = getVerificationNotifications(verificationRequests, registeredWorkers);
   const workerNotifications = dedupeNotifications([
-    ...backendNotifications.filter((item) => item.notificationType !== "application"),
+    // Every notice the backend addressed to this worker. "application" ones
+    // used to be dropped as household-only, which hid "Job details changed"
+    // and "Your job may not go ahead" from workers on web (flow audit,
+    // 2026-11-04); the mobile app always showed them.
+    ...backendNotifications,
     ...(currentWorker?.verificationNotifications || []),
     ...(currentWorker?.applicationNotifications || []),
   ]);

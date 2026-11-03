@@ -164,6 +164,11 @@ def fetch_road_route(lat1, lon1, lat2, lon2):
         return fetch_osrm_route(lat1, lon1, lat2, lon2)
 
 
+# OpenRouteService refuses (HTTP 404) a point farther than this from a road,
+# and that refusal falls through to OSRM, so both providers share the limit.
+MAX_ROAD_SNAP_METERS = 350
+
+
 def fetch_osrm_route(lat1, lon1, lat2, lon2):
     coordinates = f"{float(lon1)},{float(lat1)};{float(lon2)},{float(lat2)}"
     route_url = (
@@ -188,6 +193,19 @@ def fetch_osrm_route(lat1, lon1, lat2, lon2):
         return None
     if data.get("code") != "Ok":
         return None
+    # OSRM snaps each pin to the nearest mapped road however far away it is.
+    # A pin off the mapped roads (20 of the 66 barangay centres are over
+    # 350 m from one; Alitao's is 2.6 km) was then measured between two
+    # distant roads: a worker 0.39 km away read as 8 km and dropped out of
+    # every match (flow audit, 2026-11-04). Past OpenRouteService's own
+    # 350 m snapping limit the road route says nothing about the real gap,
+    # so the straight line stands in for it, with no route to draw.
+    snapped = [waypoint.get("distance") or 0 for waypoint in data.get("waypoints") or []]
+    if any(meters > MAX_ROAD_SNAP_METERS for meters in snapped):
+        return {
+            "distance_km": straight_line_distance_km(lat1, lon1, lat2, lon2),
+            "route_points": [],
+        }
     route = (data.get("routes") or [None])[0] or {}
     distance_meters = route.get("distance")
     raw_coordinates = route.get("geometry", {}).get("coordinates") or []

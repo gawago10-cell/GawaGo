@@ -151,7 +151,7 @@ class ReviewListCreateView(APIView):
         notification_message = (
             "You received anonymous feedback from a worker."
             if author_role == "worker"
-            else f"You received a new review from {author_user.username}."
+            else f"You received a new review from {author_user.get_full_name().strip() or author_user.username}."
         )
         create_notification(
             recipient=target_user,

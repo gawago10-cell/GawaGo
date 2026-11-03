@@ -346,7 +346,16 @@ class ComplaintUpdateAdminView(APIView):
             status_changed = False
 
         if "resolution" in request.data:
-            complaint.resolution = request.data["resolution"]
+            resolution = str(request.data["resolution"] or "").strip()
+            # The filer reads this as the answer to their complaint, so once
+            # it is Resolved or Closed it can be reworded but not emptied
+            # (flow audit, 2026-11-04).
+            if not resolution and complaint.status in {Complaint.STATUS_RESOLVED, Complaint.STATUS_CLOSED}:
+                return Response(
+                    {"resolution": "Add a resolution note the filer can read."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            complaint.resolution = resolution
 
         if "admin_notes" in request.data:
             complaint.admin_notes = request.data["admin_notes"]
