@@ -2915,7 +2915,7 @@ class _MyJobsState extends State<_MyJobs> {
               ),
               const SizedBox(height: 10),
               _HistoryStatCard(
-                icon: Icons.attach_money_rounded,
+                glyph: '₱',
                 iconColor: GawaGoColors.cream,
                 background: GawaGoColors.leafDeep,
                 value: 'PHP ${totalSpent.toStringAsFixed(2)}',
@@ -3006,14 +3006,17 @@ class _MyJobsState extends State<_MyJobs> {
 
 class _HistoryStatCard extends StatelessWidget {
   const _HistoryStatCard({
-    required this.icon,
+    this.icon,
+    this.glyph,
     required this.iconColor,
     required this.background,
     required this.value,
     required this.label,
   });
 
-  final IconData icon;
+  // An icon, or a currency sign Material has no icon for (the peso).
+  final IconData? icon;
+  final String? glyph;
   final Color iconColor;
   final Color background;
   final String value;
@@ -3040,7 +3043,17 @@ class _HistoryStatCard extends StatelessWidget {
               color: background,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 20, color: iconColor),
+            child: glyph != null
+                ? Text(
+                    glyph!,
+                    style: TextStyle(
+                      fontSize: 20,
+                      height: 1,
+                      fontWeight: FontWeight.w700,
+                      color: iconColor,
+                    ),
+                  )
+                : Icon(icon, size: 20, color: iconColor),
           ),
           const SizedBox(width: 12),
           Expanded(

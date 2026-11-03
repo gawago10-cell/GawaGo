@@ -6265,8 +6265,10 @@ export default function AppViews({
                   <div className="household-history-stat spent">
                     <div className="household-history-stat-icon">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <line x1="12" y1="1" x2="12" y2="23"></line>
-                        <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path>
+                        {/* Peso sign: a P with two bars through its bowl. */}
+                        <path d="M8 21V3h5a4.5 4.5 0 010 9H8"></path>
+                        <line x1="5" y1="6.5" x2="19.5" y2="6.5"></line>
+                        <line x1="5" y1="9" x2="19.5" y2="9"></line>
                       </svg>
                     </div>
                     <div>
