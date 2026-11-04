@@ -130,7 +130,9 @@ function getToastVariant(message) {
     normalized.includes("failed") ||
     normalized.includes("not found") ||
     normalized.includes("not allowed") ||
-    normalized.includes("cannot")
+    normalized.includes("cannot") ||
+    normalized.includes("can't be used") ||
+    normalized.includes("couldn't verify")
   ) {
     return "danger";
   }
