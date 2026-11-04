@@ -3065,6 +3065,24 @@ export default function AppViews({
                               />
                             </div>
                             <div className="col-12">
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-bio">
+                                Bio / About Me
+                              </label>
+                              <textarea
+                                id="worker-profile-bio"
+                                name="bio"
+                                className="form-control"
+                                rows={4}
+                                placeholder="Tell households about your work and experience."
+                                aria-describedby="worker-profile-bio-hint"
+                                value={workerProfileForm.bio || ""}
+                                onChange={handleWorkerProfileChange}
+                              />
+                              <div id="worker-profile-bio-hint" className="form-text">
+                                Households read this on your profile before they hire you.
+                              </div>
+                            </div>
+                            <div className="col-12">
                               <WorkerLocationPicker
                                 form={workerProfileForm}
                                 setForm={setWorkerProfileForm}
