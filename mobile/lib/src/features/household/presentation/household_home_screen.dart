@@ -4745,16 +4745,25 @@ Future<void> _showWorkerMatchProfile(
     job,
     worker,
   )?.status.trim().toLowerCase();
+  final alreadyOffered = requested == 'hired' || requested == 'hire_requested';
+  // Only a verified worker can be hired, so say so on the button instead of
+  // leaving it pressable and warning after the tap.
+  final unverified =
+      !alreadyOffered &&
+      worker.verificationStatus.trim().toLowerCase() != 'verified';
   return Navigator.of(context).push(
     MaterialPageRoute(
       builder: (_) => _WorkerProfileScreen(
         subject: _WorkerProfileSubject.fromRecommendation(worker),
         repository: repository,
-        hireEnabled: requested != 'hired' && requested != 'hire_requested',
+        hireEnabled: !alreadyOffered && !unverified,
+        hireLocked: unverified,
         hireLabel: requested == 'hired'
             ? 'Hired'
             : requested == 'hire_requested'
             ? 'Request Sent'
+            : unverified
+            ? 'Not verified yet'
             : null,
         matchBreakdown: AiMatchBreakdown(
           skillSharePercent: worker.skillSharePercent,
@@ -7485,6 +7494,7 @@ class _WorkerProfileScreen extends StatefulWidget {
     required this.repository,
     required this.onHire,
     required this.hireEnabled,
+    this.hireLocked = false,
     this.hireLabel,
     this.matchBreakdown,
     this.mapPanel,
@@ -7495,6 +7505,10 @@ class _WorkerProfileScreen extends StatefulWidget {
   final HouseholdRepository repository;
   final VoidCallback onHire;
   final bool hireEnabled;
+
+  /// The worker isn't verified yet: the hire button shows as locked, with a
+  /// line saying when it opens.
+  final bool hireLocked;
 
   /// Overrides `Hire <first name>` when the offer has already been made, so
   /// the button states what happened instead of sitting there dead.
@@ -7569,6 +7583,7 @@ class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
             subject: subject,
             hireLabel: _hireText,
             onHire: widget.hireEnabled ? widget.onHire : null,
+            locked: widget.hireLocked,
           ),
           if (subject.matchScore != null) ...[
             const SizedBox(height: 14),
@@ -7772,11 +7787,13 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
     required this.subject,
     required this.hireLabel,
     required this.onHire,
+    this.locked = false,
   });
 
   final _WorkerProfileSubject subject;
   final String hireLabel;
   final VoidCallback? onHire;
+  final bool locked;
 
   @override
   Widget build(BuildContext context) {
@@ -7955,26 +7972,63 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                 ],
-                SizedBox(
-                  height: 54,
-                  child: FilledButton(
-                    onPressed: onHire,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: GawaGoColors.primary,
-                      foregroundColor: GawaGoColors.onPrimary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      textStyle: const TextStyle(
-                        fontFamily: GawaGoColors.fontHeading,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0,
+                if (locked) ...[
+                  SizedBox(
+                    height: 54,
+                    child: OutlinedButton.icon(
+                      onPressed: null,
+                      icon: const Icon(Icons.lock_outline, size: 18),
+                      label: Text(hireLabel),
+                      style: OutlinedButton.styleFrom(
+                        disabledBackgroundColor: const Color(0xFFECE6D4),
+                        disabledForegroundColor: const Color(0xFF6B6656),
+                        side: const BorderSide(
+                          color: Color(0xFFC9C1A9),
+                          width: 1.5,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        textStyle: const TextStyle(
+                          fontFamily: GawaGoColors.fontHeading,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
+                        ),
                       ),
                     ),
-                    child: Text(hireLabel),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "You can send a hire request once this worker's ID is approved.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.4,
+                      color: GawaGoColors.textMuted,
+                    ),
+                  ),
+                ] else
+                  SizedBox(
+                    height: 54,
+                    child: FilledButton(
+                      onPressed: onHire,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: GawaGoColors.primary,
+                        foregroundColor: GawaGoColors.onPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        textStyle: const TextStyle(
+                          fontFamily: GawaGoColors.fontHeading,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      child: Text(hireLabel),
+                    ),
+                  ),
               ],
             ),
           ),

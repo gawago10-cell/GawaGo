@@ -16559,3 +16559,26 @@ a,
   font-size: 14px;
 }
 .household-post-blocked p { margin: 0; flex: 1 1 260px; }
+
+/* Hire button for a worker who isn't verified yet: plainly not pressable. */
+.btn.hire-button-locked,
+.btn.hire-button-locked:disabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1.5px dashed #c9c1a9;
+  background: #ece6d4;
+  color: #6b6656;
+  font-weight: 700;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.hire-button-locked-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #5a5f52;
+  text-align: center;
+}

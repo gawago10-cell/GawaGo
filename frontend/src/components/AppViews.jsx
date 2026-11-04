@@ -550,6 +550,12 @@ export default function AppViews({
   const selectedWorkerHireButtonDisabled = ["Hired", "Hire Request", "Completed"].includes(
     selectedWorkerApplication?.status,
   );
+  // Only a verified worker can be hired (AGENTS.md trust gates), so the button
+  // says so up front instead of looking clickable and warning on tap.
+  const selectedWorkerHireLocked =
+    Boolean(selectedWorker) &&
+    !selectedWorkerHireButtonDisabled &&
+    String(selectedWorker.verification || "").toLowerCase() !== "verified";
   const selectedWorkerVerificationRequest =
     selectedWorker
       ? verificationRequests.find((item) => item.id === selectedWorker.verificationRequestId) ||
@@ -6645,14 +6651,34 @@ export default function AppViews({
                           <span>Daily Rate</span>
                           <strong>{formatWorkerRate(selectedWorker.dailyRate)}</strong>
                         </p>
-                        <button
-                          className="btn btn-primary w-100 mb-2"
-                          type="button"
-                          disabled={selectedWorkerHireButtonDisabled}
-                          onClick={handleHireWorker}
-                        >
-                          {selectedWorkerHireButtonLabel}
-                        </button>
+                        {selectedWorkerHireLocked ? (
+                          <>
+                            <button
+                              className="btn w-100 mb-1 hire-button-locked"
+                              type="button"
+                              disabled
+                              aria-describedby="hire-button-locked-note"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+                                <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+                              </svg>
+                              Not verified yet
+                            </button>
+                            <p id="hire-button-locked-note" className="hire-button-locked-note">
+                              You can send a hire request once this worker&apos;s ID is approved.
+                            </p>
+                          </>
+                        ) : (
+                          <button
+                            className="btn btn-primary w-100 mb-2"
+                            type="button"
+                            disabled={selectedWorkerHireButtonDisabled}
+                            onClick={handleHireWorker}
+                          >
+                            {selectedWorkerHireButtonLabel}
+                          </button>
+                        )}
                         {canRejectSelectedWorkerApplication && (
                           <button
                             className="btn btn-outline-danger w-100 mb-2"
