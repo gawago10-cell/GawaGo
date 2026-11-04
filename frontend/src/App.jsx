@@ -24,6 +24,7 @@ import {
   getDisplayName,
   getDisplayRating,
   getWorkerPhoto,
+  isSameWorker,
   sanitizePhilippinesPhone,
 } from "./utils/formatters";
 import {
@@ -314,7 +315,6 @@ function App() {
     workersNeeded: "1",
     jobStartDate: "",
     jobEndDate: "",
-    estimatedWorkingDays: "",
     geographicBoundary: "1km",
   });
   const [householdJobImages, setHouseholdJobImages] = useState([]);
@@ -366,6 +366,8 @@ function App() {
     // Only used when primaryIdType is "other"; otherwise the backend labels
     // the request from the chosen type.
     primaryIdOtherName: "",
+    // Typed from the ID; checked against permanently blocked accounts.
+    primaryIdNumber: "",
     primaryIdName: "",
     primaryIdFile: null,
     secondaryDocName: "",
@@ -642,25 +644,13 @@ function App() {
   const matchedSelectedWorker =
     selectedMatchedWorkers.find((worker) => workerMatchesSelectedToken(worker)) ||
     selectedMatchedWorkers.find(
-      (worker) =>
-        selectedWorkerApplication &&
-        (worker.username === selectedWorkerApplication.workerUsername ||
-          worker.workerUsername === selectedWorkerApplication.workerUsername ||
-          getDisplayName(worker.firstName, worker.lastName, worker.username) === selectedWorkerApplication.workerName ||
-          String(worker.id) === String(selectedWorkerApplication.workerId) ||
-          String(worker.workerId) === String(selectedWorkerApplication.workerId)),
+      (worker) => selectedWorkerApplication && isSameWorker(worker, selectedWorkerApplication),
     ) ||
     null;
   const registeredSelectedWorker =
     registeredWorkers.find((worker) => workerMatchesSelectedToken(worker)) ||
     registeredWorkers.find(
-      (worker) =>
-        selectedWorkerApplication &&
-        (worker.username === selectedWorkerApplication.workerUsername ||
-          worker.workerUsername === selectedWorkerApplication.workerUsername ||
-          getDisplayName(worker.firstName, worker.lastName, worker.username) === selectedWorkerApplication.workerName ||
-          String(worker.id) === String(selectedWorkerApplication.workerId) ||
-          String(worker.workerId) === String(selectedWorkerApplication.workerId)),
+      (worker) => selectedWorkerApplication && isSameWorker(worker, selectedWorkerApplication),
     ) ||
     null;
   const selectedWorkerRecord = matchedSelectedWorker

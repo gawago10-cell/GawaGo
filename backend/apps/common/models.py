@@ -52,6 +52,14 @@ class VerificationRequest(models.Model):
     # The human label. Taken from primary_id_type's display name, except for
     # "other", where it is what the submitter typed.
     primary_id_name = models.CharField(max_length=255)
+    # As typed on the form; matched against banned accounts' ID numbers in
+    # normalized form (apps.accounts.banned). Blank on requests sent before
+    # the field existed.
+    primary_id_number = models.CharField(max_length=64, blank=True, default="")
+    # Set when the request was rejected on arrival because its ID number
+    # belongs to a permanently blocked account: that account's username, for
+    # the superadmin only -- the applicant is never told.
+    banned_match_username = models.CharField(max_length=150, blank=True, default="")
     secondary_doc_name = models.CharField(max_length=255)
     # Government IDs: private storage, readable only through
     # VerificationRequestDocumentView's permission check.

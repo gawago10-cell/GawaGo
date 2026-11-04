@@ -371,3 +371,40 @@ class SkillRating(models.Model):
 
     def __str__(self) -> str:
         return f"{self.household.username} rated {self.worker.username} - {self.skill.skill_name}: {self.rating}"
+
+
+class BannedCredential(models.Model):
+    """One email, phone, government ID number or full name taken from an
+    account that was blocked permanently, so the person can't come back
+    under a new account (AGENTS.md II.D). Email, phone and ID number block
+    a new signup or verification; a name only warns the superadmin, since
+    two people can share one.
+
+    Values are stored normalized (see apps.accounts.banned). user is
+    SET_NULL with the username snapshotted, so the ban outlives the account
+    if it is ever deleted. Restoring the account removes its rows.
+    """
+
+    KIND_EMAIL = "email"
+    KIND_PHONE = "phone"
+    KIND_ID_NUMBER = "id_number"
+    KIND_NAME = "name"
+    KIND_CHOICES = [
+        (KIND_EMAIL, "Email"),
+        (KIND_PHONE, "Phone"),
+        (KIND_ID_NUMBER, "ID number"),
+        (KIND_NAME, "Full name"),
+    ]
+
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    value = models.CharField(max_length=255)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="banned_credentials")
+    username = models.CharField(max_length=150)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["kind", "value"])]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} of banned @{self.username}"

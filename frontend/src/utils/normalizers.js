@@ -107,6 +107,7 @@ export function normalizeVerificationRequest(request) {
     primaryIdType: source.primary_id_type || source.primaryIdType || "",
     primaryIdTypeLabel: source.primary_id_type_label || source.primaryIdTypeLabel || "",
     primaryIdName: source.primary_id_name || source.primaryIdName || "",
+    primaryIdNumber: source.primary_id_number || source.primaryIdNumber || "",
     secondaryDocName: source.secondary_doc_name || source.secondaryDocName || "",
     primaryIdPreview: normalizePreviewUrl(source.primary_id_preview || source.primaryIdPreview),
     secondaryDocPreview: normalizePreviewUrl(source.secondary_doc_preview || source.secondaryDocPreview),
@@ -116,6 +117,19 @@ export function normalizeVerificationRequest(request) {
     reviewedAt: source.reviewed_at || source.reviewedAt || "",
     reviewedBy: source.reviewed_by || source.reviewedBy || "",
     reviewNote: source.review_note || source.reviewNote || "",
+    // Admin copies only (AGENTS.md II.D): the banned account this request's
+    // ID number or full name matches, if any.
+    banCheck: normalizeBanCheck(source.ban_check || source.banCheck),
+  };
+}
+
+function normalizeBanCheck(check) {
+  if (!check) {
+    return null;
+  }
+  return {
+    idNumberMatch: check.id_number_match || check.idNumberMatch || "",
+    nameMatch: check.name_match || check.nameMatch || "",
   };
 }
 
@@ -513,6 +527,8 @@ function normalizeComplaintParty(detail) {
     memberSince: detail.member_since || "",
     phone: detail.phone || "",
     email: detail.email || "",
+    idNumber: detail.id_number || "",
+    idTypeLabel: detail.id_type_label || "",
   };
 }
 

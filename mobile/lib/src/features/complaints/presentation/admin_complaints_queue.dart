@@ -312,24 +312,30 @@ class _ReviewSheetState extends State<_ReviewSheet> {
           title: Text(
             'Suspend ${complaint.respondentUsername} $durationLabel?',
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                durationDays == null
-                    ? 'They will be signed out immediately and cannot log '
-                          'back in until restored.'
-                    : 'They will be signed out immediately and cannot log '
-                          'back in for $durationDays days.',
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: 'Reason (shown to the user)',
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  durationDays == null
+                      ? 'They will be signed out immediately and cannot log '
+                            'back in until restored.'
+                      : 'They will be signed out immediately and cannot log '
+                            'back in for $durationDays days.',
                 ),
-              ),
-            ],
+                if (durationDays == null) ...[
+                  const SizedBox(height: 12),
+                  _BanCredentialsBox(detail: complaint.respondentDetail),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason (shown to the user)',
+                  ),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -644,6 +650,75 @@ class _ThumbPlaceholder extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : Icon(icon),
+    );
+  }
+}
+
+/// What a permanent block also bars from a new account (AGENTS.md II.D):
+/// the respondent's email, phone and government ID number.
+class _BanCredentialsBox extends StatelessWidget {
+  const _BanCredentialsBox({required this.detail});
+
+  final ComplaintPartyDetail? detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final idNumber = detail?.idNumber ?? '';
+    final idType = detail?.idTypeLabel ?? '';
+    final rows = <(String, String)>[
+      ('Email', (detail?.email ?? '').isEmpty ? 'None on file' : detail!.email),
+      ('Phone', (detail?.phone ?? '').isEmpty ? 'None on file' : detail!.phone),
+      (
+        'ID number',
+        idNumber.isEmpty
+            ? 'None sent yet'
+            : (idType.isEmpty ? idNumber : '$idType · $idNumber'),
+      ),
+    ];
+    return Container(
+      key: const Key('ban-credentials-box'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFDECEA),
+        border: Border.all(color: const Color(0xFFF0C4BE)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "These can't be used for a new GawaGo account:",
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF8C1D18),
+            ),
+          ),
+          const SizedBox(height: 6),
+          for (final (label, value) in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '$label: ',
+                      style: const TextStyle(color: Color(0xFF5A5F52)),
+                    ),
+                    TextSpan(text: value),
+                  ],
+                ),
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          const SizedBox(height: 4),
+          const Text(
+            "A new account with the same full name isn't blocked, but it is "
+            'flagged in the Verification Queue.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF5A5F52)),
+          ),
+        ],
+      ),
     );
   }
 }

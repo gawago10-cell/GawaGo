@@ -675,6 +675,11 @@ class _VerificationQueueState extends State<_VerificationQueue> {
                         formatStatus(request.accountRole),
                       if (request.location.isNotEmpty) request.location,
                       'Submitted ${_displayDate(request.submittedAt)}',
+                      if (request.bannedIdMatch.isNotEmpty)
+                        'ID number matches banned account @${request.bannedIdMatch}',
+                      if (request.bannedIdMatch.isEmpty &&
+                          request.bannedNameMatch.isNotEmpty)
+                        'Same name as banned account @${request.bannedNameMatch}',
                     ].join('\n'),
                     status: request.status,
                     emphasized:
@@ -806,6 +811,11 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
               const SizedBox(height: 14),
               StatusBadge(status: request.status),
               const SizedBox(height: 16),
+              if (request.bannedIdMatch.isNotEmpty ||
+                  request.bannedNameMatch.isNotEmpty) ...[
+                _BanFlag(request: request),
+                const SizedBox(height: 14),
+              ],
               _Fact(label: 'Role', value: formatStatus(request.accountRole)),
               _Fact(label: 'Email', value: request.email),
               _Fact(label: 'Phone', value: request.phone),
@@ -817,6 +827,12 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
                     : request.skills.join(', '),
               ),
               const Divider(height: 26),
+              _Fact(
+                label: 'ID number',
+                value: request.primaryIdNumber.isEmpty
+                    ? 'Not given'
+                    : request.primaryIdNumber,
+              ),
               _DocumentFact(
                 label: 'Primary document',
                 filename: request.primaryDocument,
@@ -956,4 +972,53 @@ String _displayDate(String value) {
   final parsed = DateTime.tryParse(value);
   if (parsed == null) return value.isEmpty ? 'Unknown date' : value;
   return '${parsed.month}/${parsed.day}/${parsed.year}';
+}
+
+/// Tells the admin that a verification request touches a permanently
+/// blocked account (AGENTS.md II.D), the same wording as the web's
+/// VerificationBanFlag.
+class _BanFlag extends StatelessWidget {
+  const _BanFlag({required this.request});
+
+  final AdminVerificationRequest request;
+
+  @override
+  Widget build(BuildContext context) {
+    final idMatch = request.bannedIdMatch.isNotEmpty;
+    return Container(
+      key: const Key('verification-ban-flag'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: idMatch ? const Color(0xFFFDECEA) : const Color(0xFFFFF7E0),
+        border: Border.all(
+          color: idMatch ? const Color(0xFFF0C4BE) : const Color(0xFFF0D58A),
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: idMatch
+                  ? 'ID number matches banned account @${request.bannedIdMatch}. '
+                  : 'Same full name as banned account @${request.bannedNameMatch}. ',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            TextSpan(
+              text: idMatch
+                  ? 'The request was rejected automatically and the applicant '
+                        "was only told the ID couldn't be verified."
+                  : 'Compare the ID photos before you approve.',
+            ),
+          ],
+        ),
+        style: TextStyle(
+          fontSize: 13,
+          height: 1.4,
+          color: idMatch ? const Color(0xFF8C1D18) : const Color(0xFF5C4300),
+        ),
+      ),
+    );
+  }
 }

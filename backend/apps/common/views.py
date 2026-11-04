@@ -10,7 +10,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.models import UserProfile
+from apps.accounts.banned import ID_BLOCKED_MESSAGE, banned_match
+from apps.accounts.models import BannedCredential, UserProfile
 from apps.accounts.serializers import UserProfileSerializer
 from apps.common.audit import log_admin_action
 from apps.common.models import AdminActionLog, VerificationRequest
@@ -67,23 +68,59 @@ class VerificationRequestListCreateView(APIView):
                 )
                 return Response({"detail": message}, status=status.HTTP_409_CONFLICT)
 
+            # An ID number that belongs to a permanently blocked account is
+            # turned down on arrival (AGENTS.md II.D). The applicant only
+            # hears that the ID couldn't be verified; the superadmin is told
+            # which banned account it matched.
+            banned = banned_match(
+                BannedCredential.KIND_ID_NUMBER,
+                serializer.validated_data["primary_id_number"],
+                exclude_user=account,
+            )
             request_record = VerificationRequest.objects.create(
                 worker=account,
                 primary_id_type=serializer.validated_data["primary_id_type"],
                 primary_id_name=serializer.validated_data["primary_id_name"],
+                primary_id_number=serializer.validated_data["primary_id_number"],
                 secondary_doc_name=serializer.validated_data["secondary_doc_name"],
                 primary_id_file=serializer.validated_data["primary_id_file"],
                 secondary_doc_file=serializer.validated_data["secondary_doc_file"],
                 notes=serializer.validated_data.get("notes", ""),
+                **(
+                    {
+                        "status": VerificationRequest.STATUS_REJECTED,
+                        "reviewed_at": timezone.now(),
+                        "review_note": ID_BLOCKED_MESSAGE,
+                        "banned_match_username": banned.username,
+                    }
+                    if banned
+                    else {}
+                ),
             )
-            if profile.verification_status != "pending":
-                profile.verification_status = "pending"
+            new_status = "rejected" if banned else "pending"
+            if profile.verification_status != new_status:
+                profile.verification_status = new_status
                 profile.save(update_fields=["verification_status"])
-        notify_admins(
-            title="New verification request",
-            message=f"@{account.username} ({profile.role}) submitted an ID for verification. "
-            "Review it in the Verification Queue.",
-        )
+        if banned:
+            create_notification(
+                recipient=account,
+                notification_type=Notification.TYPE_VERIFICATION,
+                title="Verification rejected",
+                message=ID_BLOCKED_MESSAGE,
+            )
+            notify_admins(
+                title="Verification rejected automatically",
+                message=f"@{account.username} ({profile.role}) sent an ID number that belongs to the permanently "
+                f"blocked account @{banned.username}, so the request was rejected. It is under Rejected in the "
+                "Verification Queue.",
+                superadmins_only=True,
+            )
+        else:
+            notify_admins(
+                title="New verification request",
+                message=f"@{account.username} ({profile.role}) submitted an ID for verification. "
+                "Review it in the Verification Queue.",
+            )
         return Response(
             {
                 "verification_request": VerificationRequestSerializer(request_record, context={"request": request}).data,

@@ -77,6 +77,31 @@ String formatJobDate(String? value, {String fallback = 'Not set'}) {
   return '${_month(local.month)} ${local.day}, ${local.year}';
 }
 
+/// The Post a Job hint under the dates, now that the days are no longer
+/// typed in: "5 days, Nov 10 to Nov 14, 2026." Matches the web's
+/// describeJobSpan. A job with no end date (or one before its start) is a
+/// one-day job, the same rule the backend's job_days uses.
+String describeJobSpan(DateTime? start, DateTime? end) {
+  if (start == null) return 'Pick the dates the job starts and ends.';
+  final first = DateTime(start.year, start.month, start.day);
+  String label(DateTime day) => '${_month(day.month)} ${day.day}, ${day.year}';
+  if (end == null) {
+    return 'One-day job on ${label(first)}. Set an end date if it runs longer.';
+  }
+  final last = DateTime(end.year, end.month, end.day);
+  if (!last.isAfter(first)) {
+    return 'One-day job on ${label(first)}. Set an end date if it runs longer.';
+  }
+  final days =
+      DateTime.utc(
+        last.year,
+        last.month,
+        last.day,
+      ).difference(DateTime.utc(first.year, first.month, first.day)).inDays +
+      1;
+  return '$days days, ${label(first)} to ${label(last)}.';
+}
+
 /// A job date with its day of the week: "2026-10-30" as "Fri, Oct 30, 2026",
 /// matching the web's formatJobDay.
 String formatJobDay(String? value, {String fallback = 'Not set'}) {

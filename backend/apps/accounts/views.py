@@ -16,7 +16,9 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.accounts.banned import EMAIL_BLOCKED_MESSAGE, PHONE_BLOCKED_MESSAGE, banned_match
 from apps.accounts.models import (
+    BannedCredential,
     PasswordResetRequest,
     SignupVerificationRequest,
     UserProfile,
@@ -280,6 +282,20 @@ class RegisterView(APIView):
         username = data["username"].strip()
         email = data["email"].strip().lower()
 
+        # A permanently blocked account's email or phone can't open a new
+        # one (AGENTS.md II.D). Checked before "already exists", and worded
+        # without the word "banned", so the form can't be used to find out
+        # who was blocked.
+        if banned_match(BannedCredential.KIND_EMAIL, email):
+            return Response(
+                {"detail": EMAIL_BLOCKED_MESSAGE, "email": [EMAIL_BLOCKED_MESSAGE]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if banned_match(BannedCredential.KIND_PHONE, data.get("phone", "")):
+            return Response(
+                {"detail": PHONE_BLOCKED_MESSAGE, "phone": [PHONE_BLOCKED_MESSAGE]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if User.objects.filter(username__iexact=username).exists():
             return Response({"detail": "Username already exists."}, status=status.HTTP_400_BAD_REQUEST)
         if User.objects.filter(email__iexact=email).exists():

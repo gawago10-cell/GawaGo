@@ -16650,3 +16650,58 @@ a,
     font-size: 0.82rem;
   }
 }
+
+/* Block Permanently dialog: what a permanent block also bars from a new
+   account (AGENTS.md II.D). */
+.suspend-ban-credentials {
+  border: 1px solid #f0c4be;
+  border-radius: 12px;
+  background: #fdecea;
+  padding: 0.75rem 0.9rem;
+  color: #3c2a28;
+  font-size: 0.9rem;
+}
+
+.suspend-ban-credentials > .fw-semibold {
+  color: #8c1d18;
+}
+
+.suspend-ban-credentials dl {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.2rem 0.6rem;
+}
+
+.suspend-ban-credentials dt {
+  font-weight: 500;
+  color: #5a5f52;
+}
+
+.suspend-ban-credentials dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Verification Queue: the request's ID number or name matches a
+   permanently blocked account. */
+.verification-ban-flag {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.verification-ban-flag.is-warning {
+  background: #fff7e0;
+  border: 1px solid #f0d58a;
+  color: #5c4300;
+}
+
+.verification-ban-flag.is-danger {
+  background: #fdecea;
+  border: 1px solid #f0c4be;
+  color: #8c1d18;
+}

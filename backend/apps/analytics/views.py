@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 
 from apps.analytics.serializers import DashboardMetricsSerializer
 from apps.analytics.services import build_dashboard_metrics, build_public_summary
-from apps.common.permissions import IsPlatformAdmin
+from apps.common.permissions import IsPlatformAdmin, is_platform_superadmin
 from apps.reviews.services import assign_due_default_worker_ratings_on_read
 
 
@@ -13,7 +13,7 @@ class DashboardMetricsView(APIView):
 
     def get(self, request):
         assign_due_default_worker_ratings_on_read()
-        data = build_dashboard_metrics()
+        data = build_dashboard_metrics(include_complaints=is_platform_superadmin(request.user))
         serializer = DashboardMetricsSerializer(data=data)
         serializer.is_valid(raise_exception=True)
         return Response(serializer.validated_data)

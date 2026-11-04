@@ -32,6 +32,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
   - Pending verifications
   - Reputation score distribution
 - Geographic service distribution:
+  - A barangay heat map with three measures: job demand, completed services, and complaints (the job's barangay, or the reported person's when the complaint names no job). Complaint counts reach a superadmin's dashboard only. Worker availability and pending verifications were dropped from it on 2026-11-05: the Verification Queue already shows what is waiting
   - One line chart of job requests against available workers in the 10 barangays with the most demand (`geographicAnalytics.demandVsSupply`), so a barangay short of workers shows where the job line runs above the worker line
 - Service rate transparency summary:
   - Disclosed rates by job category, averaged separately for day, hourly and fixed rates and counted under catalog service names (a day rate and an hourly rate can't share an average; fourth scan, 2026-11-01)

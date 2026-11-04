@@ -11,6 +11,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
   - Location
   - Service rate
   - A geographic search radius for matching (`1 km`, `2 km`, `5 km`, `10 km`, or `unlimited`; defaults to `1 km`)
+- Since 2026-11-05 the Post a Job form asks for neither the working days nor the radius. The dates alone set how long a job runs, and the form says so under them ("5 days, Nov 10 to Nov 14, 2026." or "One-day job on ..."); every new job starts at `1 km`, and the household widens it from Edit Job when too few workers match. Edit Job no longer asks for working days either: a job posted earlier with a count keeps it until its dates are changed to include an end date, and then drops it.
 - Workers can apply to available jobs based on:
   - Skills (a worker may list at most 3 skills on their profile)
   - Availability

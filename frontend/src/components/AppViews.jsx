@@ -13,6 +13,7 @@ import HouseholdWorkersMap from "./HouseholdWorkersMap";
 import WorkerLocationPicker from "./WorkerLocationPicker";
 import WorkerSkillsDialog from "./WorkerSkillsDialog";
 import EditJobDialog from "./EditJobDialog";
+import VerificationBanFlag from "./VerificationBanFlag";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import RequiredMark, { hasAnswer } from "./RequiredMark";
@@ -29,11 +30,11 @@ import {
   getPendingApplicationCount,
   getWorkersNeeded,
 } from "../utils/jobUtils";
-import { getHouseholdInitials } from "../utils/formatters";
+import { getHouseholdInitials, isSameWorker } from "../utils/formatters";
 import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
 import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_WORKER_SKILLS, OTHER_SKILL } from "../constants/appConstants";
 import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
-import { formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, formatWorkerRate, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
+import { describeJobSpan, formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, formatWorkerRate, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
 import { getVerificationNavLabel } from "../utils/normalizers";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
 import { confirmDialog } from "./AppDialogs";
@@ -1297,12 +1298,7 @@ export default function AppViews({
       null;
     const matchedWorker =
       acceptedApplication &&
-      registeredWorkers.find(
-        (worker) =>
-          String(worker.id) === String(acceptedApplication.workerId) ||
-          worker.username === acceptedApplication.workerUsername ||
-          getDisplayName(worker.firstName, worker.lastName, worker.username) === acceptedApplication.workerName,
-      );
+      registeredWorkers.find((worker) => isSameWorker(worker, acceptedApplication));
     if (matchedWorker) {
       return matchedWorker;
     }
@@ -4447,6 +4443,27 @@ export default function AppViews({
                           )}
                         </div>
                         <div className="mb-3">
+                          <label className="form-label fw-semibold" htmlFor="primaryIdNumber">
+                            ID number
+                          </label>
+                          <input
+                            id="primaryIdNumber"
+                            type="text"
+                            name="primaryIdNumber"
+                            className="form-control"
+                            placeholder="e.g. N01-23-456789"
+                            maxLength={64}
+                            autoComplete="off"
+                            required
+                            value={verificationForm.primaryIdNumber || ""}
+                            onChange={handleVerificationChange}
+                            aria-describedby="primaryIdNumberHelp"
+                          />
+                          <p className="form-text mb-0" id="primaryIdNumberHelp">
+                            Type it exactly as printed on the ID. Only admins see it.
+                          </p>
+                        </div>
+                        <div className="mb-3">
                           <label className="form-label fw-semibold">Primary ID Document</label>
                           <input
                             type="file"
@@ -5015,6 +5032,9 @@ export default function AppViews({
                                       <strong>Admin Note:</strong> {request.reviewNote}
                                     </p>
                                   )}
+                                  <div className="mt-2">
+                                    <VerificationBanFlag request={request} />
+                                  </div>
                                 </div>
                                 <span
                                   className={`badge ${request.status === "Approved" ? "text-bg-success" : request.status === "Rejected" ? "text-bg-danger" : "text-bg-warning"}`}
@@ -5027,6 +5047,9 @@ export default function AppViews({
                                   <div className="verification-note h-100">
                                     <p className="small fw-semibold mb-1">Primary ID</p>
                                     <p className="mb-0 small">{request.primaryIdName}</p>
+                                    {request.primaryIdNumber && (
+                                      <p className="mb-0 small">No. {request.primaryIdNumber}</p>
+                                    )}
                                     {request.primaryIdPreview && (
                                       <button
                                         type="button"
@@ -5382,35 +5405,10 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-6">
-                        <label className="form-label fw-semibold">Estimated Working Days</label>
-                        <input
-                          type="number"
-                          min="1"
-                          max="366"
-                          step="1"
-                          name="estimatedWorkingDays"
-                          className="form-control"
-                          placeholder="e.g. 5"
-                          value={householdJobForm.estimatedWorkingDays || ""}
-                          onChange={handleHouseholdJobChange}
-                        />
-                      </div>
-                      <div className="col-6">
-                        <label className="form-label fw-semibold">Search Radius</label>
-                        <select
-                          name="geographicBoundary"
-                          className="form-select"
-                          value={householdJobForm.geographicBoundary || "1km"}
-                          onChange={handleHouseholdJobChange}
-                        >
-                          <option value="1km">1 Kilometer</option>
-                          <option value="2km">2 Kilometers</option>
-                          <option value="5km">5 Kilometers</option>
-                          <option value="10km">10 Kilometers</option>
-                          <option value="unlimited">Unlimited</option>
-                        </select>
-                      </div>
+                      <p className="col-12 small text-muted mb-0" id="household-job-days-hint">
+                        {describeJobSpan(householdJobForm.jobStartDate, householdJobForm.jobEndDate)} Matching looks for
+                        workers within 1 km of the job; you can widen this later from Edit Job.
+                      </p>
                     </div>
                     <HouseholdJobMapPanel
                       captureHouseholdJobLocation={captureHouseholdJobLocation}

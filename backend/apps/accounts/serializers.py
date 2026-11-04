@@ -19,7 +19,9 @@ from apps.common.uploads import (
     validate_document_upload,
     validate_image_upload,
 )
+from apps.accounts.banned import EMAIL_BLOCKED_MESSAGE, PHONE_BLOCKED_MESSAGE, banned_match
 from apps.accounts.models import (
+    BannedCredential,
     PasswordResetRequest,
     SignupVerificationRequest,
     UserProfile,
@@ -471,7 +473,17 @@ class ProfileUpdateSerializer(serializers.Serializer):
             others = others.exclude(pk=profile.user_id)
         if others.exists():
             raise serializers.ValidationError("Email already exists.")
+        # A permanently blocked account's email can't move to another
+        # account either (AGENTS.md II.D).
+        if banned_match(BannedCredential.KIND_EMAIL, email, exclude_user=getattr(profile, "user", None)):
+            raise serializers.ValidationError(EMAIL_BLOCKED_MESSAGE)
         return email
+
+    def validate_phone(self, value):
+        profile = self.context.get("profile")
+        if banned_match(BannedCredential.KIND_PHONE, value, exclude_user=getattr(profile, "user", None)):
+            raise serializers.ValidationError(PHONE_BLOCKED_MESSAGE)
+        return value
 
 
     def validate(self, attrs):

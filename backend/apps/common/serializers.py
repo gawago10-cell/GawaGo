@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from django.urls import reverse
 
+from apps.accounts.banned import banned_match, normalize_id_number
+from apps.accounts.models import BannedCredential
 from apps.common.models import AdminActionLog, VerificationRequest
+from apps.common.permissions import is_platform_admin
 from apps.common.uploads import UploadRejected, validate_document_upload
 
 
@@ -32,6 +35,7 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
     primary_id_type_label = serializers.CharField(source="get_primary_id_type_display", read_only=True)
     primary_id_preview = serializers.SerializerMethodField()
     secondary_doc_preview = serializers.SerializerMethodField()
+    ban_check = serializers.SerializerMethodField()
 
     class Meta:
         model = VerificationRequest
@@ -52,6 +56,7 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
             "primary_id_type",
             "primary_id_type_label",
             "primary_id_name",
+            "primary_id_number",
             "secondary_doc_name",
             "primary_id_preview",
             "secondary_doc_preview",
@@ -60,8 +65,27 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
             "submitted_at",
             "reviewed_at",
             "review_note",
+            "ban_check",
         ]
-        read_only_fields = ["id", "status", "submitted_at", "reviewed_at", "review_note"]
+        read_only_fields = ["id", "status", "submitted_at", "reviewed_at", "review_note", "ban_check"]
+
+    def get_ban_check(self, obj):
+        """For admins only: whether this request's ID number or the
+        applicant's full name belongs to a permanently blocked account
+        (AGENTS.md II.D). The applicant's own copy of the request gets None,
+        so they never learn why an ID was turned down."""
+        request = self.context.get("request")
+        if not request or not is_platform_admin(getattr(request, "user", None)):
+            return None
+        id_match = obj.banned_match_username
+        if not id_match and obj.primary_id_number:
+            row = banned_match(BannedCredential.KIND_ID_NUMBER, obj.primary_id_number, exclude_user=obj.worker)
+            id_match = row.username if row else ""
+        name_row = banned_match(BannedCredential.KIND_NAME, obj.worker.get_full_name(), exclude_user=obj.worker)
+        return {
+            "id_number_match": id_match,
+            "name_match": name_row.username if name_row else "",
+        }
 
     def get_worker_name(self, obj):
         full_name = obj.worker.get_full_name().strip()
@@ -126,11 +150,20 @@ class VerificationRequestCreateSerializer(serializers.Serializer):
     # Only meaningful for "other"; for every listed type the label is taken
     # from the choice itself, so the two can never disagree.
     primary_id_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    # Required for every new request: it is what stops a permanently blocked
+    # person from getting verified again under a new account.
+    primary_id_number = serializers.CharField(max_length=64)
     secondary_doc_name = serializers.CharField(max_length=255)
     primary_id_file = serializers.FileField(required=True)
     secondary_doc_file = serializers.FileField(required=True)
     notes = serializers.CharField(required=False, allow_blank=True)
     worker_username = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_primary_id_number(self, value):
+        typed = " ".join(str(value or "").split())
+        if not 4 <= len(normalize_id_number(typed)) <= 30:
+            raise serializers.ValidationError("Enter the ID number exactly as it is printed on your ID.")
+        return typed
 
     def validate(self, attrs):
         id_type = attrs.get("primary_id_type", VerificationRequest.ID_TYPE_OTHER)

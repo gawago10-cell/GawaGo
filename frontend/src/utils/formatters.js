@@ -3,6 +3,25 @@ export function getDisplayName(firstName, lastName, username) {
   return fullName || username || "User";
 }
 
+/** Whether `worker` is the worker an application (or other record with
+ * workerUsername / workerName / workerId) refers to. The username is unique,
+ * so when the record has one it decides alone: falling back to the display
+ * name picked whichever of two same-named workers came first, which showed a
+ * household the wrong person (2026-11-05). */
+export function isSameWorker(worker, record) {
+  if (!worker || !record) {
+    return false;
+  }
+  const username = record.workerUsername || "";
+  if (username) {
+    return worker.username === username || worker.workerUsername === username;
+  }
+  return (
+    getDisplayName(worker.firstName, worker.lastName, worker.username) === record.workerName ||
+    (record.workerId != null && (String(worker.id) === String(record.workerId) || String(worker.workerId) === String(record.workerId)))
+  );
+}
+
 export function formatCurrency(amount) {
   const value = Number(amount || 0);
   return `PHP ${value.toFixed(2)}`;
@@ -43,6 +62,23 @@ export function formatJobDate(value) {
     return trimmed;
   }
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** The Post a Job hint under the dates, now that the days are no longer
+ * typed in: "5 days, Nov 10 to Nov 14, 2026." A job with no end date (or an
+ * end before its start) is a one-day job, the same rule the backend's
+ * job_days uses. */
+export function describeJobSpan(startValue, endValue) {
+  const start = String(startValue || "").trim();
+  const end = String(endValue || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    return "Pick the dates the job starts and ends.";
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(end) || end <= start) {
+    return `One-day job on ${formatJobDate(start)}. Set an end date if it runs longer.`;
+  }
+  const days = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+  return `${days} days, ${formatJobDate(start)} to ${formatJobDate(end)}.`;
 }
 
 /** A job date with its day of the week: "2026-10-30" as "Fri, Oct 30, 2026".

@@ -89,8 +89,8 @@ export default function SuperAdminHeatMap({ data, metricLabel, mapCenter, loadLe
             <strong>${item.barangay}</strong><br />
             ${metricLabel}: ${item.value}<br />
             Jobs: ${item.jobs}<br />
-            Workers: ${item.workers}<br />
-            Pending verifications: ${item.pendingVerifications}
+            Completed services: ${item.completed}${item.complaints == null ? "" : `<br />
+            Complaints: ${item.complaints}`}
           `);
         });
         if (!mapViewRef.current.touched && heatPoints.length > 0) {

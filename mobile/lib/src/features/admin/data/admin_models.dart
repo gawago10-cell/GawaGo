@@ -171,6 +171,9 @@ class AdminVerificationRequest {
     required this.notes,
     required this.submittedAt,
     required this.reviewNote,
+    this.primaryIdNumber = '',
+    this.bannedIdMatch = '',
+    this.bannedNameMatch = '',
   });
 
   final int id;
@@ -193,6 +196,15 @@ class AdminVerificationRequest {
   final String notes;
   final String submittedAt;
   final String reviewNote;
+  final String primaryIdNumber;
+
+  /// The permanently blocked account this request's ID number belongs to
+  /// (the request was rejected on arrival), or ''. AGENTS.md II.D.
+  final String bannedIdMatch;
+
+  /// A permanently blocked account with the applicant's full name, or ''.
+  /// Only a warning: two people can share a name.
+  final String bannedNameMatch;
 
   factory AdminVerificationRequest.fromJson(Map<String, dynamic> json) {
     return AdminVerificationRequest(
@@ -216,6 +228,13 @@ class AdminVerificationRequest {
       notes: _text(json['notes']),
       submittedAt: _text(json['submitted_at']),
       reviewNote: _text(json['review_note']),
+      primaryIdNumber: _text(json['primary_id_number']),
+      bannedIdMatch: _text(
+        json['ban_check'] is Map ? json['ban_check']['id_number_match'] : null,
+      ),
+      bannedNameMatch: _text(
+        json['ban_check'] is Map ? json['ban_check']['name_match'] : null,
+      ),
     );
   }
 }

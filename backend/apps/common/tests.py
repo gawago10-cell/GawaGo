@@ -521,6 +521,7 @@ class VerificationRequestPermissionTests(TestCase):
             {
                 "primary_id_name": "primary.png",
                 "secondary_doc_name": "clearance.pdf",
+                "primary_id_number": "N01-23-456789",
                 "primary_id_file": primary_file,
                 "secondary_doc_file": secondary_file,
                 "notes": "Please review.",
@@ -543,6 +544,7 @@ class VerificationRequestPermissionTests(TestCase):
             {
                 "primary_id_name": "replacement.png",
                 "secondary_doc_name": "replacement.pdf",
+                "primary_id_number": "N01-23-456789",
                 "primary_id_file": SimpleUploadedFile(
                     "replacement.png",
                     REAL_PNG,
@@ -573,6 +575,7 @@ class VerificationRequestPermissionTests(TestCase):
             {
                 "primary_id_name": "corrected.png",
                 "secondary_doc_name": "corrected.pdf",
+                "primary_id_number": "N01-23-456789",
                 "primary_id_file": SimpleUploadedFile(
                     "corrected.png",
                     REAL_PNG,
@@ -656,6 +659,7 @@ class VerificationRequestPermissionTests(TestCase):
             {
                 "primary_id_name": "household-primary.png",
                 "secondary_doc_name": "household-clearance.pdf",
+                "primary_id_number": "N01-23-456789",
                 "primary_id_file": primary_file,
                 "secondary_doc_file": secondary_file,
             },
@@ -741,6 +745,7 @@ class VerificationIdTypeTests(TestCase):
         self.client.force_authenticate(user=self.worker)
         payload = {
             "secondary_doc_name": "Barangay Clearance",
+            "primary_id_number": "N01-23-456789",
             "primary_id_file": SimpleUploadedFile("id.png", self.PNG, content_type="image/png"),
             "secondary_doc_file": SimpleUploadedFile("doc.png", self.PNG, content_type="image/png"),
         }

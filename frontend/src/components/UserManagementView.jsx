@@ -177,7 +177,16 @@ export default function UserManagementView({
   const selectedUserRole = selectedHousehold ? "household" : "worker";
 
   function suspend(user, durationDays) {
-    setSuspendRequest({ username: user.username, durationDays });
+    setSuspendRequest({
+      username: user.username,
+      durationDays,
+      banCredentials: {
+        email: user.email,
+        phone: user.phone,
+        idNumber: user.verificationSubmission?.primaryIdNumber || "",
+        idTypeLabel: user.verificationSubmission?.primaryIdTypeLabel || "",
+      },
+    });
   }
 
   // Throws on failure so the dialog stays open with the server's message.
@@ -494,6 +503,7 @@ export default function UserManagementView({
         <SuspendAccountDialog
           username={suspendRequest.username}
           durationDays={suspendRequest.durationDays}
+          banCredentials={suspendRequest.banCredentials}
           onConfirm={confirmSuspend}
           onCancel={() => setSuspendRequest(null)}
         />

@@ -227,20 +227,26 @@ class HouseholdRepository {
     return data.map((item) => VerificationRequest.fromJson(item)).toList();
   }
 
-  Future<void> submitVerification({
+  /// Sends the ID for review. Returns the backend's note when the request
+  /// was rejected on arrival -- its ID number belongs to a permanently
+  /// blocked account (AGENTS.md II.D) -- and null when it is waiting for an
+  /// admin.
+  Future<String?> submitVerification({
     required String primaryPath,
     required String secondaryPath,
     required String primaryIdType,
+    required String primaryIdNumber,
     String primaryIdOtherName = '',
     String notes = '',
   }) async {
-    await GawaGoApi.multipartPost(
+    final data = await GawaGoApi.multipartPost(
       '/common/verification-requests/',
       fields: {
         'primary_id_type': primaryIdType,
         // The backend labels the request from the chosen type; it only reads
         // this when the type is "other".
         if (primaryIdType == 'other') 'primary_id_name': primaryIdOtherName,
+        'primary_id_number': primaryIdNumber,
         'secondary_doc_name': secondaryPath.split(RegExp(r'[/\\]')).last,
         'notes': notes,
       },
@@ -249,5 +255,11 @@ class HouseholdRepository {
         'secondary_doc_file': secondaryPath,
       },
     );
+    final request = data['verification_request'];
+    if (request is Map && request['status'] == 'rejected') {
+      final note = (request['review_note'] ?? '').toString().trim();
+      return note.isEmpty ? "We couldn't verify this ID." : note;
+    }
+    return null;
   }
 }

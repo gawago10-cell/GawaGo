@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { DashboardSidebar, MetricCard, MobileDashboardTopbar } from "./DashboardLayout";
 import SuperAdminHeatMap from "./SuperAdminHeatMap";
+import VerificationBanFlag from "./VerificationBanFlag";
 import AdminPlatformReport from "./AdminPlatformReport";
 import ReportsView from "./ReportsView";
 import AdminComplaintsQueue from "./AdminComplaintsQueue";
@@ -221,35 +222,33 @@ export default function SuperAdminDashboardView({
   const pricingTrends = rateTransparency.pricingTrends || [];
   const averageWorkerRating = analyticsSummary.averageWorkerRating || "No ratings yet";
   const ratedWorkerCount = analyticsSummary.ratedWorkerCount ?? 0;
+  // Complaints replaced Worker Availability and Pending Verifications here
+  // (2026-11-05): the queue already shows what is waiting, and complaints
+  // per barangay point the superadmin at trouble spots. The backend only
+  // counts complaints for a superadmin (AGENTS.md II.D).
   const heatMapOptions = [
     {
       id: "jobs",
       label: "Job Demand",
     },
     {
-      id: "workers",
-      label: "Worker Availability",
-    },
-    {
       id: "completed",
       label: "Completed Services",
     },
     {
-      id: "verification",
-      label: "Pending Verifications",
+      id: "complaints",
+      label: "Complaints",
     },
   ];
   const selectedHeatMapOption = heatMapOptions.find((option) => option.id === heatMapMetric) || heatMapOptions[0];
   const heatMapData = (analytics.heatMapData || []).map((item) => ({
     ...item,
     value:
-      selectedHeatMapOption.id === "workers"
-        ? item.workers
-        : selectedHeatMapOption.id === "completed"
-          ? item.completed
-          : selectedHeatMapOption.id === "verification"
-            ? item.pendingVerifications
-            : item.jobs,
+      selectedHeatMapOption.id === "completed"
+        ? item.completed
+        : selectedHeatMapOption.id === "complaints"
+          ? item.complaints ?? 0
+          : item.jobs,
   }));
   const analyticsOverviewGroups = [
     {
@@ -336,12 +335,11 @@ export default function SuperAdminDashboardView({
     verificationRequests.find((request) => String(request.id) === String(verificationModalRequestId)) || null;
   const verificationModalWorker =
     verificationModalRequest &&
-    registeredWorkers.find(
-      (worker) =>
-        String(worker.id) === String(verificationModalRequest.workerId) ||
-        worker.username === verificationModalRequest.workerUsername ||
-        getDisplayName(worker.firstName, worker.lastName, worker.username) === verificationModalRequest.workerName,
-    );
+    // By username only: it is unique. Matching by display name (or by an id
+    // that may be a profile id rather than the user id) showed another
+    // worker's phone, email and address when two accounts shared a name --
+    // exactly the case the banned-name warning is about (2026-11-05).
+    registeredWorkers.find((worker) => worker.username === verificationModalRequest.workerUsername);
   const verificationModalWorkerDetails = verificationModalRequest
     ? {
         id: verificationModalWorker?.id || verificationModalRequest.workerId,
@@ -643,6 +641,9 @@ export default function SuperAdminDashboardView({
                                 <span className={`verification-role-pill role-${request.accountRole}`}>
                                   {request.accountRole === "household" ? "Household" : "Worker"}
                                 </span>
+                                <div className="mt-1">
+                                  <VerificationBanFlag request={request} compact />
+                                </div>
                               </td>
                               <td>{formatTimestamp(request.submittedAt, "Recently")}</td>
                               <td>
@@ -695,6 +696,7 @@ export default function SuperAdminDashboardView({
                         </header>
                         <div className="superadmin-verification-modal-body">
                           <div className="superadmin-verification-worker-profile">
+                            <VerificationBanFlag request={verificationModalRequest} />
                             <h4>Worker Details</h4>
                             <div className="superadmin-verification-profile-facts">
                               <div>
@@ -737,6 +739,14 @@ export default function SuperAdminDashboardView({
                                             ? "year"
                                             : "years"}
                                         </span>
+                              </div>
+                              <div>
+                                <strong>ID Number</strong>
+                                <span>
+                                  {verificationModalRequest.primaryIdNumber
+                                    ? `${verificationModalRequest.primaryIdTypeLabel || verificationModalRequest.primaryIdName || "ID"} · ${verificationModalRequest.primaryIdNumber}`
+                                    : "Not given"}
+                                </span>
                               </div>
                               <div>
                                 <strong>Worker Notes</strong>
@@ -850,8 +860,9 @@ export default function SuperAdminDashboardView({
                         </div>
                       </div>
                       <p className="analytics-chart-note">
-                        Activity in each Tayabas City barangay for the measure you pick above. Bigger, redder circles
-                        mean more.
+                        {selectedHeatMapOption.id === "complaints"
+                          ? "Complaints filed about jobs in each Tayabas City barangay. Bigger, redder circles mean more."
+                          : "Activity in each Tayabas City barangay for the measure you pick above. Bigger, redder circles mean more."}
                       </p>
                       <SuperAdminHeatMap
                         data={heatMapData}

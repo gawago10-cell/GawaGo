@@ -1,5 +1,5 @@
 import { STATUS_PRIORITY } from "../constants/appConstants";
-import { getDisplayName } from "./formatters";
+import { getDisplayName, isSameWorker } from "./formatters";
 
 export function getHouseholdNotifications(jobs, workers) {
   // A worker the household invited never applied, so they get no "applied" notice.
@@ -26,12 +26,7 @@ export function getHouseholdReviewReminderNotifications(jobs, workers, household
         null;
       const worker =
         acceptedApplication &&
-        workers.find(
-          (item) =>
-            String(item.id) === String(acceptedApplication.workerId) ||
-            item.username === acceptedApplication.workerUsername ||
-            getDisplayName(item.firstName, item.lastName, item.username) === acceptedApplication.workerName,
-        );
+        workers.find((item) => isSameWorker(item, acceptedApplication));
 
       if (!worker) {
         return null;

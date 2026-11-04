@@ -1191,7 +1191,7 @@ class AccountSecurityRegressionTests(TestCase):
         self.client.force_authenticate(user=self.worker)
         created = self.client.post(
             reverse("verification-request-list-create"),
-            {"primary_id_name": "evil.html", "secondary_doc_name": "b.png",
+            {"primary_id_name": "evil.html", "secondary_doc_name": "b.png", "primary_id_number": "N01-23-456789",
              "primary_id_file": SimpleUploadedFile("a.png", PNG_BYTES, content_type="image/png"),
              "secondary_doc_file": SimpleUploadedFile("b.png", PNG_BYTES, content_type="image/png")},
             format="multipart",

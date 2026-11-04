@@ -1545,23 +1545,12 @@ class _PostJobState extends State<_PostJob> {
   final _location = TextEditingController();
   final _rate = TextEditingController();
   final _slots = TextEditingController(text: '1');
-  final _workingDays = TextEditingController();
   // The service typed when "Other" is picked; "Other" is never sent.
   final _customService = TextEditingController();
   String? _skill;
   String? _barangay;
   String _scheduleType = 'One-Time';
   String _rateType = 'Per Day';
-  String _geographicBoundary = '1km';
-  // Mirrors the `distanceKmMap` in the web client's useGawaGoActions.js so
-  // both clients send the same hard distance limit for the same radius label.
-  static const Map<String, double> _geographicBoundaryDistanceKm = {
-    '1km': 1.0,
-    '2km': 2.0,
-    '5km': 5.0,
-    '10km': 10.0,
-    'unlimited': 999999,
-  };
   DateTime? _startDate;
   DateTime? _endDate;
   LatLng? _pin;
@@ -1599,7 +1588,6 @@ class _PostJobState extends State<_PostJob> {
     _location.dispose();
     _rate.dispose();
     _slots.dispose();
-    _workingDays.dispose();
     _customService.dispose();
     super.dispose();
   }
@@ -1612,12 +1600,10 @@ class _PostJobState extends State<_PostJob> {
       _description.clear();
       _rate.clear();
       _slots.text = '1';
-      _workingDays.clear();
       _customService.clear();
       _skill = null;
       _scheduleType = 'One-Time';
       _rateType = 'Per Day';
-      _geographicBoundary = '1km';
       _startDate = null;
       _endDate = null;
       _imagePaths.clear();
@@ -1722,31 +1708,11 @@ class _PostJobState extends State<_PostJob> {
       _message('Job end date must be on or after the job start date.');
       return;
     }
-    // A one-day job ends on the day it starts, so only check that the day
-    // count fits the schedule -- this mirrors the backend's rule.
-    if (_startDate != null && _endDate != null) {
-      final span = _endDate!.difference(_startDate!).inDays + 1;
-      final workingDays = int.tryParse(_workingDays.text.trim());
-      if (workingDays != null && workingDays > span) {
-        _message(
-          'That is more working days than the $span-day schedule allows.',
-        );
-        return;
-      }
-    }
     final slots = int.tryParse(_slots.text.trim());
     if (_slots.text.trim().isNotEmpty &&
         (slots == null || slots < 1 || slots > 50)) {
       _message('Workers needed must be a number between 1 and 50.');
       return;
-    }
-    final workingDaysText = _workingDays.text.trim();
-    if (workingDaysText.isNotEmpty) {
-      final parsed = int.tryParse(workingDaysText);
-      if (parsed == null || parsed < 1 || parsed > 366) {
-        _message('Estimated working days must be a number between 1 and 366.');
-        return;
-      }
     }
     setState(() => _posting = true);
     try {
@@ -1771,14 +1737,11 @@ class _PostJobState extends State<_PostJob> {
           'job_start_date': _startDate!.toIso8601String().split('T').first,
         if (_endDate != null)
           'job_end_date': _endDate!.toIso8601String().split('T').first,
-        if (int.tryParse(_workingDays.text) != null)
-          'estimated_working_days': int.parse(_workingDays.text),
-        'geographic_boundary': _geographicBoundary,
-        // Without this the backend defaults max_distance_km to 1.0 no matter
-        // what radius is picked here, so a "10km" job only ever matched
-        // workers within 1 km. Mirrors the mapping in the web client.
-        'max_distance_km':
-            _geographicBoundaryDistanceKm[_geographicBoundary] ?? 1.0,
+        // Every job starts at the 1 km radius; the household widens it
+        // from Edit Job if too few workers match (2026-11-05). The dates
+        // alone set how long the job runs.
+        'geographic_boundary': '1km',
+        'max_distance_km': 1.0,
       }, imagePaths: _imagePaths);
       // This page stays alive in the IndexedStack, so without a reset coming
       // back to it showed the last job filled in, one tap from a duplicate.
@@ -1923,13 +1886,12 @@ class _PostJobState extends State<_PostJob> {
                         street: _location,
                         rate: _rate,
                         slots: _slots,
-                        workingDays: _workingDays,
                         customService: _customService,
                         serviceType: _skill,
                         scheduleType: _scheduleType,
                         barangay: _barangay,
                         rateType: _rateType,
-                        geographicBoundary: _geographicBoundary,
+                        spanHint: describeJobSpan(_startDate, _endDate),
                         startDateLabel: _startDate == null
                             ? 'mm/dd/yyyy'
                             : '${_startDate!.month.toString().padLeft(2, '0')}/${_startDate!.day.toString().padLeft(2, '0')}/${_startDate!.year}',
@@ -1949,10 +1911,6 @@ class _PostJobState extends State<_PostJob> {
                         }),
                         onRateTypeChanged: (value) =>
                             setState(() => _rateType = value ?? _rateType),
-                        onGeographicBoundaryChanged: (value) => setState(
-                          () => _geographicBoundary =
-                              value ?? _geographicBoundary,
-                        ),
                         onPickStartDate: () async {
                           final value = await showDatePicker(
                             context: context,
@@ -2125,20 +2083,18 @@ class _PostJobFields extends StatelessWidget {
     required this.street,
     required this.rate,
     required this.slots,
-    required this.workingDays,
     required this.customService,
     required this.serviceType,
     required this.scheduleType,
     required this.barangay,
     required this.rateType,
-    required this.geographicBoundary,
+    required this.spanHint,
     required this.startDateLabel,
     required this.endDateLabel,
     required this.onServiceChanged,
     required this.onScheduleChanged,
     required this.onBarangayChanged,
     required this.onRateTypeChanged,
-    required this.onGeographicBoundaryChanged,
     required this.onPickStartDate,
     required this.onPickEndDate,
   });
@@ -2148,20 +2104,18 @@ class _PostJobFields extends StatelessWidget {
   final TextEditingController street;
   final TextEditingController rate;
   final TextEditingController slots;
-  final TextEditingController workingDays;
   final TextEditingController customService;
   final String? serviceType;
   final String scheduleType;
   final String? barangay;
   final String rateType;
-  final String geographicBoundary;
+  final String spanHint;
   final String startDateLabel;
   final String endDateLabel;
   final ValueChanged<String?> onServiceChanged;
   final ValueChanged<String?> onScheduleChanged;
   final ValueChanged<String?> onBarangayChanged;
   final ValueChanged<String?> onRateTypeChanged;
-  final ValueChanged<String?> onGeographicBoundaryChanged;
   final VoidCallback onPickStartDate;
   final VoidCallback onPickEndDate;
 
@@ -2261,18 +2215,20 @@ class _PostJobFields extends StatelessWidget {
             onTap: onPickEndDate,
           ),
         ),
-        _PostJobTwoColumn(
-          left: _PostJobInput(
-            label: 'Estimated Working Days',
-            controller: workingDays,
-            hint: 'e.g. 5',
-            keyboardType: TextInputType.number,
-          ),
-          right: _PostJobDropdown(
-            label: 'Search Radius',
-            value: geographicBoundary,
-            items: const ['1km', '2km', '5km', '10km', 'unlimited'],
-            onChanged: onGeographicBoundaryChanged,
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$spanHint Matching looks for workers within 1 km of the job; '
+              'you can widen this later from Edit Job.',
+              key: const Key('post-job-span-hint'),
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
           ),
         ),
       ],
@@ -3685,9 +3641,6 @@ class _EditJobDialogState extends State<_EditJobDialog> {
     text: widget.job.serviceRate.toStringAsFixed(2),
   );
   late final _slots = TextEditingController(text: '${widget.job.workerSlots}');
-  late final _workingDays = TextEditingController(
-    text: widget.job.estimatedWorkingDays?.toString() ?? '',
-  );
   late String _rateType = _rateTypes.contains(widget.job.rateTypeLabel)
       ? widget.job.rateTypeLabel
       : 'Per Day';
@@ -3704,7 +3657,6 @@ class _EditJobDialogState extends State<_EditJobDialog> {
     _description.dispose();
     _rate.dispose();
     _slots.dispose();
-    _workingDays.dispose();
     super.dispose();
   }
 
@@ -3747,8 +3699,6 @@ class _EditJobDialogState extends State<_EditJobDialog> {
     final job = widget.job;
     final rate = double.tryParse(_rate.text.trim());
     final slots = int.tryParse(_slots.text.trim());
-    final daysText = _workingDays.text.trim();
-    final days = daysText.isEmpty ? null : int.tryParse(daysText);
     if (_title.text.trim().isEmpty) {
       setState(() => _error = 'Give the job a title.');
       return;
@@ -3759,12 +3709,6 @@ class _EditJobDialogState extends State<_EditJobDialog> {
     }
     if (slots == null || slots < 1 || slots > 50) {
       setState(() => _error = 'Workers needed must be between 1 and 50.');
-      return;
-    }
-    if (daysText.isNotEmpty && (days == null || days < 1 || days > 366)) {
-      setState(
-        () => _error = 'Working days must be a number between 1 and 366.',
-      );
       return;
     }
     if (_start == null) {
@@ -3783,14 +3727,22 @@ class _EditJobDialogState extends State<_EditJobDialog> {
       changes['rate_type'] = _rateTypeValue(_rateType);
     }
     if (slots != job.workerSlots) changes['worker_slots'] = slots;
-    if (days != job.estimatedWorkingDays) {
-      changes['estimated_working_days'] = days;
-    }
     if (_iso(_start) != (job.jobStartDate ?? '')) {
       changes['job_start_date'] = _iso(_start);
     }
     if (_iso(_end) != (job.jobEndDate ?? '')) {
       changes['job_end_date'] = _end == null ? null : _iso(_end);
+    }
+    // Working days are no longer typed in: the dates set how long a job
+    // runs. A job posted with a count drops it once its dates change to
+    // include an end date, so the old count can't conflict with the new
+    // schedule; without an end date the count still sets its length. Same
+    // rule as the web's Edit Job.
+    if (job.estimatedWorkingDays != null &&
+        _end != null &&
+        (changes.containsKey('job_start_date') ||
+            changes.containsKey('job_end_date'))) {
+      changes['estimated_working_days'] = null;
     }
     if (_radius != job.geographicBoundary) {
       changes['geographic_boundary'] = _radius;
@@ -3840,13 +3792,6 @@ class _EditJobDialogState extends State<_EditJobDialog> {
               controller: _slots,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Workers needed'),
-            ),
-            TextField(
-              controller: _workingDays,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Working days (optional)',
-              ),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -5908,6 +5853,7 @@ class _VerificationState extends State<_Verification> {
   String? _secondary;
   String? _idType;
   final _idOtherName = TextEditingController();
+  final _idNumber = TextEditingController();
   final _notes = TextEditingController();
   bool _submitting = false;
   late Future<List<VerificationRequest>> _future = widget.repository
@@ -5945,12 +5891,28 @@ class _VerificationState extends State<_Verification> {
       );
       return;
     }
+    // Same bounds as the backend: 4 to 30 letters and digits once dashes
+    // and spaces are dropped.
+    final idNumberLength = _idNumber.text
+        .replaceAll(RegExp(r'[^0-9A-Za-z]'), '')
+        .length;
+    if (idNumberLength < 4 || idNumberLength > 30) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter the ID number exactly as it is printed on your ID.',
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _submitting = true);
     try {
-      await widget.repository.submitVerification(
+      final rejectedNote = await widget.repository.submitVerification(
         primaryPath: _primary!,
         secondaryPath: _secondary!,
         primaryIdType: _idType!,
+        primaryIdNumber: _idNumber.text.trim(),
         primaryIdOtherName: _idOtherName.text.trim(),
         notes: _notes.text.trim(),
       );
@@ -5960,7 +5922,9 @@ class _VerificationState extends State<_Verification> {
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Verification submitted for review.')),
+          SnackBar(
+            content: Text(rejectedNote ?? 'Verification submitted for review.'),
+          ),
         );
       }
     } catch (error) {
@@ -6047,6 +6011,20 @@ class _VerificationState extends State<_Verification> {
                   ),
                 ),
               ],
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('verification-id-number'),
+                controller: _idNumber,
+                maxLength: 64,
+                autocorrect: false,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'ID number',
+                  hintText: 'e.g. N01-23-456789',
+                  helperText:
+                      'Type it exactly as printed on the ID. Only admins see it.',
+                ),
+              ),
               const SizedBox(height: 12),
               _VerificationDocumentPicker(
                 title: 'Primary ID document',

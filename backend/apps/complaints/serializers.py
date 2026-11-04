@@ -1,6 +1,7 @@
 from django.urls import reverse
 from rest_framework import serializers
 
+from apps.accounts.banned import latest_id_number
 from apps.common.sanitize import sanitize_text
 from apps.complaints.models import Complaint, ComplaintEvidence
 from apps.jobs.privacy import masked_location_label
@@ -33,6 +34,7 @@ def _party_detail(user):
         return None
     profile = getattr(user, "profile", None)
     display_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    id_number, id_type_label = latest_id_number(user)
     return {
         "username": user.username,
         "display_name": display_name or user.username,
@@ -43,6 +45,10 @@ def _party_detail(user):
         "member_since": user.date_joined.date().isoformat() if user.date_joined else None,
         "phone": profile.phone if profile else "",
         "email": user.email,
+        # What a permanent block would also bar from a new account
+        # (AGENTS.md II.D), shown in the Block Permanently dialog.
+        "id_number": id_number,
+        "id_type_label": id_type_label,
     }
 
 

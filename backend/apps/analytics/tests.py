@@ -161,7 +161,9 @@ class DashboardMetricsServiceTests(TestCase):
         self.assertEqual(current_pricing_trend["postings"], 2)
         self.assertEqual(current_pricing_trend["averageRate"], 800.0)
         self.assertEqual(heat_map_alitao["jobs"], 1)
-        self.assertEqual(heat_map_alitao["pendingVerifications"], 1)
+        # Complaints are counted for a superadmin's dashboard only.
+        self.assertNotIn("complaints", heat_map_alitao)
+        self.assertNotIn("pendingVerifications", heat_map_alitao)
         # 4.50 rounds up (half-up, not Python's banker's rounding) into the
         # "5 stars" bucket at index 0.
         self.assertEqual(analytics["ratingDistribution"][0]["count"], 1)

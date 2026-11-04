@@ -2,8 +2,10 @@ from django import forms
 from django.contrib import admin
 
 from apps.accounts.serializers import MAX_WORKER_SKILLS, SKILL_NAME_MAX_LENGTH
+from apps.accounts.banned import sync_banned_credentials
 from apps.accounts.services import ensure_portfolio_skills
 from apps.accounts.models import (
+    BannedCredential,
     PasswordResetRequest,
     SignupVerificationRequest,
     UserProfile,
@@ -49,6 +51,16 @@ class UserProfileAdmin(admin.ModelAdmin):
         # The portfolio lists one entry per profile skill (what matching reads).
         if obj.role == UserProfile.ROLE_WORKER:
             ensure_portfolio_skills(obj.user, obj.skills)
+        # A block set here must bar a new account the same way one set from
+        # the app does.
+        sync_banned_credentials(obj)
+
+
+@admin.register(BannedCredential)
+class BannedCredentialAdmin(admin.ModelAdmin):
+    list_display = ("username", "kind", "value", "created_at")
+    list_filter = ("kind",)
+    search_fields = ("username", "value")
 
 
 @admin.register(WorkerAvailability)

@@ -120,6 +120,8 @@ class ComplaintPartyDetail {
     required this.memberSince,
     required this.phone,
     required this.email,
+    this.idNumber = '',
+    this.idTypeLabel = '',
   });
 
   final String displayName;
@@ -130,6 +132,12 @@ class ComplaintPartyDetail {
   final String memberSince;
   final String phone;
   final String email;
+
+  /// The latest government ID number the account sent for verification,
+  /// shown in the Block Permanently dialog because a permanent block bars
+  /// it from a new account (AGENTS.md II.D).
+  final String idNumber;
+  final String idTypeLabel;
 
   static ComplaintPartyDetail? fromJson(Map<String, dynamic>? json) {
     if (json == null) return null;
@@ -143,6 +151,8 @@ class ComplaintPartyDetail {
       memberSince: _text(json['member_since']),
       phone: _text(json['phone']),
       email: _text(json['email']),
+      idNumber: _text(json['id_number']),
+      idTypeLabel: _text(json['id_type_label']),
     );
   }
 }

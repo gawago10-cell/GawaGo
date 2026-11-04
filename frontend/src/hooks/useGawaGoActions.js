@@ -981,6 +981,13 @@ export function useGawaGoActions({
       window.alert("Please name the government ID you are uploading.");
       return;
     }
+    // Same bounds as the backend: 4 to 30 letters and digits once dashes and
+    // spaces are dropped.
+    const idNumberLength = String(verificationForm.primaryIdNumber || "").replace(/[^0-9a-z]/gi, "").length;
+    if (idNumberLength < 4 || idNumberLength > 30) {
+      window.alert("Enter the ID number exactly as it is printed on your ID.");
+      return;
+    }
     const account = currentUser?.role === "worker" ? currentWorker : registeredHouseholds.find(
       (item) => item.username === currentUser?.username,
     );
@@ -1008,6 +1015,7 @@ export function useGawaGoActions({
       if ((verificationForm.primaryIdType || "other") === "other") {
         requestRecord.append("primary_id_name", verificationForm.primaryIdOtherName || "");
       }
+      requestRecord.append("primary_id_number", String(verificationForm.primaryIdNumber || "").trim());
       requestRecord.append("secondary_doc_name", verificationForm.secondaryDocName);
       requestRecord.append("primary_id_file", verificationForm.primaryIdFile);
       requestRecord.append("secondary_doc_file", verificationForm.secondaryDocFile);
@@ -1024,6 +1032,17 @@ export function useGawaGoActions({
         }
         const normalizedRequest = normalizeVerificationRequest(data.verification_request || data);
         const backendAccount = data.account || data.worker;
+        // An ID number that belongs to a permanently blocked account is
+        // rejected on arrival (AGENTS.md II.D). Show the backend's answer
+        // instead of claiming the request is under review.
+        if (normalizedRequest?.status === "Rejected") {
+          if (backendAccount?.profile) {
+            setCurrentUser((prev) => (prev ? { ...prev, profile: backendAccount.profile } : prev));
+          }
+          await refreshVerificationStateFromBackend();
+          window.alert(normalizedRequest.reviewNote || "We couldn't verify this ID. Contact support if you think this is a mistake.");
+          return;
+        }
         const backendWorker =
           currentUser.role === "worker" ? normalizeBackendWorkerPayload(backendAccount) : null;
         setVerificationRequests((prev) => {
@@ -1512,11 +1531,18 @@ export function useGawaGoActions({
     }
     setIfChanged("job_start_date", form.jobStartDate, job.jobStartDate);
     setIfChanged("job_end_date", form.jobEndDate || null, job.jobEndDate || null);
-    setIfChanged(
-      "estimated_working_days",
-      form.estimatedWorkingDays ? parseInt(form.estimatedWorkingDays, 10) : null,
-      job.estimatedWorkingDays ?? null,
-    );
+    // Working days are no longer typed in: the dates set how long a job
+    // runs. A job posted with a count keeps it until its dates change to
+    // include an end date, then drops it, so the old count can't conflict
+    // with the new schedule. Without an end date the count still sets the
+    // job's length, so it stays.
+    if (
+      job.estimatedWorkingDays != null &&
+      form.jobEndDate &&
+      ("job_start_date" in changes || "job_end_date" in changes)
+    ) {
+      changes.estimated_working_days = null;
+    }
     setIfChanged("geographic_boundary", form.geographicBoundary, job.geographicBoundary || "1km");
     // The backend moves the date in the "One-Time starting ..." schedule line
     // itself when the start date changes.
@@ -1652,7 +1678,6 @@ export function useGawaGoActions({
         worker_slots: getWorkersNeeded(householdJobForm),
         job_start_date: householdJobForm.jobStartDate || null,
         job_end_date: householdJobForm.jobEndDate || null,
-        estimated_working_days: householdJobForm.estimatedWorkingDays ? parseInt(householdJobForm.estimatedWorkingDays, 10) : null,
         max_distance_km: distanceKmMap[geoBoundary] || 1.0,
         geographic_boundary: geoBoundary,
       };
@@ -1706,7 +1731,6 @@ export function useGawaGoActions({
             workersNeeded: "1",
             jobStartDate: "",
             jobEndDate: "",
-            estimatedWorkingDays: "",
             geographicBoundary: "1km",
           });
           if (postedJobForMatching) {

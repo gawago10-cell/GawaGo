@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.accounts.models import UserProfile
 from apps.common.models import VerificationRequest
+from apps.complaints.models import Complaint
 from apps.common.barangays import (
     BARANGAY_CENTERS,
     BARANGAYS,
@@ -292,7 +293,7 @@ def ongoing_match_count():
     )
 
 
-def build_dashboard_metrics():
+def build_dashboard_metrics(include_complaints=False):
     jobs = list(JobPosting.objects.all())
     # Admin accounts can carry a UserProfile (role defaults to worker), so
     # every head count here is limited to real households and workers.
@@ -308,16 +309,18 @@ def build_dashboard_metrics():
         for job in jobs
         if job.status == JobPosting.STATUS_COMPLETED
     )
-    pending_verification_workers = set(
-        VerificationRequest.objects.filter(
-            status=VerificationRequest.STATUS_PENDING, worker__is_staff=False
-        ).values_list("worker_id", flat=True)
-    )
-    pending_verifications_by_barangay = Counter(
-        _barangay_from_location_label(profile.location_label)
-        for profile in worker_profiles
-        if profile.user_id in pending_verification_workers
-    )
+    # Complaints are confidential and reviewed by superadmins only
+    # (AGENTS.md II.D), so only a superadmin's dashboard counts them. A
+    # complaint sits in its job's barangay, or the reported person's when it
+    # names no job.
+    complaints_by_barangay = Counter()
+    if include_complaints:
+        for complaint in Complaint.objects.select_related("job", "respondent__profile"):
+            if complaint.job_id:
+                label = complaint.job.location_label
+            else:
+                label = getattr(getattr(complaint.respondent, "profile", None), "location_label", "")
+            complaints_by_barangay[_barangay_from_location_label(label)] += 1
     barangay_demand = _build_barangay_analytics(job_barangay_counts, "jobs")
     worker_availability = _build_barangay_analytics(worker_barangay_counts, "workers")
     demand_vs_supply = _build_barangay_demand_vs_supply(job_barangay_counts, worker_barangay_counts)
@@ -379,7 +382,7 @@ def build_dashboard_metrics():
                 "jobs": job_barangay_counts.get(barangay, 0),
                 "workers": worker_barangay_counts.get(barangay, 0),
                 "completed": completed_by_barangay.get(barangay, 0),
-                "pendingVerifications": pending_verifications_by_barangay.get(barangay, 0),
+                **({"complaints": complaints_by_barangay.get(barangay, 0)} if include_complaints else {}),
                 **center,
             }
         )

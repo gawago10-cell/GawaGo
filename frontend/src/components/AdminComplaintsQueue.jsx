@@ -738,6 +738,7 @@ export default function AdminComplaintsQueue({
         <SuspendAccountDialog
           username={suspendRequest.complaint.respondentUsername || "this user"}
           durationDays={suspendRequest.durationDays}
+          banCredentials={suspendRequest.complaint.respondentDetail}
           onConfirm={confirmSuspend}
           onCancel={() => setSuspendRequest(null)}
         />

@@ -5,8 +5,13 @@ import React, { useState } from "react";
  * told this reason (AGENTS.md II.D), so it can't be left blank; a browser
  * prompt used to accept an empty answer and the email then said "No reason
  * was recorded".
+ *
+ * A permanent block also bars the account's email, phone and government ID
+ * number from a new account (AGENTS.md II.D); banCredentials ({ email,
+ * phone, idNumber, idTypeLabel }) lists them so the superadmin sees what
+ * that covers before confirming.
  */
-export default function SuspendAccountDialog({ username, durationDays, onConfirm, onCancel }) {
+export default function SuspendAccountDialog({ username, durationDays, banCredentials, onConfirm, onCancel }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -51,6 +56,26 @@ export default function SuspendAccountDialog({ username, durationDays, onConfirm
             {durationDays ? "the suspension ends or you restore them" : "you restore them"}. They will be told the
             reason below.
           </p>
+          {!durationDays && (
+            <div className="suspend-ban-credentials" id="suspend-ban-credentials">
+              <p className="fw-semibold mb-1">These can&apos;t be used for a new GawaGo account:</p>
+              <dl className="mb-1">
+                <dt>Email</dt>
+                <dd>{banCredentials?.email || "None on file"}</dd>
+                <dt>Phone</dt>
+                <dd>{banCredentials?.phone || "None on file"}</dd>
+                <dt>ID number</dt>
+                <dd>
+                  {banCredentials?.idNumber
+                    ? `${banCredentials.idTypeLabel ? `${banCredentials.idTypeLabel} · ` : ""}${banCredentials.idNumber}`
+                    : "None sent yet"}
+                </dd>
+              </dl>
+              <p className="small text-muted mb-0">
+                A new account with the same full name isn&apos;t blocked, but it is flagged in the Verification Queue.
+              </p>
+            </div>
+          )}
           <label className="form-label fw-semibold" htmlFor="suspend-account-reason">
             Reason (shown to the user)
           </label>

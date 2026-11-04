@@ -92,6 +92,25 @@ void main() {
     expect(formatTimeAgo(''), '');
     expect(formatTimeAgo('not a date'), '');
   });
+
+  test('the Post a Job hint counts the days between the dates', () {
+    expect(
+      describeJobSpan(DateTime(2026, 11, 10), DateTime(2026, 11, 14)),
+      '5 days, Nov 10, 2026 to Nov 14, 2026.',
+    );
+    expect(
+      describeJobSpan(DateTime(2026, 11, 10), null),
+      'One-day job on Nov 10, 2026. Set an end date if it runs longer.',
+    );
+    expect(
+      describeJobSpan(DateTime(2026, 11, 10), DateTime(2026, 11, 10)),
+      'One-day job on Nov 10, 2026. Set an end date if it runs longer.',
+    );
+    expect(
+      describeJobSpan(null, null),
+      'Pick the dates the job starts and ends.',
+    );
+  });
 }
 
 String _ago(Duration elapsed) =>

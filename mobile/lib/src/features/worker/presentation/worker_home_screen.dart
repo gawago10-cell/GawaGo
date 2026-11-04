@@ -6212,6 +6212,7 @@ class _WorkerVerificationState extends State<_WorkerVerification> {
   String? _secondary;
   String? _idType;
   final _idOtherName = TextEditingController();
+  final _idNumber = TextEditingController();
   final _notes = TextEditingController();
   bool _submitting = false;
 
@@ -6238,12 +6239,22 @@ class _WorkerVerificationState extends State<_WorkerVerification> {
       _message('Name the government ID you are uploading.');
       return;
     }
+    // Same bounds as the backend: 4 to 30 letters and digits once dashes
+    // and spaces are dropped.
+    final idNumberLength = _idNumber.text
+        .replaceAll(RegExp(r'[^0-9A-Za-z]'), '')
+        .length;
+    if (idNumberLength < 4 || idNumberLength > 30) {
+      _message('Enter the ID number exactly as it is printed on your ID.');
+      return;
+    }
     setState(() => _submitting = true);
     try {
-      await widget.repository.submitVerification(
+      final rejectedNote = await widget.repository.submitVerification(
         primaryPath: _primary!,
         secondaryPath: _secondary!,
         primaryIdType: _idType!,
+        primaryIdNumber: _idNumber.text.trim(),
         primaryIdOtherName: _idOtherName.text.trim(),
         notes: _notes.text.trim(),
       );
@@ -6251,7 +6262,9 @@ class _WorkerVerificationState extends State<_WorkerVerification> {
       setState(() {
         _future = widget.repository.getVerificationRequests();
       });
-      if (mounted) _message('Verification submitted for admin review.');
+      if (mounted) {
+        _message(rejectedNote ?? 'Verification submitted for admin review.');
+      }
     } catch (error) {
       if (mounted) _message(friendlyApiError(error));
     } finally {
@@ -6359,6 +6372,20 @@ class _WorkerVerificationState extends State<_WorkerVerification> {
                   ),
                 ),
               ],
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('verification-id-number'),
+                controller: _idNumber,
+                maxLength: 64,
+                autocorrect: false,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'ID number',
+                  hintText: 'e.g. N01-23-456789',
+                  helperText:
+                      'Type it exactly as printed on the ID. Only admins see it.',
+                ),
+              ),
               const SizedBox(height: 12),
               _WorkerVerificationPicker(
                 title: 'Primary ID document',

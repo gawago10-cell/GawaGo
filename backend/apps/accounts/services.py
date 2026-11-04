@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.utils import timezone
 
+from apps.accounts.banned import sync_banned_credentials
 from apps.accounts.models import PasswordResetRequest, SignupVerificationRequest, UserProfile, WorkerSkill
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
@@ -109,6 +110,9 @@ def apply_account_suspension(profile: UserProfile, *, blocked=True, reason="", d
     profile.blocked_reason = reason if blocked else ""
     profile.blocked_until = blocked_until
     profile.save(update_fields=["is_blocked", "blocked_at", "blocked_reason", "blocked_until"])
+    # A permanent block keeps the person from coming back under a new
+    # account; a timed suspension or a restore lifts that again.
+    sync_banned_credentials(profile)
     if blocked and not was_blocked:
         # Imported here because jobs imports accounts.
         from apps.jobs.services import release_suspended_account

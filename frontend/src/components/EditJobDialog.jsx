@@ -23,7 +23,6 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
     workersNeeded: String(job.workersNeeded || 1),
     jobStartDate: job.jobStartDate || "",
     jobEndDate: job.jobEndDate || "",
-    estimatedWorkingDays: job.estimatedWorkingDays == null ? "" : String(job.estimatedWorkingDays),
     geographicBoundary: job.geographicBoundary || "1km",
   });
   const [error, setError] = useState("");
@@ -129,17 +128,6 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
                 min={form.jobStartDate || todayIsoDate}
                 value={form.jobEndDate}
                 onChange={update("jobEndDate")}
-              />
-            </div>
-            <div className="col-6">
-              <label className="form-label fw-semibold" htmlFor="edit-job-days">Working days (optional)</label>
-              <input
-                id="edit-job-days"
-                type="number"
-                min="1"
-                className="form-control"
-                value={form.estimatedWorkingDays}
-                onChange={update("estimatedWorkingDays")}
               />
             </div>
             <div className="col-6">
