@@ -26,6 +26,7 @@ import '../../../shared/widgets/notification_badge.dart';
 import '../../../shared/widgets/ai_match_breakdown.dart';
 import '../../../shared/widgets/authenticated_image.dart';
 import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/profile_tabs.dart';
 import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
@@ -3583,9 +3584,7 @@ Future<bool> _stepAwayFromJob(
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: GawaGoColors.danger,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: GawaGoColors.danger),
             child: const Text('Withdraw'),
           ),
         ],
@@ -3608,11 +3607,7 @@ Future<bool> _stepAwayFromJob(
     );
     return true;
   } catch (error) {
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(friendlyApiError(error)),
-      ),
-    );
+    messenger.showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
     return false;
   }
 }
@@ -3831,6 +3826,10 @@ class _ProfileFormState extends State<_ProfileForm> {
   /// The page reads first and edits on request, like the web profile: the
   /// fields stay visible but locked until "Edit Profile" is pressed.
   bool _editing = false;
+  int _tab = 0;
+  // Skills, certificates and work samples save one at a time, so their
+  // editing switch is separate from the profile form's.
+  bool _portfolioEditing = false;
 
   late Future<WorkerPortfolio> _portfolio = widget.repository.getPortfolio();
   late final Future<List<WorkerJob>> _history = widget.repository
@@ -4302,458 +4301,513 @@ class _ProfileFormState extends State<_ProfileForm> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
       children: [
-        _WorkerProfileSummary(
-          profile: widget.profile,
-          localPhotoPath: _photoPath,
-          // The live list: a portfolio skill add/remove changes it before
-          // the profile is re-fetched.
-          skills: _skills.toList(),
+        ProfileTabs(
+          labels: const ['Profile', 'Skills & Portfolio', 'Password'],
+          selected: _tab,
+          onChanged: (index) => setState(() => _tab = index),
         ),
         const SizedBox(height: 16),
-        ProfileSection(
-          title: 'Personal Information',
-          action: ProfileSectionButton(
-            label: _editing ? 'Cancel' : 'Edit Profile',
-            onPressed: _editing
-                ? _cancelEditing
-                : () => setState(() => _editing = true),
+        if (_tab == 0) ...[
+          _WorkerProfileSummary(
+            profile: widget.profile,
+            localPhotoPath: _photoPath,
+            // The live list: a portfolio skill add/remove changes it before
+            // the profile is re-fetched.
+            skills: _skills.toList(),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_editing) ...[
-                Row(
-                  children: [
-                    _WorkerProfilePhoto(
-                      profile: widget.profile,
-                      localPhotoPath: _photoPath,
-                      radius: 30,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _pickPhoto,
-                        icon: const Icon(Icons.photo_camera_outlined),
-                        label: Text(
-                          _photoPath == null ? 'Choose photo' : 'Change photo',
+          const SizedBox(height: 16),
+          ProfileSection(
+            title: 'Personal Information',
+            action: ProfileSectionButton(
+              label: _editing ? 'Cancel' : 'Edit Profile',
+              onPressed: _editing
+                  ? _cancelEditing
+                  : () => setState(() => _editing = true),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_editing) ...[
+                  Row(
+                    children: [
+                      _WorkerProfilePhoto(
+                        profile: widget.profile,
+                        localPhotoPath: _photoPath,
+                        radius: 30,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _pickPhoto,
+                          icon: const Icon(Icons.photo_camera_outlined),
+                          label: Text(
+                            _photoPath == null
+                                ? 'Choose photo'
+                                : 'Change photo',
+                          ),
                         ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                ],
+                _ProfileField(
+                  label: 'First Name',
+                  controller: _firstName,
+                  enabled: _editing,
+                ),
+                _ProfileField(
+                  label: 'Last Name',
+                  controller: _lastName,
+                  enabled: _editing,
+                ),
+                _ProfileField(
+                  label: 'Email',
+                  controller: _email,
+                  enabled: _editing,
+                ),
+                _ProfileField(
+                  label: 'Phone Number',
+                  controller: _phone,
+                  enabled: _editing,
+                ),
+                _ProfileField(
+                  label: 'Street / House No.',
+                  controller: _location,
+                  enabled: _editing,
+                ),
+                if (_editing) ...[
+                  const _FieldLabel('Pin your exact location'),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      height: 220,
+                      child: FlutterMap(
+                        options: MapOptions(
+                          initialCenter:
+                              _profilePin ?? const LatLng(14.0253, 121.5929),
+                          initialZoom: 14,
+                          onTap: (_, point) =>
+                              setState(() => _profilePin = point),
+                        ),
+                        children: [
+                          if (shouldLoadMapTiles) osmTileLayer(),
+                          if (_profilePin != null)
+                            MarkerLayer(
+                              markers: [
+                                Marker(
+                                  point: _profilePin!,
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    color: Colors.deepOrange,
+                                    size: 38,
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          ProfileSection(
+            title: 'Services & Rates',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _ProfileField(
+                  label: 'Bio',
+                  controller: _bio,
+                  enabled: _editing,
+                  lines: 3,
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _ProfileField(
+                        label: 'Hourly Rate',
+                        controller: _hourly,
+                        enabled: _editing,
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ProfileField(
+                        label: 'Daily Rate',
+                        controller: _daily,
+                        enabled: _editing,
+                        keyboardType: TextInputType.number,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
-              ],
-              _ProfileField(
-                label: 'First Name',
-                controller: _firstName,
-                enabled: _editing,
-              ),
-              _ProfileField(
-                label: 'Last Name',
-                controller: _lastName,
-                enabled: _editing,
-              ),
-              _ProfileField(
-                label: 'Email',
-                controller: _email,
-                enabled: _editing,
-              ),
-              _ProfileField(
-                label: 'Phone Number',
-                controller: _phone,
-                enabled: _editing,
-              ),
-              _ProfileField(
-                label: 'Street / House No.',
-                controller: _location,
-                enabled: _editing,
-              ),
-              if (_editing) ...[
-                const _FieldLabel('Pin your exact location'),
+                _ProfileField(
+                  label: 'Years of Experience',
+                  controller: _experience,
+                  enabled: _editing,
+                  keyboardType: TextInputType.number,
+                ),
+                const _FieldLabel('Skill categories used for matching'),
                 const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    height: 220,
-                    child: FlutterMap(
-                      options: MapOptions(
-                        initialCenter:
-                            _profilePin ?? const LatLng(14.0253, 121.5929),
-                        initialZoom: 14,
-                        onTap: (_, point) =>
-                            setState(() => _profilePin = point),
-                      ),
-                      children: [
-                        if (shouldLoadMapTiles) osmTileLayer(),
-                        if (_profilePin != null)
-                          MarkerLayer(
-                            markers: [
-                              Marker(
-                                point: _profilePin!,
-                                child: const Icon(
-                                  Icons.location_on,
-                                  color: Colors.deepOrange,
-                                  size: 38,
-                                ),
-                              ),
-                            ],
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        ProfileSection(
-          title: 'Services & Rates',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _ProfileField(
-                label: 'Bio',
-                controller: _bio,
-                enabled: _editing,
-                lines: 3,
-              ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: _ProfileField(
-                      label: 'Hourly Rate',
-                      controller: _hourly,
-                      enabled: _editing,
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _ProfileField(
-                      label: 'Daily Rate',
-                      controller: _daily,
-                      enabled: _editing,
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                ],
-              ),
-              _ProfileField(
-                label: 'Years of Experience',
-                controller: _experience,
-                enabled: _editing,
-                keyboardType: TextInputType.number,
-              ),
-              const _FieldLabel('Skill categories used for matching'),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: [
-                  ...gawagoSkills
-                      .where((skill) => !isOtherSkillChoice(skill))
-                      .map(
-                        (skill) => FilterChip(
-                          label: Text(skill),
-                          selected: _skills.contains(skill),
-                          onSelected: !_editing
-                              ? null
-                              : (selected) {
-                                  if (selected &&
-                                      _skills.length >= maxWorkerSkills) {
-                                    _message(
-                                      'You can select up to $maxWorkerSkills skills only.',
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    ...gawagoSkills
+                        .where((skill) => !isOtherSkillChoice(skill))
+                        .map(
+                          (skill) => FilterChip(
+                            label: Text(skill),
+                            selected: _skills.contains(skill),
+                            onSelected: !_editing
+                                ? null
+                                : (selected) {
+                                    if (selected &&
+                                        _skills.length >= maxWorkerSkills) {
+                                      _message(
+                                        'You can select up to $maxWorkerSkills skills only.',
+                                      );
+                                      return;
+                                    }
+                                    setState(
+                                      () => selected
+                                          ? _skills.add(skill)
+                                          : _skills.remove(skill),
                                     );
-                                    return;
-                                  }
-                                  setState(
-                                    () => selected
-                                        ? _skills.add(skill)
-                                        : _skills.remove(skill),
-                                  );
-                                },
+                                  },
+                          ),
                         ),
-                      ),
-                  // Skills the worker typed (outside the catalog) were
-                  // saved but never shown here, so they could not be removed.
-                  ..._skills
-                      .where((skill) => !gawagoSkills.contains(skill))
-                      .map(
-                        (skill) => InputChip(
-                          label: Text(skill),
-                          selected: true,
-                          onDeleted: _editing
-                              ? () => setState(() => _skills.remove(skill))
-                              : null,
+                    // Skills the worker typed (outside the catalog) were
+                    // saved but never shown here, so they could not be removed.
+                    ..._skills
+                        .where((skill) => !gawagoSkills.contains(skill))
+                        .map(
+                          (skill) => InputChip(
+                            label: Text(skill),
+                            selected: true,
+                            onDeleted: _editing
+                                ? () => setState(() => _skills.remove(skill))
+                                : null,
+                          ),
                         ),
+                    if (_editing && _skills.length < maxWorkerSkills)
+                      ActionChip(
+                        key: const ValueKey('profile-add-typed-skill'),
+                        avatar: const Icon(Icons.add, size: 16),
+                        label: const Text('Other skill'),
+                        onPressed: _addTypedSkillChip,
                       ),
-                  if (_editing && _skills.length < maxWorkerSkills)
-                    ActionChip(
-                      key: const ValueKey('profile-add-typed-skill'),
-                      avatar: const Icon(Icons.add, size: 16),
-                      label: const Text('Other skill'),
-                      onPressed: _addTypedSkillChip,
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        ProfileSection(
-          title: 'Date-Specific Availability',
-          action: _editing
-              ? ProfileSectionButton(
-                  label: '+ Add Date',
-                  onPressed: _addDateAvailability,
-                )
-              : null,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_availabilityWindows.isEmpty)
-                const SectionEmptyText(
-                  'No date-specific availability added yet.',
-                )
-              else
-                ..._availabilityWindows.asMap().entries.map(
-                  (entry) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(entry.value.date),
-                    subtitle: Text(
-                      '${entry.value.startTime} - ${entry.value.endTime}',
-                    ),
-                    trailing: _editing
-                        ? IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => setState(
-                              () => _availabilityWindows.removeAt(entry.key),
-                            ),
-                          )
-                        : null,
-                  ),
+                  ],
                 ),
-            ],
-          ),
-        ),
-        if (_editing) ...[
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 50,
-            child: FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(
-                backgroundColor: GawaGoColors.primary,
-                foregroundColor: GawaGoColors.onPrimary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                textStyle: const TextStyle(
-                  fontFamily: GawaGoColors.fontBody,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-              icon: const Icon(Icons.save_outlined),
-              label: Text(_saving ? 'Saving...' : 'Save Profile'),
+              ],
             ),
           ),
-        ],
-        const SizedBox(height: 16),
-        FutureBuilder<WorkerPortfolio>(
-          future: _portfolio,
-          builder: (context, snapshot) {
-            final portfolio = snapshot.data ?? WorkerPortfolio.empty;
-            final failed = snapshot.hasError;
-            return Column(
+          const SizedBox(height: 16),
+          ProfileSection(
+            title: 'Date-Specific Availability',
+            action: _editing
+                ? ProfileSectionButton(
+                    label: '+ Add Date',
+                    onPressed: _addDateAvailability,
+                  )
+                : null,
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ProfileSection(
-                  title: 'Skills & Expertise',
-                  // Offered once the portfolio has loaded: building the
-                  // choices from an empty placeholder offered skills the
-                  // worker already had.
-                  action: _editing && snapshot.hasData
-                      ? ProfileSectionButton(
-                          label: '+ Add Skill',
-                          onPressed: () => _addPortfolioSkill(portfolio.skills),
-                        )
-                      : null,
-                  child: failed
-                      ? const SectionEmptyText(
-                          'Could not load your portfolio right now.',
-                        )
-                      : portfolio.skills.isEmpty
-                      ? const SectionEmptyText('No skills added yet.')
-                      : Column(
-                          children: portfolio.skills
-                              .map(
-                                (skill) => ProfileSkillTile(
-                                  skillName: skill.skillName,
-                                  proficiencyLabel: skill.proficiencyLabel,
-                                  averageRating: skill.averageRating,
-                                  ratingCount: skill.ratingCount,
-                                  trailing: !_editing
-                                      ? null
-                                      : IconButton(
-                                          tooltip: 'Remove skill',
-                                          icon: const Icon(
-                                            Icons.delete_outline,
-                                          ),
-                                          onPressed: () async {
-                                            if (_skillChipsUnsaved) {
-                                              _message(
-                                                'Save your skill changes first, then remove a portfolio skill.',
-                                              );
-                                              return;
-                                            }
-                                            if (!await _confirmDelete(
-                                              skill.skillName,
-                                            )) {
-                                              return;
-                                            }
-                                            await _runPortfolioAction(() async {
-                                              await widget.repository
-                                                  .deletePortfolioSkill(
-                                                    skill.id,
-                                                  );
-                                              // Removing it here also
-                                              // removes it from the profile
-                                              // list a later Save sends.
-                                              bool sameSkill(String name) =>
-                                                  name.toLowerCase() ==
-                                                  skill.skillName.toLowerCase();
-                                              _skills.removeWhere(sameSkill);
-                                              _savedSkills.removeWhere(
-                                                sameSkill,
-                                              );
-                                              widget.onSkillsChanged?.call();
-                                            }, 'Skill removed.');
-                                          },
-                                        ),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                ),
-                const SizedBox(height: 16),
-                ProfileSection(
-                  title: 'Certifications',
-                  action: _editing
-                      ? ProfileSectionButton(
-                          label: '+ Add Certificate',
-                          onPressed: _addCertification,
-                        )
-                      : null,
-                  child: failed
-                      ? const SectionEmptyText(
-                          'Could not load your certificates right now.',
-                        )
-                      : portfolio.certifications.isEmpty
-                      ? const SectionEmptyText('No certifications added yet.')
-                      : Column(
-                          children: portfolio.certifications
-                              .map(
-                                (certificate) => _CertificationTile(
-                                  certificate: certificate,
-                                  editing: _editing,
-                                  onDelete: () async {
-                                    if (!await _confirmDelete(
-                                      certificate.certificateName,
-                                    )) {
-                                      return;
-                                    }
-                                    await _runPortfolioAction(
-                                      () => widget.repository
-                                          .deleteCertification(certificate.id),
-                                      'Certificate removed.',
-                                    );
-                                  },
-                                ),
-                              )
-                              .toList(),
-                        ),
-                ),
-                const SizedBox(height: 16),
-                ProfileSection(
-                  title: 'Work Samples',
-                  action: _editing
-                      ? ProfileSectionButton(
-                          label: '+ Add Sample',
-                          onPressed: _addWorkSample,
-                        )
-                      : null,
-                  child: failed
-                      ? const SectionEmptyText(
-                          'Could not load your work samples right now.',
-                        )
-                      : portfolio.workSamples.isEmpty
-                      ? const SectionEmptyText('No work samples uploaded yet.')
-                      : Column(
-                          children: portfolio.workSamples
-                              .map(
-                                (sample) => _WorkSampleTile(
-                                  sample: sample,
-                                  editing: _editing,
-                                  onEdit: () => _editWorkSample(sample),
-                                  onDelete: () async {
-                                    if (!await _confirmDelete(
-                                      sample.title.isEmpty
-                                          ? 'this work sample'
-                                          : sample.title,
-                                    )) {
-                                      return;
-                                    }
-                                    await _runPortfolioAction(
-                                      () => widget.repository.deleteWorkSample(
-                                        sample.id,
-                                      ),
-                                      'Work sample removed.',
-                                    );
-                                  },
-                                ),
-                              )
-                              .toList(),
-                        ),
-                ),
+                if (_availabilityWindows.isEmpty)
+                  const SectionEmptyText(
+                    'No date-specific availability added yet.',
+                  )
+                else
+                  ..._availabilityWindows.asMap().entries.map(
+                    (entry) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(entry.value.date),
+                      subtitle: Text(
+                        '${entry.value.startTime} - ${entry.value.endTime}',
+                      ),
+                      trailing: _editing
+                          ? IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () => setState(
+                                () => _availabilityWindows.removeAt(entry.key),
+                              ),
+                            )
+                          : null,
+                    ),
+                  ),
               ],
-            );
-          },
-        ),
-        const SizedBox(height: 16),
-        ProfileSection(
-          title: 'Employment History',
-          child: FutureBuilder<List<WorkerJob>>(
-            future: _history,
+            ),
+          ),
+          if (_editing) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                style: FilledButton.styleFrom(
+                  backgroundColor: GawaGoColors.primary,
+                  foregroundColor: GawaGoColors.onPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                    fontFamily: GawaGoColors.fontBody,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                icon: const Icon(Icons.save_outlined),
+                label: Text(_saving ? 'Saving...' : 'Save Profile'),
+              ),
+            ),
+          ],
+        ],
+        if (_tab == 1) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _portfolioEditing
+                      ? 'Changes here save as soon as you add, edit or delete an item.'
+                      : 'Turn on editing to add or change your skills, certificates and work samples.',
+                  style: const TextStyle(
+                    color: GawaGoColors.textMuted,
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _portfolioEditing
+                  ? OutlinedButton(
+                      onPressed: () =>
+                          setState(() => _portfolioEditing = false),
+                      child: const Text('Done'),
+                    )
+                  : FilledButton(
+                      onPressed: () => setState(() => _portfolioEditing = true),
+                      child: const Text('Edit'),
+                    ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          FutureBuilder<WorkerPortfolio>(
+            future: _portfolio,
             builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return const SectionEmptyText(
-                  'Could not load your job history right now.',
-                );
-              }
-              final jobs = snapshot.data;
-              if (jobs == null) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-              if (jobs.isEmpty) {
-                return const SectionEmptyText('No completed jobs yet.');
-              }
+              final portfolio = snapshot.data ?? WorkerPortfolio.empty;
+              final failed = snapshot.hasError;
               return Column(
-                children: jobs
-                    .map((job) => _EmploymentHistoryTile(job: job))
-                    .toList(),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ProfileSection(
+                    title: 'Skills & Expertise',
+                    // Offered once the portfolio has loaded: building the
+                    // choices from an empty placeholder offered skills the
+                    // worker already had.
+                    action: _portfolioEditing && snapshot.hasData
+                        ? ProfileSectionButton(
+                            label: '+ Add Skill',
+                            onPressed: () =>
+                                _addPortfolioSkill(portfolio.skills),
+                          )
+                        : null,
+                    child: failed
+                        ? const SectionEmptyText(
+                            'Could not load your portfolio right now.',
+                          )
+                        : portfolio.skills.isEmpty
+                        ? const SectionEmptyText('No skills added yet.')
+                        : Column(
+                            children: portfolio.skills
+                                .map(
+                                  (skill) => ProfileSkillTile(
+                                    skillName: skill.skillName,
+                                    proficiencyLabel: skill.proficiencyLabel,
+                                    averageRating: skill.averageRating,
+                                    ratingCount: skill.ratingCount,
+                                    trailing: !_portfolioEditing
+                                        ? null
+                                        : IconButton(
+                                            tooltip: 'Remove skill',
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                            ),
+                                            onPressed: () async {
+                                              if (_skillChipsUnsaved) {
+                                                _message(
+                                                  'Save your skill changes first, then remove a portfolio skill.',
+                                                );
+                                                return;
+                                              }
+                                              if (!await _confirmDelete(
+                                                skill.skillName,
+                                              )) {
+                                                return;
+                                              }
+                                              await _runPortfolioAction(
+                                                () async {
+                                                  await widget.repository
+                                                      .deletePortfolioSkill(
+                                                        skill.id,
+                                                      );
+                                                  // Removing it here also
+                                                  // removes it from the profile
+                                                  // list a later Save sends.
+                                                  bool sameSkill(String name) =>
+                                                      name.toLowerCase() ==
+                                                      skill.skillName
+                                                          .toLowerCase();
+                                                  _skills.removeWhere(
+                                                    sameSkill,
+                                                  );
+                                                  _savedSkills.removeWhere(
+                                                    sameSkill,
+                                                  );
+                                                  widget.onSkillsChanged
+                                                      ?.call();
+                                                },
+                                                'Skill removed.',
+                                              );
+                                            },
+                                          ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  ProfileSection(
+                    title: 'Certifications',
+                    action: _portfolioEditing
+                        ? ProfileSectionButton(
+                            label: '+ Add Certificate',
+                            onPressed: _addCertification,
+                          )
+                        : null,
+                    child: failed
+                        ? const SectionEmptyText(
+                            'Could not load your certificates right now.',
+                          )
+                        : portfolio.certifications.isEmpty
+                        ? const SectionEmptyText('No certifications added yet.')
+                        : Column(
+                            children: portfolio.certifications
+                                .map(
+                                  (certificate) => _CertificationTile(
+                                    certificate: certificate,
+                                    editing: _portfolioEditing,
+                                    onDelete: () async {
+                                      if (!await _confirmDelete(
+                                        certificate.certificateName,
+                                      )) {
+                                        return;
+                                      }
+                                      await _runPortfolioAction(
+                                        () => widget.repository
+                                            .deleteCertification(
+                                              certificate.id,
+                                            ),
+                                        'Certificate removed.',
+                                      );
+                                    },
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  ProfileSection(
+                    title: 'Work Samples',
+                    action: _portfolioEditing
+                        ? ProfileSectionButton(
+                            label: '+ Add Sample',
+                            onPressed: _addWorkSample,
+                          )
+                        : null,
+                    child: failed
+                        ? const SectionEmptyText(
+                            'Could not load your work samples right now.',
+                          )
+                        : portfolio.workSamples.isEmpty
+                        ? const SectionEmptyText(
+                            'No work samples uploaded yet.',
+                          )
+                        : Column(
+                            children: portfolio.workSamples
+                                .map(
+                                  (sample) => _WorkSampleTile(
+                                    sample: sample,
+                                    editing: _portfolioEditing,
+                                    onEdit: () => _editWorkSample(sample),
+                                    onDelete: () async {
+                                      if (!await _confirmDelete(
+                                        sample.title.isEmpty
+                                            ? 'this work sample'
+                                            : sample.title,
+                                      )) {
+                                        return;
+                                      }
+                                      await _runPortfolioAction(
+                                        () => widget.repository
+                                            .deleteWorkSample(sample.id),
+                                        'Work sample removed.',
+                                      );
+                                    },
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                  ),
+                ],
               );
             },
           ),
-        ),
+          const SizedBox(height: 16),
+          ProfileSection(
+            title: 'Employment History',
+            child: FutureBuilder<List<WorkerJob>>(
+              future: _history,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const SectionEmptyText(
+                    'Could not load your job history right now.',
+                  );
+                }
+                final jobs = snapshot.data;
+                if (jobs == null) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (jobs.isEmpty) {
+                  return const SectionEmptyText('No completed jobs yet.');
+                }
+                return Column(
+                  children: jobs
+                      .map((job) => _EmploymentHistoryTile(job: job))
+                      .toList(),
+                );
+              },
+            ),
+          ),
+        ],
+        if (_tab == 2)
+          const ProfileSection(
+            title: 'Change Password',
+            child: ChangePasswordForm(),
+          ),
       ],
     );
   }

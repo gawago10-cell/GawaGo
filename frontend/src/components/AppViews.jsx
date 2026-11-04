@@ -19,6 +19,7 @@ import RequiredMark, { hasAnswer } from "./RequiredMark";
 import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
 import RateGuideHint from "./RateGuideHint";
 import ChangePasswordCard from "./ChangePasswordCard";
+import ProfileTabs from "./ProfileTabs";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import {
@@ -229,6 +230,19 @@ export default function AppViews({
   workerVisibleJobs,
 }) {
   const [showComplaintModal, setShowComplaintModal] = useState(false);
+  const [workerProfileTab, setWorkerProfileTab] = useState("profile");
+  const [workerPortfolioEditing, setWorkerPortfolioEditing] = useState(false);
+  const [householdProfileTab, setHouseholdProfileTab] = useState("profile");
+  // My Profile always opens on its first tab, and portfolio editing ends when you leave.
+  useEffect(() => {
+    if (view !== "worker-profile") {
+      setWorkerProfileTab("profile");
+      setWorkerPortfolioEditing(false);
+    }
+    if (view !== "household-profile") {
+      setHouseholdProfileTab("profile");
+    }
+  }, [view]);
   // Offered right after a household's review, as on mobile: per-skill
   // ratings (AGENTS.md II.A) roll up into the worker's portfolio skills.
   const [skillRatingTarget, setSkillRatingTarget] = useState(null);
@@ -2912,6 +2926,19 @@ export default function AppViews({
                 </div>
               </aside>
               <div className="worker-content">
+                <ProfileTabs
+                  label="Profile sections"
+                  idPrefix="worker-profile"
+                  value={workerProfileTab}
+                  onChange={setWorkerProfileTab}
+                  tabs={[
+                    { id: "profile", label: "Profile" },
+                    { id: "portfolio", label: "Skills & Portfolio" },
+                    { id: "password", label: "Password" },
+                  ]}
+                />
+                {workerProfileTab === "profile" && (
+                <div role="tabpanel" id="worker-profile-panel-profile" aria-labelledby="worker-profile-tab-profile">
                 <div className="row g-3">
                   <div className="col-lg-4">
                     <div className="profile-card">
@@ -3150,12 +3177,30 @@ export default function AppViews({
                     </div>
                   </div>
                 </div>
-                <div className="row g-3 mt-2">
+                </div>
+                )}
+                {workerProfileTab === "portfolio" && (
+                <div role="tabpanel" id="worker-profile-panel-portfolio" aria-labelledby="worker-profile-tab-portfolio">
+                <div className="profile-tab-toolbar">
+                  <span>
+                    {workerPortfolioEditing
+                      ? "Changes here save as soon as you add, edit or delete an item."
+                      : "Turn on editing to add or change your skills, certificates and work samples."}
+                  </span>
+                  <button
+                    className={workerPortfolioEditing ? "btn btn-outline-secondary" : "btn btn-primary"}
+                    type="button"
+                    onClick={() => setWorkerPortfolioEditing((editing) => !editing)}
+                  >
+                    {workerPortfolioEditing ? "Done" : "Edit Skills & Portfolio"}
+                  </button>
+                </div>
+                <div className="row g-3">
                   <div className="col-12">
                     <div className="card border-0 shadow-sm">
                       <div className="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
                         <span>Skills & Expertise</span>
-                        {workerProfileEditing && (
+                        {workerPortfolioEditing && (
                           <button
                             type="button"
                             className="btn btn-sm btn-light"
@@ -3175,7 +3220,7 @@ export default function AppViews({
                                 className="p-3 rounded position-relative"
                                 style={{ backgroundColor: '#f8f9fa', borderLeft: '4px solid #4CAF50' }}
                               >
-                                {workerProfileEditing && (
+                                {workerPortfolioEditing && (
                                   <button
                                     type="button"
                                     className="btn btn-sm btn-danger position-absolute top-0 end-0 m-1 py-0 px-2"
@@ -3200,7 +3245,7 @@ export default function AppViews({
                                   }
                                   return (
                                     <>
-                                      {workerProfileEditing ? (
+                                      {workerPortfolioEditing ? (
                                         <select
                                           className="form-select form-select-sm mt-2"
                                           aria-label={`Proficiency in ${skill}`}
@@ -3229,7 +3274,7 @@ export default function AppViews({
                             ))
                           ) : (
                             <p className="text-muted">
-                              No skills added yet. {workerProfileEditing && "Click Edit Skills to add one."}
+                              No skills added yet. {workerPortfolioEditing && "Click Edit Skills to add one."}
                             </p>
                           )}
                         </div>
@@ -3240,7 +3285,7 @@ export default function AppViews({
                     <div className="card border-0 shadow-sm">
                       <div className="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
                         <span>Certifications</span>
-                        {workerProfileEditing && (
+                        {workerPortfolioEditing && (
                           <button type="button" className="btn btn-sm btn-light" style={{ color: '#4CAF50' }} onClick={handleOpenCertificationModal}>+ Add Certificate</button>
                         )}
                       </div>
@@ -3259,7 +3304,7 @@ export default function AppViews({
                                         <p className="text-white small mb-0 mt-1 cert-reject-reason">Reason: {cert.verificationNotes}</p>
                                       )}
                                     </div>
-                                    {workerProfileEditing && (
+                                    {workerPortfolioEditing && (
                                       <div className="d-flex gap-1">
                                         <button type="button" className="btn btn-sm btn-light" onClick={() => handleEditCertification(index)}>Edit</button>
                                         <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteCertification(index)}>×</button>
@@ -3271,7 +3316,7 @@ export default function AppViews({
                             ))}
                           </div>
                         ) : (
-                          <p className="text-muted">No certifications added yet. {workerProfileEditing && "Click the Add Certificate button to add one."}</p>
+                          <p className="text-muted">No certifications added yet. {workerPortfolioEditing && "Click the Add Certificate button to add one."}</p>
                         )}
                       </div>
                     </div>
@@ -3284,7 +3329,7 @@ export default function AppViews({
                           {(workerProfileForm.workSamples || []).length > 0 && (
                             <button type="button" className="btn btn-sm btn-light" style={{ color: '#4CAF50' }} onClick={() => setPortfolioGalleryOpen(true)}>View More</button>
                           )}
-                          {workerProfileEditing && (
+                          {workerPortfolioEditing && (
                             <button type="button" className="btn btn-sm btn-light" style={{ color: '#4CAF50' }} onClick={handleOpenWorkSampleModal}>+ Add Sample</button>
                           )}
                         </div>
@@ -3308,7 +3353,7 @@ export default function AppViews({
                                       </div>
                                     </div>
                                   </div>
-                                  {workerProfileEditing && (
+                                  {workerPortfolioEditing && (
                                     <div className="card-footer bg-transparent border-top d-flex gap-2">
                                       <button type="button" className="btn btn-sm btn-outline-secondary flex-grow-1" onClick={() => handleEditWorkSample(index)}>Edit</button>
                                       <button type="button" className="btn btn-sm btn-outline-danger flex-grow-1" onClick={() => handleDeleteWorkSample(index)}>Delete</button>
@@ -3319,7 +3364,7 @@ export default function AppViews({
                             ))}
                           </div>
                         ) : (
-                          <p className="text-muted">No work samples uploaded yet. {workerProfileEditing && "Click the Add Sample button to add one."}</p>
+                          <p className="text-muted">No work samples uploaded yet. {workerPortfolioEditing && "Click the Add Sample button to add one."}</p>
                         )}
                       </div>
                     </div>
@@ -3384,11 +3429,18 @@ export default function AppViews({
                     </div>
                   </div>
                 </div>
-                <div className="row g-3 mt-2">
-                  <div className="col-12">
+                </div>
+                )}
+                {workerProfileTab === "password" && (
+                  <div
+                    role="tabpanel"
+                    id="worker-profile-panel-password"
+                    aria-labelledby="worker-profile-tab-password"
+                    className="profile-password-panel"
+                  >
                     <ChangePasswordCard className="card border-0 shadow-sm" headClassName="card-header bg-success text-white fw-bold" />
                   </div>
-                </div>
+                )}
                 {workerPhotoModalOpen && workerMiniPhoto && (
                   <div
                     className="profile-photo-modal-backdrop"
@@ -5441,7 +5493,24 @@ export default function AppViews({
               <div className="worker-content">
                 <main className="profile-container" aria-labelledby="household-profile-title">
                   <h1 className="household-profile-page-title">My Profile</h1>
-                  <div className="profile-row">
+                  <ProfileTabs
+                    label="Profile sections"
+                    idPrefix="household-profile"
+                    value={householdProfileTab}
+                    onChange={setHouseholdProfileTab}
+                    tabs={[
+                      { id: "profile", label: "Profile" },
+                      { id: "feedback", label: "Feedback & Reviews" },
+                      { id: "password", label: "Password" },
+                    ]}
+                  />
+                  {householdProfileTab === "profile" && (
+                  <div
+                    className="profile-row"
+                    role="tabpanel"
+                    id="household-profile-panel-profile"
+                    aria-labelledby="household-profile-tab-profile"
+                  >
                   <section className="profile-column" aria-labelledby="household-profile-title">
                     <div className="profile-card profile-summary-card">
                       <header className="profile-card-header" id="household-profile-title">My Profile</header>
@@ -5600,7 +5669,14 @@ export default function AppViews({
                       </form>
                   </section>
                   </div>
-                <section className="profile-footer" aria-labelledby="household-profile-feedback-title">
+                  )}
+                {householdProfileTab === "feedback" && (
+                <section
+                  className="profile-footer"
+                  role="tabpanel"
+                  id="household-profile-panel-feedback"
+                  aria-labelledby="household-profile-tab-feedback"
+                >
                   <h2 className="household-profile-feedback-title" id="household-profile-feedback-title">Feedback & Rating</h2>
                   <div className="profile-feedback-grid">
                     <article className="profile-feedback-card">
@@ -5673,7 +5749,17 @@ export default function AppViews({
                     </article>
                   </div>
                 </section>
-                <ChangePasswordCard className="profile-card household-change-password" headClassName="profile-card-header" />
+                )}
+                {householdProfileTab === "password" && (
+                  <div
+                    role="tabpanel"
+                    id="household-profile-panel-password"
+                    aria-labelledby="household-profile-tab-password"
+                    className="profile-password-panel"
+                  >
+                    <ChangePasswordCard className="profile-card household-change-password" headClassName="profile-card-header" />
+                  </div>
+                )}
                 </main>
               </div>
             </div>

@@ -28,6 +28,7 @@ import '../../../shared/widgets/persistent_action_bar.dart';
 import '../../../shared/widgets/ai_match_breakdown.dart';
 import '../../../shared/widgets/authenticated_image.dart';
 import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/profile_tabs.dart';
 import '../../../shared/widgets/rate_review_dialog.dart';
 import '../../../shared/widgets/rate_skills_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
@@ -4562,10 +4563,7 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
                                 worker,
                               )?.status.toLowerCase() ==
                               'hire_requested',
-                          requestBlockedLabel: _inviteBlockedLabel(
-                            job,
-                            worker,
-                          ),
+                          requestBlockedLabel: _inviteBlockedLabel(job, worker),
                           onViewProfile: () => _showWorkerMatchProfile(
                             context,
                             repository: repository,
@@ -5125,6 +5123,7 @@ class _ProfileFormState extends State<_ProfileForm> {
       : LatLng(widget.profile.latitude!, widget.profile.longitude!);
   String? _photoPath;
   bool _saving = false;
+  int _tab = 0;
 
   Future<void> _locateProfilePin() async {
     try {
@@ -5225,189 +5224,203 @@ class _ProfileFormState extends State<_ProfileForm> {
           ),
         ),
         const SizedBox(height: 14),
-        _ProfilePanel(
-          title: 'My Profile',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Column(
-                  children: [
-                    _ProfileAvatar(
-                      profile: widget.profile,
-                      localPhotoPath: _photoPath,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      widget.profile.fullName,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontFamily: GawaGoColors.fontHeading,
-                        color: GawaGoColors.ink,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
+        ProfileTabs(
+          labels: const ['Profile', 'Feedback & Reviews', 'Password'],
+          selected: _tab,
+          onChanged: (index) => setState(() => _tab = index),
+        ),
+        const SizedBox(height: 16),
+        if (_tab == 0) ...[
+          _ProfilePanel(
+            title: 'My Profile',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Column(
+                    children: [
+                      _ProfileAvatar(
+                        profile: widget.profile,
+                        localPhotoPath: _photoPath,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        widget.profile.fullName,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontFamily: GawaGoColors.fontHeading,
+                          color: GawaGoColors.ink,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '@${widget.profile.username}',
+                        style: const TextStyle(
+                          color: GawaGoColors.textMuted,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          const _ProfileChip(label: 'Household'),
+                          _ProfileChip(
+                            label: formatStatus(
+                              widget.profile.verificationStatus,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                _ProfileInfoLine(label: 'Account Type', value: 'Household'),
+                _ProfileInfoLine(
+                  label: 'Barangay',
+                  value: _barangay ?? _profileBarangay(widget.profile),
+                ),
+                _ProfileInfoLine(
+                  label: 'Phone Number',
+                  value: widget.profile.phone.isEmpty
+                      ? 'Not set'
+                      : widget.profile.phone,
+                ),
+                _ProfileInfoLine(
+                  label: 'Email',
+                  value: widget.profile.email.isEmpty
+                      ? 'Not set'
+                      : widget.profile.email,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _ProfilePanel(
+            title: 'Edit Profile Information',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Profile Photo',
+                  style: TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _FileChooserRow(
+                  filename: _photoPath == null
+                      ? 'No file chosen'
+                      : _photoPath!.split(RegExp(r'[/\\]')).last,
+                  onChoose: _pickPhoto,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Choose a clear photo from your phone.',
+                  style: TextStyle(color: GawaGoColors.ink, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                _ProfileTextField(label: 'First Name', controller: _first),
+                _ProfileTextField(label: 'Last Name', controller: _last),
+                _ProfileTextField(
+                  label: 'Username',
+                  controller: _username,
+                  enabled: false,
+                ),
+                _ProfileTextField(label: 'Email', controller: _email),
+                _ProfileTextField(label: 'Phone Number', controller: _phone),
+                _ProfileDropdownField(
+                  label: 'Barangay',
+                  value: _barangay,
+                  hint: '---Select Barangay---',
+                  items: gawagoBarangays,
+                  onChanged: (value) => setState(() => _barangay = value),
+                ),
+                _ProfileTextField(
+                  label: 'Street / House No.',
+                  controller: _street,
+                  hint: 'QZ, Philippines',
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Exact Household Location',
+                  style: TextStyle(
+                    color: GawaGoColors.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                _PostJobMapPanel(
+                  pin: _profilePin,
+                  profilePin: null,
+                  onSetPin: (point) => setState(() => _profilePin = point),
+                  onLocate: _locateProfilePin,
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: GawaGoColors.primary,
+                      foregroundColor: GawaGoColors.onPrimary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      textStyle: const TextStyle(
+                        fontFamily: GawaGoColors.fontBody,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
                         letterSpacing: 0,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '@${widget.profile.username}',
-                      style: const TextStyle(
-                        color: GawaGoColors.textMuted,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        const _ProfileChip(label: 'Household'),
-                        _ProfileChip(
-                          label: formatStatus(
-                            widget.profile.verificationStatus,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-              _ProfileInfoLine(label: 'Account Type', value: 'Household'),
-              _ProfileInfoLine(
-                label: 'Barangay',
-                value: _barangay ?? _profileBarangay(widget.profile),
-              ),
-              _ProfileInfoLine(
-                label: 'Phone Number',
-                value: widget.profile.phone.isEmpty
-                    ? 'Not set'
-                    : widget.profile.phone,
-              ),
-              _ProfileInfoLine(
-                label: 'Email',
-                value: widget.profile.email.isEmpty
-                    ? 'Not set'
-                    : widget.profile.email,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 18),
-        _ProfilePanel(
-          title: 'Edit Profile Information',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Profile Photo',
-                style: TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 10),
-              _FileChooserRow(
-                filename: _photoPath == null
-                    ? 'No file chosen'
-                    : _photoPath!.split(RegExp(r'[/\\]')).last,
-                onChoose: _pickPhoto,
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Choose a clear photo from your phone.',
-                style: TextStyle(color: GawaGoColors.ink, fontSize: 13),
-              ),
-              const SizedBox(height: 16),
-              _ProfileTextField(label: 'First Name', controller: _first),
-              _ProfileTextField(label: 'Last Name', controller: _last),
-              _ProfileTextField(
-                label: 'Username',
-                controller: _username,
-                enabled: false,
-              ),
-              _ProfileTextField(label: 'Email', controller: _email),
-              _ProfileTextField(label: 'Phone Number', controller: _phone),
-              _ProfileDropdownField(
-                label: 'Barangay',
-                value: _barangay,
-                hint: '---Select Barangay---',
-                items: gawagoBarangays,
-                onChanged: (value) => setState(() => _barangay = value),
-              ),
-              _ProfileTextField(
-                label: 'Street / House No.',
-                controller: _street,
-                hint: 'QZ, Philippines',
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Exact Household Location',
-                style: TextStyle(
-                  color: GawaGoColors.ink,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 7),
-              _PostJobMapPanel(
-                pin: _profilePin,
-                profilePin: null,
-                onSetPin: (point) => setState(() => _profilePin = point),
-                onLocate: _locateProfilePin,
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: FilledButton(
-                  onPressed: _saving ? null : _save,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: GawaGoColors.primary,
-                    foregroundColor: GawaGoColors.onPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    textStyle: const TextStyle(
-                      fontFamily: GawaGoColors.fontBody,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
+                    child: Text(_saving ? 'Saving...' : 'Edit Profile'),
                   ),
-                  child: Text(_saving ? 'Saving...' : 'Edit Profile'),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 24),
-        const Text(
-          'Feedback & Rating',
-          style: TextStyle(
-            fontFamily: GawaGoColors.fontHeading,
-            color: GawaGoColors.ink,
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
+        ],
+        if (_tab == 1) ...[
+          const Text(
+            'Feedback & Rating',
+            style: TextStyle(
+              fontFamily: GawaGoColors.fontHeading,
+              color: GawaGoColors.ink,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
           ),
-        ),
-        const SizedBox(height: 14),
-        _ReviewsPanel(
-          title: 'Feedback from Workers',
-          reviews: latestReceived,
-          emptyMessage: 'No feedback from workers yet.',
-        ),
-        const SizedBox(height: 18),
-        _ReviewsPanel(
-          title: 'Reviews You Submitted',
-          reviews: latestGiven,
-          emptyMessage: 'No submitted reviews yet.',
-        ),
+          const SizedBox(height: 14),
+          _ReviewsPanel(
+            title: 'Feedback from Workers',
+            reviews: latestReceived,
+            emptyMessage: 'No feedback from workers yet.',
+          ),
+          const SizedBox(height: 18),
+          _ReviewsPanel(
+            title: 'Reviews You Submitted',
+            reviews: latestGiven,
+            emptyMessage: 'No submitted reviews yet.',
+          ),
+        ],
+        if (_tab == 2)
+          const ProfileSection(
+            title: 'Change Password',
+            child: ChangePasswordForm(),
+          ),
       ],
     );
   }

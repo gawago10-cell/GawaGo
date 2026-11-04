@@ -18,14 +18,37 @@ Future<void> showChangePasswordDialog(BuildContext context) async {
   }
 }
 
-class ChangePasswordDialog extends StatefulWidget {
+class ChangePasswordDialog extends StatelessWidget {
   const ChangePasswordDialog({super.key});
 
   @override
-  State<ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change Password'),
+      content: SingleChildScrollView(
+        child: ChangePasswordForm(
+          onCancel: () => Navigator.pop(context),
+          onChanged: () => Navigator.pop(context, true),
+        ),
+      ),
+    );
+  }
 }
 
-class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
+/// The password fields and buttons, used in the dialog and in the Password
+/// tab of My Profile. With no [onChanged], it confirms with a snackbar and
+/// clears itself.
+class ChangePasswordForm extends StatefulWidget {
+  const ChangePasswordForm({super.key, this.onChanged, this.onCancel});
+
+  final VoidCallback? onChanged;
+  final VoidCallback? onCancel;
+
+  @override
+  State<ChangePasswordForm> createState() => _ChangePasswordFormState();
+}
+
+class _ChangePasswordFormState extends State<ChangePasswordForm> {
   final _current = TextEditingController();
   final _next = TextEditingController();
   final _confirm = TextEditingController();
@@ -64,7 +87,17 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
         currentPassword: _current.text,
         newPassword: _next.text,
       );
-      if (mounted) Navigator.pop(context, true);
+      if (!mounted) return;
+      if (widget.onChanged != null) {
+        widget.onChanged!();
+      } else {
+        _current.clear();
+        _next.clear();
+        _confirm.clear();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Your password was updated.')),
+        );
+      }
     } catch (error) {
       if (mounted) setState(() => _error = friendlyApiError(error));
     } finally {
@@ -74,52 +107,53 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Change Password'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: _current,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Current password'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _next,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: 'New password',
+            hintText: 'At least 8 characters',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _confirm,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Confirm new password'),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ],
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            TextField(
-              controller: _current,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Current password'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _next,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'New password',
-                hintText: 'At least 8 characters',
+            if (widget.onCancel != null) ...[
+              TextButton(
+                onPressed: _saving ? null : widget.onCancel,
+                child: const Text('Cancel'),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _confirm,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Confirm new password',
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+              const SizedBox(width: 8),
             ],
+            FilledButton(
+              onPressed: _saving ? null : _submit,
+              child: Text(_saving ? 'Updating…' : 'Update Password'),
+            ),
           ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _submit,
-          child: Text(_saving ? 'Updating…' : 'Update Password'),
         ),
       ],
     );
