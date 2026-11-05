@@ -353,6 +353,7 @@ class WorkerJobHistoryEntry {
     required this.jobStartDate,
     required this.jobEndDate,
     this.skillRatings = const [],
+    this.householdRating,
   });
 
   final int id;
@@ -364,6 +365,10 @@ class WorkerJobHistoryEntry {
   final String jobStartDate;
   final String jobEndDate;
   final List<JobSkillRating> skillRatings;
+
+  /// The household's own rating of this worker for the job, shown as the
+  /// job's overall -- the same number on the worker's own history.
+  final JobHouseholdRating? householdRating;
 
   /// Prefers the confirmed completion date; older records predate that field
   /// being set, so fall back to the scheduled period and then to nothing
@@ -396,6 +401,7 @@ class WorkerJobHistoryEntry {
       jobStartDate: _text(json['job_start_date'] ?? ''),
       jobEndDate: _text(json['job_end_date'] ?? ''),
       skillRatings: JobSkillRating.listFromJson(json['skill_ratings']),
+      householdRating: JobHouseholdRating.fromJson(json['household_rating']),
     );
   }
 }

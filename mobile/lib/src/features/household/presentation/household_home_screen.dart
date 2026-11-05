@@ -26,8 +26,8 @@ import '../../../shared/widgets/notification_badge.dart';
 import '../../../shared/widgets/my_complaints_view.dart';
 import '../../../shared/widgets/persistent_action_bar.dart';
 import '../../../shared/widgets/ai_match_breakdown.dart';
-import '../../../shared/widgets/authenticated_image.dart';
 import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/portfolio_pieces.dart';
 import '../../../shared/widgets/profile_tabs.dart';
 import '../../../shared/widgets/rate_review_dialog.dart';
 import '../../../shared/widgets/rate_skills_dialog.dart';
@@ -8197,260 +8197,6 @@ class _NeutralChip extends StatelessWidget {
   }
 }
 
-class _ReadOnlyCertificationTile extends StatelessWidget {
-  const _ReadOnlyCertificationTile({required this.certificate});
-
-  final WorkerCertificate certificate;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: GawaGoColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: GawaGoColors.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // The file route needs the bearer token, which Image.network
-          // can't send; PDFs get a pointer to the website instead.
-          if (certificate.fileUrl.isNotEmpty && certificate.isImage)
-            AuthenticatedImage(url: certificate.fileUrl, height: 160)
-          else if (certificate.fileUrl.isNotEmpty)
-            CertificateFileNote(isPdf: certificate.isPdf),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  certificate.certificateName,
-                  style: const TextStyle(
-                    color: GawaGoColors.ink,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    if (certificate.certificateTypeLabel.isNotEmpty)
-                      SoftGreenPill(
-                        label: certificate.certificateTypeLabel,
-                        muted: true,
-                      ),
-                    SoftGreenPill(
-                      label: certificate.isVerified
-                          ? 'Verified'
-                          : formatStatus(certificate.verificationStatus),
-                      muted: !certificate.isVerified,
-                    ),
-                  ],
-                ),
-                if (certificate.issuer.isNotEmpty) ...[
-                  const SizedBox(height: 7),
-                  Text(
-                    'Issued by ${certificate.issuer}',
-                    style: const TextStyle(
-                      color: GawaGoColors.textMuted,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ReadOnlyWorkSampleTile extends StatelessWidget {
-  const _ReadOnlyWorkSampleTile({required this.sample});
-
-  final WorkSample sample;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: GawaGoColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: GawaGoColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            sample.title.isEmpty ? 'Untitled sample' : sample.title,
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 15.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _WorkSampleThumb(
-                  url: sample.beforeOrFallback,
-                  caption: 'Before',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _WorkSampleThumb(
-                  url: sample.afterImageUrl,
-                  caption: 'After',
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkSampleThumb extends StatelessWidget {
-  const _WorkSampleThumb({required this.url, required this.caption});
-
-  final String url;
-  final String caption;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            height: 110,
-            width: double.infinity,
-            child: url.isEmpty
-                ? Container(color: GawaGoColors.border)
-                : Image.network(
-                    url,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        Container(color: GawaGoColors.border),
-                  ),
-          ),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          caption,
-          style: const TextStyle(
-            color: GawaGoColors.textMuted,
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _EmploymentHistoryRow extends StatelessWidget {
-  const _EmploymentHistoryRow({required this.entry});
-
-  final WorkerJobHistoryEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    final period = entry.periodLabel;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: GawaGoColors.leafTint,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(
-              Icons.work_outline,
-              size: 20,
-              color: GawaGoColors.deepGreen,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.title.isEmpty ? entry.jobType : entry.title,
-                  style: const TextStyle(
-                    color: GawaGoColors.ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                    height: 1.25,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  entry.householdName.isEmpty
-                      ? 'Household'
-                      : entry.householdName,
-                  style: const TextStyle(
-                    color: GawaGoColors.textMuted,
-                    fontSize: 13.5,
-                  ),
-                ),
-                if (entry.locationLabel.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    entry.locationLabel,
-                    style: const TextStyle(
-                      color: GawaGoColors.textMuted,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ],
-                if (period.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    period,
-                    style: const TextStyle(
-                      color: GawaGoColors.textFaint,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ],
-                JobSkillRatingChips(
-                  ratings: [
-                    for (final rating in entry.skillRatings)
-                      MapEntry(rating.skillName, rating.rating),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// Shown on an applicant's profile until they are hired for this job: the
 /// road distance only, since the API withholds their exact location and
 /// route before then.
@@ -8567,6 +8313,46 @@ class _RateGuideHintState extends State<_RateGuideHint> {
         _label,
         style: const TextStyle(fontSize: 12.5, color: GawaGoColors.textMuted),
       ),
+    );
+  }
+}
+
+class _ReadOnlyCertificationTile extends StatelessWidget {
+  const _ReadOnlyCertificationTile({required this.certificate});
+
+  final WorkerCertificate certificate;
+
+  @override
+  Widget build(BuildContext context) {
+    return PortfolioCertificateCard(certificate: certificate);
+  }
+}
+
+class _ReadOnlyWorkSampleTile extends StatelessWidget {
+  const _ReadOnlyWorkSampleTile({required this.sample});
+
+  final WorkSample sample;
+
+  @override
+  Widget build(BuildContext context) {
+    return PortfolioWorkSampleCard(sample: sample);
+  }
+}
+
+class _EmploymentHistoryRow extends StatelessWidget {
+  const _EmploymentHistoryRow({required this.entry});
+
+  final WorkerJobHistoryEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    return EmploymentHistoryCard(
+      title: entry.title.isEmpty ? entry.jobType : entry.title,
+      householdName: entry.householdName,
+      locationLabel: entry.locationLabel,
+      completedAt: entry.completedAt,
+      skillRatings: entry.skillRatings,
+      householdRating: entry.householdRating,
     );
   }
 }

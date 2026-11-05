@@ -24,8 +24,8 @@ import '../../../shared/widgets/location_route_map.dart';
 import '../../../shared/widgets/my_complaints_view.dart';
 import '../../../shared/widgets/notification_badge.dart';
 import '../../../shared/widgets/ai_match_breakdown.dart';
-import '../../../shared/widgets/authenticated_image.dart';
 import '../../../shared/widgets/profile_section.dart';
+import '../../../shared/widgets/portfolio_pieces.dart';
 import '../../../shared/widgets/profile_tabs.dart';
 import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
@@ -4894,296 +4894,6 @@ class _ProfileField extends StatelessWidget {
   }
 }
 
-class _CertificationTile extends StatelessWidget {
-  const _CertificationTile({
-    required this.certificate,
-    required this.editing,
-    required this.onDelete,
-  });
-
-  final WorkerCertificate certificate;
-  final bool editing;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: GawaGoColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // The file route needs the bearer token, which Image.network
-          // can't send; PDFs get a pointer to the website instead.
-          if (certificate.fileUrl.isNotEmpty && certificate.isImage)
-            AuthenticatedImage(url: certificate.fileUrl, height: 170)
-          else if (certificate.fileUrl.isNotEmpty)
-            CertificateFileNote(isPdf: certificate.isPdf),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        certificate.certificateName,
-                        style: const TextStyle(
-                          color: GawaGoColors.ink,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          if (certificate.certificateTypeLabel.isNotEmpty)
-                            SoftGreenPill(
-                              label: certificate.certificateTypeLabel,
-                            ),
-                          SoftGreenPill(
-                            label: certificate.isVerified
-                                ? 'Verified'
-                                : formatStatus(certificate.verificationStatus),
-                            muted: !certificate.isVerified,
-                          ),
-                        ],
-                      ),
-                      if (certificate.issuer.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'Issued by ${certificate.issuer}',
-                          style: const TextStyle(
-                            color: GawaGoColors.textMuted,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
-                      if (certificate.verificationStatus == 'rejected' &&
-                          certificate.verificationNotes.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'Reason: ${certificate.verificationNotes}',
-                          style: const TextStyle(
-                            color: GawaGoColors.textMuted,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (editing)
-                  IconButton(
-                    tooltip: 'Remove certificate',
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkSampleTile extends StatelessWidget {
-  const _WorkSampleTile({
-    required this.sample,
-    required this.editing,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final WorkSample sample;
-  final bool editing;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: GawaGoColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            sample.title.isEmpty ? 'Untitled sample' : sample.title,
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _WorkSamplePhoto(
-                  url: sample.beforeOrFallback,
-                  caption: 'Before',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _WorkSamplePhoto(
-                  url: sample.afterImageUrl,
-                  caption: 'After',
-                ),
-              ),
-            ],
-          ),
-          if (editing) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onEdit,
-                    child: const Text('Edit'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onDelete,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                    ),
-                    child: const Text('Delete'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkSamplePhoto extends StatelessWidget {
-  const _WorkSamplePhoto({required this.url, required this.caption});
-
-  final String url;
-  final String caption;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            height: 110,
-            width: double.infinity,
-            child: url.isEmpty
-                ? Container(color: GawaGoColors.border)
-                : Image.network(
-                    url,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        Container(color: GawaGoColors.border),
-                  ),
-          ),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          caption,
-          style: const TextStyle(
-            color: GawaGoColors.textMuted,
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _EmploymentHistoryTile extends StatelessWidget {
-  const _EmploymentHistoryTile({required this.job});
-
-  final WorkerJob job;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(
-        color: GawaGoColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            job.title.isEmpty ? job.jobType : job.title,
-            style: const TextStyle(
-              color: GawaGoColors.ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            job.householdName.isEmpty ? 'Household' : job.householdName,
-            style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
-          ),
-          if (job.locationLabel.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              job.locationLabel,
-              style: const TextStyle(
-                color: GawaGoColors.textMuted,
-                fontSize: 13,
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              if (job.jobType.isNotEmpty) SoftGreenPill(label: job.jobType),
-              SoftGreenPill(
-                label:
-                    'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}',
-                muted: true,
-              ),
-            ],
-          ),
-          JobSkillRatingChips(
-            ratings: [
-              for (final rating in job.skillRatings)
-                MapEntry(rating.skillName, rating.rating),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _CertificationDraft {
   const _CertificationDraft({
     required this.name,
@@ -6687,3 +6397,91 @@ String _dateValue(DateTime value) =>
 
 double _coordinateForApi(double value) =>
     double.parse(value.toStringAsFixed(7));
+
+class _CertificationTile extends StatelessWidget {
+  const _CertificationTile({
+    required this.certificate,
+    required this.editing,
+    required this.onDelete,
+  });
+
+  final WorkerCertificate certificate;
+  final bool editing;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return PortfolioCertificateCard(
+      certificate: certificate,
+      showRejectReason: true,
+      trailing: editing
+          ? IconButton(
+              tooltip: 'Remove certificate',
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
+            )
+          : null,
+    );
+  }
+}
+
+class _WorkSampleTile extends StatelessWidget {
+  const _WorkSampleTile({
+    required this.sample,
+    required this.editing,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final WorkSample sample;
+  final bool editing;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return PortfolioWorkSampleCard(
+      sample: sample,
+      actions: !editing
+          ? null
+          : Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onEdit,
+                    child: const Text('Edit'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onDelete,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                    ),
+                    child: const Text('Delete'),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _EmploymentHistoryTile extends StatelessWidget {
+  const _EmploymentHistoryTile({required this.job});
+
+  final WorkerJob job;
+
+  @override
+  Widget build(BuildContext context) {
+    return EmploymentHistoryCard(
+      title: job.title.isEmpty ? job.jobType : job.title,
+      householdName: job.householdName,
+      locationLabel: job.locationLabel,
+      completedAt: job.completedAt,
+      skillRatings: job.skillRatings,
+      householdRating: job.householdRating,
+    );
+  }
+}

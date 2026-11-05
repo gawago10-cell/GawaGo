@@ -220,6 +220,9 @@ export async function fetchWorkerEmploymentHistory(workerId) {
     location: job.location_label || "",
     completed_at: job.completed_at,
     skill_ratings: job.skill_ratings || [],
+    // The household's own rating of this worker for the job; the history
+    // shows it as the job's overall so both sides read the same number.
+    household_rating: job.household_rating || null,
   }));
 }
 

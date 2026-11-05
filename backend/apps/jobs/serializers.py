@@ -477,6 +477,42 @@ class JobPostingSerializer(serializers.ModelSerializer):
     distance_label = serializers.SerializerMethodField()
     rate_type_label = serializers.CharField(source="get_rate_type_display", read_only=True)
     skill_ratings = serializers.SerializerMethodField()
+    household_rating = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _history_worker_id(serializer):
+        params = getattr(serializer.context.get("request"), "query_params", None) or {}
+        worker_id = params.get("worker")
+        return int(worker_id) if worker_id and str(worker_id).isdigit() else None
+
+    def get_household_rating(self, obj):
+        """The overall rating the household gave this worker for this job --
+        the same review that feeds the worker's reputation and that the
+        household sees on its own My Jobs -- so the employment history can't
+        show "No ratings yet" for a job the household rated. Only filled for
+        a worker's history (?worker=<id>). The four metrics come along when
+        the household gave them; is_default marks the automatic 3.5."""
+        worker_id = self._history_worker_id(self)
+        if worker_id is None:
+            return None
+        review = (
+            Review.objects.filter(job=obj, target_id=worker_id, author_role="household", target_role="worker")
+            .order_by("-created_at")
+            .first()
+        )
+        if review is None or review.rating is None:
+            return None
+        metrics = [
+            {"label": label, "value": value}
+            for label, value in (
+                ("Quality of work", review.quality_of_work),
+                ("Punctuality", review.punctuality),
+                ("Communication", review.communication),
+                ("Professionalism", review.professionalism),
+            )
+            if value is not None
+        ]
+        return {"rating": float(review.rating), "is_default": review.is_system_generated, "metrics": metrics}
 
     def get_skill_ratings(self, obj):
         """The per-skill ratings one worker received on this job, for their
@@ -558,6 +594,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "route_points",
             "distance_label",
             "skill_ratings",
+            "household_rating",
         ]
         read_only_fields = [
             "id",
@@ -572,6 +609,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "route_points",
             "distance_label",
             "skill_ratings",
+            "household_rating",
         ]
 
     def validate_service_rate(self, value):

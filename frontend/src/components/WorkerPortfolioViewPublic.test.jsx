@@ -56,7 +56,8 @@ describe("WorkerPortfolioViewPublic", () => {
   it("lists the skill ratings received on each completed job", async () => {
     render(<WorkerPortfolioViewPublic workerId={3} workerName="Ana" />);
 
-    expect(await screen.findByText("House Cleaning:")).toBeTruthy();
-    expect(screen.getByText("4.5 ★")).toBeTruthy();
+    // One bar per rated skill, labelled with the skill and its score.
+    expect(await screen.findByText("House Cleaning")).toBeTruthy();
+    expect(screen.getByText("4.5")).toBeTruthy();
   });
 });

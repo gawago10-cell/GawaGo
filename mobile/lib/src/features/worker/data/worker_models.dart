@@ -178,6 +178,8 @@ class WorkerJob {
     required this.canReview,
     required this.application,
     this.skillRatings = const [],
+    this.householdRating,
+    this.completedAt = '',
   });
 
   final int id;
@@ -237,6 +239,11 @@ class WorkerJob {
   final WorkerApplication? application;
   final List<JobSkillRating> skillRatings;
 
+  /// The household's own rating of this worker for the job (employment
+  /// history only); the history shows it as the job's overall.
+  final JobHouseholdRating? householdRating;
+  final String completedAt;
+
   /// Whether Find Jobs lists it: the worker can apply, another job of theirs
   /// holds them from it (the card says why), or they applied and are still
   /// waiting (the card says "Applied").
@@ -293,6 +300,42 @@ class WorkerJob {
           ? WorkerApplication.fromJson(application)
           : null,
       skillRatings: JobSkillRating.listFromJson(json['skill_ratings']),
+      householdRating: JobHouseholdRating.fromJson(json['household_rating']),
+      completedAt: _text(json['completed_at'] ?? ''),
+    );
+  }
+}
+
+/// The overall rating a household gave a worker for one completed job, with
+/// the metric ratings when the household gave them; only sent on a worker's
+/// employment-history list (`/jobs/?worker=<id>`). isDefault marks the
+/// automatic 3.5 given when the household never rated.
+class JobHouseholdRating {
+  const JobHouseholdRating({
+    required this.rating,
+    required this.isDefault,
+    required this.metrics,
+  });
+
+  final double rating;
+  final bool isDefault;
+  final List<MapEntry<String, double>> metrics;
+
+  static JobHouseholdRating? fromJson(dynamic value) {
+    if (value is! Map) return null;
+    final rating = _number(value['rating']);
+    if (rating == null) return null;
+    return JobHouseholdRating(
+      rating: rating,
+      isDefault: value['is_default'] == true,
+      metrics: _list(value['metrics'])
+          .map(_map)
+          .map(
+            (item) =>
+                MapEntry(_text(item['label']), _number(item['value']) ?? 0),
+          )
+          .where((entry) => entry.key.isNotEmpty)
+          .toList(),
     );
   }
 }

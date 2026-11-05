@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/apiClient";
 import { readResponseData } from "../utils/apiUtils";
 import { fetchWorkerEmploymentHistory } from "../services/backendDataService";
+import { CertificateCard, EmploymentHistoryList, SkillCard, WorkSampleCard } from "./PortfolioSections";
 
 export default function WorkerPortfolioViewPublic({
   workerId,
@@ -315,117 +316,75 @@ export default function WorkerPortfolioViewPublic({
         </div>
       )}
 
-      {/* Skills */}
+      {/* Skills, certifications, work samples and job history use the same
+          pieces as the worker's own Skills & Portfolio tab, so both sides
+          see the same levels, certificate details and job ratings. */}
       {skills.length > 0 && (
         <div className="portfolio-section-public">
           <h3 className="section-title-public">Skills</h3>
-          <div className="skill-grid">
+          <div className="pf-grid">
             {skills.map((skill) => (
-              <div key={skill.id} className="skill-card-public">
-                <div className="skill-name-public">{skill.skill_name}</div>
-                {skill.proficiency && <div className="skill-level-badge">{skill.proficiency}</div>}
-                {skill.average_rating ? (
-                  <div className="skill-rating-display">
-                    <span>★</span>
-                    {/* DRF serializes DecimalField as a string, e.g. "5.00" */}
-                    <span>{Number(skill.average_rating).toFixed(1)}</span>
-                    <span className="skill-rating-count">({skill.rating_count})</span>
-                  </div>
-                ) : (
-                  <div className="skill-rating-count">Not yet rated</div>
-                )}
-              </div>
+              <SkillCard
+                key={skill.id}
+                name={skill.skill_name}
+                proficiency={skill.proficiency || ""}
+                averageRating={skill.average_rating ?? null}
+                ratingCount={skill.rating_count || 0}
+              />
             ))}
           </div>
         </div>
       )}
 
-      {/* Work Samples */}
-      {portfolioItems.length > 0 && (
-        <div className="portfolio-section-public">
-          <h3 className="section-title-public">Work Samples</h3>
-          <div className="gallery-grid">
-            {portfolioItems.map((item) => {
-              const openImage = (url) => {
-                setSelectedImage(url);
-                setShowGallery(true);
-              };
-              if (item.before_image_url && item.after_image_url) {
-                return (
-                  <div key={item.id} className="gallery-pair">
-                    <div className="gallery-item" onClick={() => openImage(item.before_image_url)}>
-                      <img src={item.before_image_url} alt={`${item.title || "Work sample"} (before)`} />
-                      <span className="gallery-tag">Before</span>
-                    </div>
-                    <div className="gallery-item" onClick={() => openImage(item.after_image_url)}>
-                      <img src={item.after_image_url} alt={`${item.title || "Work sample"} (after)`} />
-                      <span className="gallery-tag after">After</span>
-                    </div>
-                  </div>
-                );
-              }
-              const imageUrl = item.image_url || item.after_image_url || item.before_image_url;
-              if (!imageUrl) return null;
-              return (
-                <div key={item.id} className="gallery-item" onClick={() => openImage(imageUrl)}>
-                  <img src={imageUrl} alt={item.title} />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Certifications */}
       {certifications.length > 0 && (
         <div className="portfolio-section-public">
           <h3 className="section-title-public">Certifications</h3>
-          <div>
+          <div className="pf-cert-list">
             {certifications.map((cert) => (
-              <div key={cert.id} className="cert-item-public">
-                <div className="cert-name">{cert.certificate_name}</div>
-                <div className="cert-issuer">{cert.issuer}</div>
-                {cert.issue_date && <div className="cert-date">Issued {cert.issue_date}</div>}
-                {cert.is_verified && (
-                  <div className="cert-badge">✓ Verified</div>
-                )}
-              </div>
+              <CertificateCard
+                key={cert.id}
+                cert={{
+                  name: cert.certificate_name || "",
+                  issuer: cert.issuer || "",
+                  issueDate: cert.issue_date || "",
+                  expiryDate: cert.expiry_date || "",
+                  verificationStatus: cert.verification_status || "pending",
+                  isVerified: Boolean(cert.is_verified),
+                  certificatePreview: cert.certificate_file_url || "",
+                  fileType: cert.certificate_file_type || "",
+                }}
+              />
             ))}
           </div>
         </div>
       )}
 
-      {/* Employment History */}
+      {portfolioItems.length > 0 && (
+        <div className="portfolio-section-public">
+          <h3 className="section-title-public">Work Samples</h3>
+          <div className="pf-sample-list">
+            {portfolioItems.map((item) => (
+              <WorkSampleCard
+                key={item.id}
+                sample={{
+                  title: item.title || "",
+                  beforePreview: item.before_image_url || item.image_url || "",
+                  afterPreview: item.after_image_url || "",
+                }}
+                onOpen={(url) => {
+                  setSelectedImage(url);
+                  setShowGallery(true);
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {employmentHistory.length > 0 && (
         <div className="portfolio-section-public">
           <h3 className="section-title-public">Employment History</h3>
-          <div>
-            {employmentHistory.map((job) => {
-              const skillRatings = job.skill_ratings || [];
-              return (
-                <div key={job.id} className="cert-item-public">
-                  <div className="cert-name">{job.title}</div>
-                  <div className="cert-issuer">{job.household_name || "Household"}</div>
-                  <div className="cert-date">
-                    {job.location || ""}
-                    {job.completed_at ? ` • Completed ${new Date(job.completed_at).toLocaleDateString()}` : ""}
-                  </div>
-                  {skillRatings.length > 0 && (
-                    <div style={{ marginTop: "0.5rem" }}>
-                      {skillRatings.map((sr, idx) => (
-                        <div key={idx} className="d-flex justify-content-between mb-1">
-                          <small className="text-muted">{sr.skill_name || sr.skill}:</small>
-                          <small className="fw-bold">
-                            <span className="badge bg-success">{sr.rating} ★</span>
-                          </small>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <EmploymentHistoryList jobs={employmentHistory} />
         </div>
       )}
 

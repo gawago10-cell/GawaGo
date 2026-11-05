@@ -4,7 +4,7 @@ import { buildAdminNavItems } from "../utils/roles";
 import HomeView from "./HomeView";
 import ComplaintModal from "./ComplaintModal";
 import SkillRatingForm from "./SkillRatingForm";
-import { CertificateStatusBadge, CertificateThumb } from "./CertificatePreview";
+import { CertificateThumb } from "./CertificatePreview";
 import HouseholdJobMapPanel from "./HouseholdJobMapPanel";
 import JobImageUpload from "./JobImageUpload";
 import LocationDistanceMap from "./LocationDistanceMap";
@@ -21,6 +21,7 @@ import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
 import RateGuideHint from "./RateGuideHint";
 import ChangePasswordCard from "./ChangePasswordCard";
 import ProfileTabs from "./ProfileTabs";
+import { CertificateCard, EmploymentHistoryList, SkillCard, WorkSampleCard } from "./PortfolioSections";
 import { getBarangayFromBoundary } from "../utils/geofenceUtils";
 import { getBarangayCenter, getNearestBarangay } from "../utils/locationUtils";
 import {
@@ -3208,42 +3209,25 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="card-body">
-                        <div className="skills-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-                          {(workerProfileForm.skills || []).length > 0 ? (
-                            workerProfileForm.skills.map((skill) => (
-                              <div
-                                key={skill}
-                                className="p-3 rounded position-relative"
-                                style={{ backgroundColor: '#f8f9fa', borderLeft: '4px solid #4CAF50' }}
-                              >
-                                {workerPortfolioEditing && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-sm btn-danger position-absolute top-0 end-0 m-1 py-0 px-2"
-                                    aria-label={`Remove ${skill}`}
-                                    onClick={() => {
-                                      // Saved straight away, like the Add Skills dialog.
-                                      handleSaveWorkerSkills(
-                                        (workerProfileForm.skills || []).filter((item) => item !== skill),
-                                      ).catch((error) => window.alert(error.message));
-                                    }}
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                                <div className="fw-600">{skill}</div>
-                                {(() => {
-                                  const entry = (workerProfileForm.portfolioSkills || []).find(
-                                    (item) => item.name.toLowerCase() === String(skill).toLowerCase(),
-                                  );
-                                  if (!entry) {
-                                    return <span className="small text-muted d-block mt-2">Save your profile to set a level</span>;
-                                  }
-                                  return (
+                        {(workerProfileForm.skills || []).length > 0 ? (
+                          <div className="pf-grid">
+                            {workerProfileForm.skills.map((skill) => {
+                              const entry = (workerProfileForm.portfolioSkills || []).find(
+                                (item) => item.name.toLowerCase() === String(skill).toLowerCase(),
+                              );
+                              return (
+                                <SkillCard
+                                  key={skill}
+                                  name={skill}
+                                  proficiency={entry?.proficiency || ""}
+                                  averageRating={entry?.averageRating ?? null}
+                                  ratingCount={entry?.ratingCount || 0}
+                                >
+                                  {workerPortfolioEditing && (
                                     <>
-                                      {workerPortfolioEditing ? (
+                                      {entry && (
                                         <select
-                                          className="form-select form-select-sm mt-2"
+                                          className="form-select form-select-sm"
                                           aria-label={`Proficiency in ${skill}`}
                                           value={entry.proficiency}
                                           onChange={(event) => handleSetSkillProficiency(entry.id, event.target.value)}
@@ -3253,27 +3237,31 @@ export default function AppViews({
                                           <option value="intermediate">Intermediate</option>
                                           <option value="expert">Expert</option>
                                         </select>
-                                      ) : entry.proficiency ? (
-                                        <span className="badge bg-success mt-2 text-capitalize">{entry.proficiency}</span>
-                                      ) : (
-                                        <span className="small text-muted d-block mt-2">Level not set</span>
                                       )}
-                                      <span className="small text-muted d-block mt-1">
-                                        {entry.ratingCount
-                                          ? `★ ${Number(entry.averageRating).toFixed(1)} from ${entry.ratingCount} household rating${entry.ratingCount === 1 ? "" : "s"}`
-                                          : "Not yet rated"}
-                                      </span>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-outline-danger align-self-start"
+                                        aria-label={`Remove ${skill}`}
+                                        onClick={() => {
+                                          // Saved straight away, like the Add Skills dialog.
+                                          handleSaveWorkerSkills(
+                                            (workerProfileForm.skills || []).filter((item) => item !== skill),
+                                          ).catch((error) => window.alert(error.message));
+                                        }}
+                                      >
+                                        Remove
+                                      </button>
                                     </>
-                                  );
-                                })()}
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-muted">
-                              No skills added yet. {workerPortfolioEditing && "Click Edit Skills to add one."}
-                            </p>
-                          )}
-                        </div>
+                                  )}
+                                </SkillCard>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-muted mb-0">
+                            No skills added yet. {workerPortfolioEditing && "Click Edit Skills to add one."}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3287,32 +3275,26 @@ export default function AppViews({
                       </div>
                       <div className="card-body">
                         {(workerProfileForm.certifications || []).length > 0 ? (
-                          <div className="row g-3">
+                          <div className="pf-cert-list">
                             {workerProfileForm.certifications.map((cert, index) => (
-                              <div key={index} className="col-md-4">
-                                <div className="position-relative">
-                                  <CertificateThumb cert={cert} height="200px" />
-                                  <div className="position-absolute start-0 end-0 bottom-0 d-flex align-items-end justify-content-between p-2 rounded-bottom" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.75))' }}>
-                                    <div>
-                                      <p className="text-white mb-1 small fw-bold">{cert.name}</p>
-                                      <CertificateStatusBadge cert={cert} />
-                                      {cert.verificationStatus === "rejected" && cert.verificationNotes && (
-                                        <p className="text-white small mb-0 mt-1 cert-reject-reason">Reason: {cert.verificationNotes}</p>
-                                      )}
-                                    </div>
-                                    {workerPortfolioEditing && (
-                                      <div className="d-flex gap-1">
-                                        <button type="button" className="btn btn-sm btn-light" onClick={() => handleEditCertification(index)}>Edit</button>
-                                        <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteCertification(index)}>×</button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
+                              <CertificateCard
+                                key={cert.id || index}
+                                cert={cert}
+                                actions={
+                                  workerPortfolioEditing && (
+                                    <>
+                                      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => handleEditCertification(index)}>Edit</button>
+                                      <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteCertification(index)}>Delete</button>
+                                    </>
+                                  )
+                                }
+                              />
                             ))}
                           </div>
                         ) : (
-                          <p className="text-muted">No certifications added yet. {workerPortfolioEditing && "Click the Add Certificate button to add one."}</p>
+                          <p className="text-muted mb-0">
+                            No certifications added yet. {workerPortfolioEditing ? "Click Add Certificate to add one." : "Turn on editing to add a TESDA certificate or license."}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -3332,35 +3314,27 @@ export default function AppViews({
                       </div>
                       <div className="card-body">
                         {(workerProfileForm.workSamples || []).length > 0 ? (
-                          <div className="row g-3">
+                          <div className="pf-sample-list">
                             {workerProfileForm.workSamples.map((sample, index) => (
-                              <div key={index} className="col-md-6">
-                                <div className="card border-success h-100">
-                                  <div className="card-body p-2">
-                                    <h6 className="mb-2">{sample.title}</h6>
-                                    <div className="d-flex gap-2" style={{ height: '120px' }}>
-                                      <div className="flex-grow-1 position-relative" style={{ cursor: 'pointer' }} onClick={() => setViewingWorkSampleIndex(index)}>
-                                        <img src={sample.beforePreview} alt="Before" className="img-fluid rounded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                        <small className="position-absolute bottom-1 start-1 bg-dark text-white px-2 py-1 rounded">Before</small>
-                                      </div>
-                                      <div className="flex-grow-1 position-relative" style={{ cursor: 'pointer' }} onClick={() => setViewingWorkSampleIndex(index)}>
-                                        <img src={sample.afterPreview} alt="After" className="img-fluid rounded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                        <small className="position-absolute bottom-1 start-1 bg-success text-white px-2 py-1 rounded">After</small>
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {workerPortfolioEditing && (
-                                    <div className="card-footer bg-transparent border-top d-flex gap-2">
-                                      <button type="button" className="btn btn-sm btn-outline-secondary flex-grow-1" onClick={() => handleEditWorkSample(index)}>Edit</button>
-                                      <button type="button" className="btn btn-sm btn-outline-danger flex-grow-1" onClick={() => handleDeleteWorkSample(index)}>Delete</button>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
+                              <WorkSampleCard
+                                key={sample.id || index}
+                                sample={sample}
+                                onOpen={() => setViewingWorkSampleIndex(index)}
+                                actions={
+                                  workerPortfolioEditing && (
+                                    <>
+                                      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => handleEditWorkSample(index)}>Edit</button>
+                                      <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteWorkSample(index)}>Delete</button>
+                                    </>
+                                  )
+                                }
+                              />
                             ))}
                           </div>
                         ) : (
-                          <p className="text-muted">No work samples uploaded yet. {workerPortfolioEditing && "Click the Add Sample button to add one."}</p>
+                          <p className="text-muted mb-0">
+                            No work samples uploaded yet. {workerPortfolioEditing ? "Click Add Sample to add one." : "Turn on editing to add before-and-after photos of your work."}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -3372,54 +3346,9 @@ export default function AppViews({
                       <div className="card-header bg-success text-white fw-bold">Employment History</div>
                       <div className="card-body">
                         {(employmentHistory || []).length > 0 ? (
-                          <div className="list-group list-group-flush">
-                            {employmentHistory.map((job, index) => {
-                              const skillRatings = job.skill_ratings || [];
-                              const overallRating = skillRatings.length > 0
-                                ? (skillRatings.reduce((sum, sr) => sum + parseFloat(sr.rating || 0), 0) / skillRatings.length).toFixed(1)
-                                : 0;
-                              return (
-                                <div key={index} className="list-group-item px-0 py-3 border-bottom">
-                                  <div className="row align-items-start">
-                                    <div className="col-md-6">
-                                      <h6 className="mb-1 fw-bold">{job.title}</h6>
-                                      <p className="text-muted small mb-1">{job.household_name || "Household"}</p>
-                                      <p className="text-muted small mb-0">{job.location || ""}</p>
-                                    </div>
-                                    <div className="col-md-6">
-                                      <div className="d-flex justify-content-between align-items-start">
-                                        <div className="flex-grow-1">
-                                          {skillRatings.length > 0 ? (
-                                            <>
-                                              <p className="mb-1"><small className="fw-bold">Skill Ratings:</small></p>
-                                              {skillRatings.map((sr, idx) => (
-                                                <div key={idx} className="d-flex justify-content-between mb-1">
-                                                  <small className="text-muted">{sr.skill_name || sr.skill}:</small>
-                                                  <small className="fw-bold">
-                                                    <span className="badge bg-success">{sr.rating} ⭐</span>
-                                                  </small>
-                                                </div>
-                                              ))}
-                                              <div className="d-flex justify-content-between mt-2 pt-2 border-top">
-                                                <small className="text-muted"><strong>Overall:</strong></small>
-                                                <small className="fw-bold">
-                                                  <span className="badge bg-info">{overallRating} ⭐</span>
-                                                </small>
-                                              </div>
-                                            </>
-                                          ) : (
-                                            <small className="text-muted">No ratings yet</small>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <EmploymentHistoryList jobs={employmentHistory} />
                         ) : (
-                          <p className="text-muted">No completed jobs yet.</p>
+                          <p className="text-muted mb-0">No completed jobs yet.</p>
                         )}
                       </div>
                     </div>
@@ -3658,6 +3587,14 @@ export default function AppViews({
                           <button type="button" className="btn-close btn-close-white" onClick={() => setViewingWorkSampleIndex(null)}></button>
                         </div>
                         <div className="modal-body p-4">
+                          {!((workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.beforePreview && (workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.afterPreview) ? (
+                            <img
+                              src={(workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.beforePreview || (workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.afterPreview}
+                              alt={(workerProfileForm.workSamples || [])[viewingWorkSampleIndex]?.title || "Work sample"}
+                              className="img-fluid rounded d-block mx-auto"
+                              style={{ maxHeight: '70vh', objectFit: 'contain' }}
+                            />
+                          ) : (
                           <div className="row g-4">
                             <div className="col-md-6">
                               <div className="position-relative">
@@ -3676,6 +3613,7 @@ export default function AppViews({
                               </div>
                             </div>
                           </div>
+                          )}
                         </div>
                         <div className="modal-footer">
                           <button type="button" className="btn btn-secondary" onClick={() => setViewingWorkSampleIndex(null)}>Close</button>
@@ -3695,19 +3633,9 @@ export default function AppViews({
                       <div className="mb-5">
                         <h4 className="mb-3 fw-bold text-dark">Certifications</h4>
                         {(workerProfileForm.certifications || []).length > 0 ? (
-                          <div className="row g-3">
+                          <div className="pf-cert-list">
                             {workerProfileForm.certifications.map((cert, index) => (
-                              <div key={index} className="col-md-4">
-                                <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
-                                  <CertificateThumb cert={cert} height="100%" />
-                                  <div className="position-absolute bottom-0 start-0 end-0 p-2" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.75))' }}>
-                                    <div className="d-flex justify-content-between align-items-end gap-2">
-                                      <p className="text-white mb-0 fw-bold small">{cert.name}</p>
-                                      <CertificateStatusBadge cert={cert} />
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
+                              <CertificateCard key={cert.id || index} cert={cert} />
                             ))}
                           </div>
                         ) : (
@@ -3718,29 +3646,9 @@ export default function AppViews({
                       <div>
                         <h4 className="mb-4 fw-bold text-dark">Work Samples</h4>
                         {(workerProfileForm.workSamples || []).length > 0 ? (
-                          <div className="row g-4">
+                          <div className="pf-sample-list pf-sample-list-large">
                             {workerProfileForm.workSamples.map((sample, index) => (
-                              <div key={index} className="col-12">
-                                <div className="card border-0 shadow-sm">
-                                  <div className="card-body p-3">
-                                    <h5 className="mb-4 fw-bold text-dark">{sample.title}</h5>
-                                    <div className="row g-3">
-                                      <div className="col-md-6">
-                                        <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
-                                          <img src={sample.beforePreview} alt="Before" className="img-fluid" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                          <small className="position-absolute bottom-2 start-2 bg-dark text-white px-2 py-1 rounded">Before</small>
-                                        </div>
-                                      </div>
-                                      <div className="col-md-6">
-                                        <div className="position-relative rounded overflow-hidden" style={{ height: '300px' }}>
-                                          <img src={sample.afterPreview} alt="After" className="img-fluid" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                          <small className="position-absolute bottom-2 start-2 bg-success text-white px-2 py-1 rounded">After</small>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
+                              <WorkSampleCard key={sample.id || index} sample={sample} onOpen={() => setViewingWorkSampleIndex(index)} />
                             ))}
                           </div>
                         ) : (
