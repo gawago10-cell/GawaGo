@@ -42,6 +42,17 @@ class NotificationMarkReadView(APIView):
         return Response(NotificationSerializer(notification).data)
 
 
+class NotificationMarkAllReadView(APIView):
+    """POST /api/notifications/read-all/ -- "Mark all as read" used to send
+    one request per notification the account ever had, read or not."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        updated = Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        return Response({"updated": updated})
+
+
 class NotificationDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 

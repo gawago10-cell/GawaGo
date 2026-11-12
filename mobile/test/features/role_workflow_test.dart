@@ -282,6 +282,7 @@ void main() {
     tester,
   ) async {
     var markReadRequests = 0;
+    var readAllRequests = 0;
     await SessionStorage.save(
       const AuthSession(accessToken: 'worker-token', role: 'worker'),
     );
@@ -289,6 +290,11 @@ void main() {
       MockClient((request) async {
         if (request.url.path.endsWith('/notifications/2/read/')) {
           markReadRequests += 1;
+        }
+        if (request.url.path.endsWith('/notifications/read-all/')) {
+          readAllRequests += 1;
+          expect(request.method, 'POST');
+          return _json({'updated': 1});
         }
         return _workerResponses(request);
       }),
@@ -305,15 +311,20 @@ void main() {
     expect(find.byTooltip('Filter notifications by date'), findsOneWidget);
     expect(find.byTooltip('Notification actions'), findsOneWidget);
     expect(find.textContaining('Jun 9, 2026 10:01 AM'), findsOneWidget);
+    expect(find.text('EARLIER'), findsOneWidget);
 
-    await tester.tap(find.text('Application accepted'));
-    await tester.pumpAndSettle();
-    expect(find.text('Job Details'), findsNothing);
-
+    // One request for all of them, not one per notification.
     await tester.tap(find.text('Mark all as read').first);
     await tester.pumpAndSettle();
-    expect(markReadRequests, 1);
+    expect(readAllRequests, 1);
+    expect(markReadRequests, 0);
     expect(find.text('All notifications marked as read.'), findsOneWidget);
+
+    // The card itself opens the notification (only its menu did before).
+    await tester.tap(find.text('Application accepted'));
+    await tester.pumpAndSettle();
+    expect(find.text('Review the household request.'), findsWidgets);
+    expect(find.text('Accept'), findsOneWidget);
   });
 
   testWidgets('worker drawer follows website account navigation', (

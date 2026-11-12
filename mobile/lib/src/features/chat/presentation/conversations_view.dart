@@ -101,7 +101,7 @@ class _ConversationTile extends StatelessWidget {
     final unread = conversation.unreadCount;
     final last = conversation.lastMessage;
     final preview = last == null
-        ? conversation.jobTitle
+        ? null
         : '${last.isMine ? 'You: ' : ''}${last.content}';
     return Card(
       child: ListTile(
@@ -117,14 +117,30 @@ class _ConversationTile extends StatelessWidget {
             color: GawaGoColors.ink,
           ),
         ),
-        subtitle: Text(
-          preview,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: unread > 0 ? GawaGoColors.ink : GawaGoColors.textMuted,
-            fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.w400,
-          ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              conversation.jobTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: GawaGoColors.leafDeep,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (preview != null)
+              Text(
+                preview,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: unread > 0 ? GawaGoColors.ink : GawaGoColors.textMuted,
+                  fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
+          ],
         ),
         trailing: unread > 0
             ? Badge(

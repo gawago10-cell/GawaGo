@@ -638,6 +638,67 @@ class LogoutView(APIView):
         return Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
 
 
+# What a profile save changed, in the words the profile page uses.
+PROFILE_CHANGE_LABELS = [
+    (("first_name", "last_name"), "name"),
+    (("email",), "email address"),
+    (("phone",), "phone number"),
+    (("location_label", "latitude", "longitude"), "location"),
+    (("skills",), "skills"),
+    (("hourly_rate", "daily_rate"), "rates"),
+    (("years_experience",), "years of experience"),
+    (("bio",), "bio"),
+    (("profile_photo",), "profile photo"),
+]
+PROFILE_CONTACT_CHANGES = {"email address", "phone number"}
+
+
+def _same_value(old, new) -> bool:
+    if old in (None, "") and new in (None, ""):
+        return True
+    if isinstance(old, str) or isinstance(new, str):
+        return str(old or "").strip() == str(new or "").strip()
+    try:
+        return round(float(old), 6) == round(float(new), 6)
+    except (TypeError, ValueError):
+        return old == new
+
+
+def profile_changes(user, profile, data) -> list[str]:
+    """Labels for what `data` actually changes (a save that changes nothing
+    gets no notice). A photo sent at all is a change."""
+    current = {
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": (user.email or "").strip().lower(),
+    }
+    changed = []
+    for fields, label in PROFILE_CHANGE_LABELS:
+        for field in fields:
+            if field not in data:
+                continue
+            if field == "profile_photo":
+                differs = True
+            elif field == "email":
+                differs = data["email"].strip().lower() != current["email"]
+            elif field == "skills":
+                differs = list(data["skills"] or []) != list(profile.skills or [])
+            else:
+                old = current[field] if field in current else getattr(profile, field)
+                differs = not _same_value(old, data[field])
+            if differs:
+                changed.append(label)
+                break
+    return changed
+
+
+def join_words(items) -> str:
+    """"name", "name and bio", "name, skills and bio"."""
+    if len(items) < 2:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
 class MeProfileView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
@@ -676,6 +737,7 @@ class MeProfileView(APIView):
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
+        changed = profile_changes(user, profile, data)
         user_fields = []
         if "first_name" in data:
             user.first_name = data["first_name"]
@@ -710,12 +772,20 @@ class MeProfileView(APIView):
         # It used to stale this session's token too, signing the worker out
         # mid-save; the fresh token keeps them signed in here.
         access = refresh_credentials(user, profile) if email_changed else None
-        create_notification(
-            recipient=user,
-            notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
-            title="Profile updated",
-            message="Your GawaGo account profile was updated. If you did not make this change, please reset your password or contact support.",
-        )
+        if changed:
+            # Every save used to send "If you did not make this change, please
+            # reset your password or contact support" -- an alarm for a bio
+            # edit, by email too, naming a support desk that doesn't exist.
+            contact_changed = [item for item in changed if item in PROFILE_CONTACT_CHANGES]
+            message = f"You changed your {join_words(changed)}."
+            if contact_changed:
+                message += " If this wasn't you, reset your password right away."
+            create_notification(
+                recipient=user,
+                notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
+                title="Contact details changed" if contact_changed else "Profile updated",
+                message=message,
+            )
         return Response({
             "detail": "Profile updated.",
             **({"access": access} if access else {}),

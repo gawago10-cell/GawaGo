@@ -68,6 +68,38 @@ String sanitizePhilippinesPhone(String value) {
 /// A job date ("2026-10-04") as "Oct 4, 2026" -- without this, some job
 /// screens showed the raw ISO string while others (via formatLocalDateTime)
 /// showed a formatted one.
+/// "Today", "Yesterday" or "Earlier": the heading a notification sits under
+/// (matches the web's notificationDayGroup).
+String notificationDayGroup(DateTime? date, {DateTime? now}) {
+  if (date == null) return 'Earlier';
+  final today = now ?? DateTime.now();
+  final days = DateTime(
+    today.year,
+    today.month,
+    today.day,
+  ).difference(DateTime(date.year, date.month, date.day)).inDays;
+  if (days <= 0) return 'Today';
+  if (days == 1) return 'Yesterday';
+  return 'Earlier';
+}
+
+/// The divider above a day's chat messages: "Today", "Yesterday" or
+/// "Nov 1, 2026" (matches the web's formatChatDay).
+String chatDayLabel(DateTime? date, {DateTime? now}) {
+  if (date == null) return '';
+  final group = notificationDayGroup(date, now: now);
+  return group == 'Earlier'
+      ? '${_month(date.month)} ${date.day}, ${date.year}'
+      : group;
+}
+
+/// "9:05 AM".
+String formatClockTime(DateTime date) {
+  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$hour:$minute ${date.hour >= 12 ? 'PM' : 'AM'}';
+}
+
 String formatJobDate(String? value, {String fallback = 'Not set'}) {
   final normalized = (value ?? '').trim();
   if (normalized.isEmpty) return fallback;

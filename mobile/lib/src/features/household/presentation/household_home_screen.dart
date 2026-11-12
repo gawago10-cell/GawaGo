@@ -5991,10 +5991,10 @@ class _VerificationState extends State<_Verification> {
                     ? Icons.verified_outlined
                     : Icons.pending_actions_outlined,
                 title: verified
-                    ? "You're already verified"
+                    ? "You're verified"
                     : 'Verification is under review',
                 subtitle: verified
-                    ? 'Your verification is already approved by the admin, so the details above are now read-only.'
+                    ? "${latest.approvedOnSentence}Your documents were approved. There's nothing else you need to do."
                     : 'Your documents are locked while the admin reviews your household account.',
                 status: latest.status,
               )
@@ -6207,7 +6207,7 @@ class _VerificationReadonlyCard extends StatelessWidget {
             actionLabel: 'View Primary ID',
           ),
           _VerificationDocumentRow(
-            title: 'Supporting Documents',
+            title: 'Supporting Document',
             value: latest.secondaryName,
             actionLabel: 'View Supporting Document',
           ),
@@ -6444,9 +6444,7 @@ class _NotificationsState extends State<_Notifications> {
     if (unread.isEmpty) return;
     setState(() => _markingAllRead = true);
     try {
-      for (final item in unread) {
-        await widget.repository.markNotificationRead(item.id);
-      }
+      await widget.repository.markAllNotificationsRead();
       _reload();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -6502,8 +6500,17 @@ class _NotificationsState extends State<_Notifications> {
               const AppEmptyState(
                 message: 'No notifications found for the selected date.',
               ),
-            ...visible.map(
-              (item) => StatusCard(
+            // Under "Today", "Yesterday" and "Earlier", like the website.
+            for (final (index, item) in visible.indexed) ...[
+              if (index == 0 ||
+                  notificationDayGroup(item.createdDate) !=
+                      notificationDayGroup(visible[index - 1].createdDate))
+                NotificationDayHeading(
+                  label: notificationDayGroup(item.createdDate),
+                ),
+              StatusCard(
+                // The card opens it; only the menu did before.
+                onTap: () => _viewDetails(item),
                 icon: item.requiresAction
                     ? Icons.notification_important_outlined
                     : Icons.notifications_none,
@@ -6529,7 +6536,7 @@ class _NotificationsState extends State<_Notifications> {
                   },
                 ),
               ),
-            ),
+            ],
           ],
         );
       },

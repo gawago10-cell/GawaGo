@@ -222,6 +222,11 @@ class HouseholdRepository {
     await GawaGoApi.patch('/notifications/$id/read/', body: {});
   }
 
+  /// Every notification of this account read, in one request.
+  Future<void> markAllNotificationsRead() async {
+    await GawaGoApi.post('/notifications/read-all/', body: {});
+  }
+
   Future<void> deleteNotification(int id) async {
     await GawaGoApi.delete('/notifications/$id/');
   }

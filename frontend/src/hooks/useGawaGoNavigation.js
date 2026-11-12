@@ -2,7 +2,7 @@ import { apiRequest, clearAuthToken } from "../api/apiClient";
 import { openProtectedFile } from "../utils/protectedFiles";
 import { EMPTY_HOUSEHOLD_FORM, EMPTY_WORKER_FORM } from "../constants/appConstants";
 import { getSavedHouseholdLocation } from "../utils/locationServices";
-import { markBackendNotificationRead } from "../services/backendDataService";
+import { markAllBackendNotificationsRead, markBackendNotificationRead } from "../services/backendDataService";
 import { dashboardViewForRole, getUserRole, ROLES } from "../utils/roles";
 import { sanitizePhilippinesPhone } from "../utils/formatters";
 
@@ -109,8 +109,9 @@ export function useGawaGoNavigation({
   }
 
   function openWorkerApplications() {
+    // Only the application badge: this also marked every notification read,
+    // so the Notifications badge cleared before anything was seen.
     markAllWorkerApplicationsRead();
-    markAllWorkerNotificationsRead();
     setView("worker-applications");
   }
 
@@ -156,7 +157,8 @@ export function useGawaGoNavigation({
   }
 
   function openWorkerNotifications() {
-    markAllNotificationsRead(workerNotificationsWithReadState);
+    // Opening the page used to mark everything read, so nothing on it ever
+    // showed as new. A notice is read once opened, or with "Mark all as read".
     setView("worker-notifications");
   }
 
@@ -299,13 +301,19 @@ export function useGawaGoNavigation({
       });
       return changed ? nextState : prev;
     });
-    notifications.forEach((notification) => {
-      if (notification.backendId && currentUser?.username) {
-        markBackendNotificationRead(notification.backendId).catch(() => {
+    // One request for all of them: this used to send one per notification
+    // the account ever had, read or not.
+    if (currentUser?.username && notifications.some((notification) => notification.backendId && notification.unread)) {
+      markAllBackendNotificationsRead()
+        .then(async (wasMarked) => {
+          if (wasMarked) {
+            await refreshNotificationsFromBackend();
+          }
+        })
+        .catch(() => {
           return;
         });
-      }
-    });
+    }
   }
 
   function markAllWorkerNotificationsRead() {

@@ -28,7 +28,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _draft = TextEditingController();
   final _scroll = ScrollController();
   List<ChatMessage> _messages = const [];
@@ -39,17 +39,31 @@ class _ChatScreenState extends State<ChatScreen> {
   int _localSeq = 0;
   Timer? _timer;
 
+  /// The app is in the background: polling every 4 seconds went on anyway.
+  bool _paused = false;
+
   int get _hireId => widget.conversation.id;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _poll();
-    _timer = Timer.periodic(widget.pollInterval, (_) => _poll());
+    _timer = Timer.periodic(widget.pollInterval, (_) {
+      if (!_paused) _poll();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final paused = state != AppLifecycleState.resumed;
+    if (_paused && !paused) _poll(); // back in the app: catch up at once
+    _paused = paused;
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _draft.dispose();
     _scroll.dispose();
@@ -242,9 +256,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (!_loaded) return const AppLoadingState(message: 'Loading messages...');
     if (_messages.isEmpty) {
-      return const AppEmptyState(
+      final conversation = widget.conversation;
+      return AppEmptyState(
         icon: Icons.chat_bubble_outline,
-        message: 'No messages yet. Say hello to coordinate the job.',
+        message: conversation.readOnly
+            ? 'No messages were sent for this job.'
+            : 'No messages yet. Send ${conversation.otherPartyName} a message '
+                  'about ${conversation.jobTitle}.',
       );
     }
     return ListView.builder(
@@ -253,11 +271,27 @@ class _ChatScreenState extends State<ChatScreen> {
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final message = _messages[index];
-        return _MessageBubble(
+        final day = chatDayLabel(parseBackendDateTime(message.createdAt));
+        final showDay =
+            day.isNotEmpty &&
+            (index == 0 ||
+                day !=
+                    chatDayLabel(
+                      parseBackendDateTime(_messages[index - 1].createdAt),
+                    ));
+        final bubble = _MessageBubble(
           message: message,
           onRetry: message.status == ChatMessageStatus.failed && !_closed
               ? () => _deliver(message.clientId!, message.content)
               : null,
+        );
+        if (!showDay) return bubble;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DayDivider(label: day),
+            bubble,
+          ],
         );
       },
     );
@@ -275,13 +309,11 @@ class _MessageBubble extends StatelessWidget {
     final mine = message.isMine;
     final failed = message.status == ChatMessageStatus.failed;
     final foreground = mine ? Colors.white : GawaGoColors.text;
+    final sentAt = parseBackendDateTime(message.createdAt);
     final meta = switch (message.status) {
       ChatMessageStatus.sending => 'Sending...',
       ChatMessageStatus.failed => 'Not sent',
-      ChatMessageStatus.sent => formatLocalDateTime(
-        message.createdAt,
-        fallback: '',
-      ),
+      ChatMessageStatus.sent => sentAt == null ? '' : formatClockTime(sentAt),
     };
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
@@ -311,8 +343,10 @@ class _MessageBubble extends StatelessWidget {
                   style: TextStyle(color: foreground, fontSize: 15),
                 ),
                 const SizedBox(height: 4),
+                // Just the time: the side and colour say who sent it, and
+                // the divider above says the day.
                 Text(
-                  mine ? meta : '${message.senderName}  $meta',
+                  meta,
                   style: TextStyle(
                     color: foreground.withValues(alpha: 0.7),
                     fontSize: 11.5,
@@ -344,6 +378,36 @@ class _MessageBubble extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DayDivider extends StatelessWidget {
+  const _DayDivider({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 10),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(color: GawaGoColors.border)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const Expanded(child: Divider(color: GawaGoColors.border)),
+        ],
       ),
     );
   }

@@ -1614,6 +1614,7 @@ function App() {
           openWorkerNotifications={openWorkerNotifications}
           openWorkerProfile={openWorkerProfile}
           workerApplicationUnreadCount={workerApplicationUnreadCount}
+          workerUnreadCount={workerUnreadCount}
           workerMiniPhoto={workerMiniPhoto}
           addToast={addToast}
         />
@@ -1705,6 +1706,8 @@ function App() {
           openWorkerNotifications={openWorkerNotifications}
           openWorkerJobDetail={openWorkerJobDetail}
           workerApplicationUnreadCount={workerApplicationUnreadCount}
+          workerUnreadCount={workerUnreadCount}
+          householdUnreadCount={householdUnreadCount}
         />
       </Suspense>
     );

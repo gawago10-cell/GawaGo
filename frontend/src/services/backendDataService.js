@@ -731,6 +731,16 @@ export async function markBackendNotificationRead(backendId) {
   return response.ok;
 }
 
+/** Marks every notification of the signed-in account read in one request. */
+export async function markAllBackendNotificationsRead() {
+  const response = await apiRequest("notifications/read-all/", {
+    method: "POST",
+    auth: true,
+    suppressUnauthorized: true,
+  });
+  return response.ok;
+}
+
 export async function deleteBackendNotification(backendId) {
   if (!backendId) {
     return false;

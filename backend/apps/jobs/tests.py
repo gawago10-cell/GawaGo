@@ -946,7 +946,7 @@ class JobPermissionTests(TestCase):
         completion_notification = Notification.objects.get(
             recipient=self.worker,
             notification_type=Notification.TYPE_COMPLETION,
-            title="Job completed",
+            title="Job marked done",
             message__contains=self.job.title,
         )
         self.assertEqual(completion_notification.actor, self.household)
@@ -967,7 +967,7 @@ class JobPermissionTests(TestCase):
         self.assertEqual(reminder_notification.action_url, f"/household/jobs/{self.job.id}/review")
         self.assertTrue(reminder_notification.requires_action)
         subjects = [message.subject for message in mail.outbox]
-        self.assertIn("GawaGo: Job completed", subjects)
+        self.assertIn("GawaGo: Job marked done", subjects)
         self.assertIn("GawaGo: Review worker service", subjects)
 
     def test_unverified_household_cannot_complete_job(self):
@@ -1135,7 +1135,7 @@ class JobPermissionTests(TestCase):
         notification = Notification.objects.get(
             recipient=self.worker,
             notification_type=Notification.TYPE_ACCEPTED,
-            title="Application accepted",
+            title="You're hired",
             message__contains=self.job.title,
         )
         self.assertEqual(notification.actor, self.household)

@@ -15,10 +15,33 @@ function getInitials(name) {
     .join("");
 }
 
-function formatTimestamp(value) {
+function parseDate(value) {
   const date = value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function formatTime(value) {
+  const date = parseDate(value);
+  return date ? date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+}
+
+// "Today", "Yesterday" or "Nov 1, 2026": the divider above a day's messages.
+// Bubbles used to carry "Nov 12, 11:16 PM" with no year and no dividers.
+export function formatChatDay(value, now = new Date()) {
+  const date = parseDate(value);
+  if (!date) return "";
+  const startOfDay = (day) => new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Grows the message box with what's typed, up to the CSS max-height.
+function fitDraftBox(element) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
 }
 
 function lastSentId(messages = []) {
@@ -51,6 +74,7 @@ export default function ChatWidget({ currentUser }) {
   const [loadError, setLoadError] = useState("");
   const messagesRef = useRef(messagesById);
   const messageBodyRef = useRef(null);
+  const draftRef = useRef(null);
   messagesRef.current = messagesById;
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeId) || null;
@@ -60,14 +84,19 @@ export default function ChatWidget({ currentUser }) {
     [conversations],
   );
 
+  // Only the newest list request may write: an older one landing late put
+  // back an unread count that had just been read.
+  const refreshSeq = useRef(0);
   const refreshConversations = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     try {
       const next = await getConversations();
+      if (seq !== refreshSeq.current) return;
       setConversations(next);
       setConversationsLoaded(true);
       setActiveId((current) => (next.some((conversation) => conversation.id === current) ? current : next[0]?.id ?? null));
     } catch {
-      setConversationsLoaded(true);
+      if (seq === refreshSeq.current) setConversationsLoaded(true);
     }
   }, []);
 
@@ -81,8 +110,17 @@ export default function ChatWidget({ currentUser }) {
     setCollapsed(true);
     if (!enabled) return undefined;
     refreshConversations();
-    const intervalId = window.setInterval(refreshConversations, CONVERSATION_POLL_MS);
-    return () => window.clearInterval(intervalId);
+    // Not while the tab is in the background: these polls kept going on
+    // every hidden tab. Coming back catches up at once.
+    const poll = () => {
+      if (!document.hidden) refreshConversations();
+    };
+    const intervalId = window.setInterval(poll, CONVERSATION_POLL_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [enabled, currentUser?.username, refreshConversations]);
 
   useEffect(() => {
@@ -104,7 +142,10 @@ export default function ChatWidget({ currentUser }) {
         setLoadError("");
         setMessagesById((prev) => ({ ...prev, [conversationId]: mergeMessages(prev[conversationId], incoming) }));
         if (incoming.some((message) => !message.isMine && !message.isRead)) {
-          markConversationRead(conversationId).catch(() => {});
+          // The list fetched while this was in flight still counts them unread.
+          markConversationRead(conversationId)
+            .then(() => refreshConversations())
+            .catch(() => {});
         }
         setConversations((prev) =>
           prev.map((conversation) =>
@@ -129,10 +170,16 @@ export default function ChatWidget({ currentUser }) {
       }
     };
     tick();
-    const intervalId = window.setInterval(tick, MESSAGE_POLL_MS);
+    // Every 4 seconds while the thread is open, but not in a hidden tab.
+    const poll = () => {
+      if (!document.hidden) tick();
+    };
+    const intervalId = window.setInterval(poll, MESSAGE_POLL_MS);
+    document.addEventListener("visibilitychange", poll);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", poll);
     };
   }, [collapsed, activeId, refreshConversations]);
 
@@ -174,6 +221,7 @@ export default function ChatWidget({ currentUser }) {
       ],
     }));
     setDraft("");
+    window.requestAnimationFrame(() => fitDraftBox(draftRef.current));
     deliver(activeConversation.id, clientId, content);
   };
 
@@ -215,8 +263,14 @@ export default function ChatWidget({ currentUser }) {
               <span>{activeConversation ? `${activeConversation.jobTitle} • ${activeConversation.statusLabel}` : "No active hires"}</span>
             </div>
           </div>
-          <button type="button" className="gawago-chat-toggle" aria-label="Collapse chat" onClick={() => setCollapsed(true)}>
-            -
+          <button
+            type="button"
+            className="gawago-chat-toggle"
+            aria-label="Minimize chat"
+            title="Minimize chat"
+            onClick={() => setCollapsed(true)}
+          >
+            <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
           </button>
         </header>
 
@@ -239,44 +293,64 @@ export default function ChatWidget({ currentUser }) {
                     <Avatar name={conversation.otherPartyName} photo={conversation.otherPartyPhoto} />
                   </div>
                   <div className="gawago-chat-conversation-copy">
-                    <strong>
-                      {conversation.otherPartyName}
+                    <div className="gawago-chat-conversation-name">
+                      <strong title={conversation.otherPartyName}>{conversation.otherPartyName}</strong>
                       {conversation.unreadCount > 0 && conversation.id !== activeId ? (
-                        <span className="gawago-chat-unread-dot">{conversation.unreadCount}</span>
+                        <span
+                          className="gawago-chat-unread-dot"
+                          aria-label={`${conversation.unreadCount} unread`}
+                        >
+                          {conversation.unreadCount > 9 ? "9+" : conversation.unreadCount}
+                        </span>
                       ) : null}
-                    </strong>
-                    <span>{conversation.lastMessage?.content || conversation.jobTitle}</span>
+                    </div>
+                    <span className="gawago-chat-conversation-job" title={conversation.jobTitle}>
+                      {conversation.jobTitle}
+                    </span>
+                    {conversation.lastMessage ? (
+                      <span className="gawago-chat-conversation-preview">
+                        {conversation.lastMessage.isMine ? "You: " : ""}
+                        {conversation.lastMessage.content}
+                      </span>
+                    ) : null}
                   </div>
                 </button>
               ))}
             </aside>
 
             <div className="gawago-chat-thread">
-              <div className="gawago-chat-thread-meta">
-                <strong>{activeConversation?.otherPartyName}</strong>
-                <span>{activeConversation?.jobTitle}</span>
-              </div>
-
               <div className="gawago-chat-messages" ref={messageBodyRef} aria-live="polite">
                 {activeMessages === undefined ? (
                   <p className="gawago-chat-thread-note">Loading messages…</p>
                 ) : activeMessages.length === 0 ? (
-                  <p className="gawago-chat-thread-note">No messages yet. Say hello to coordinate the job.</p>
+                  <p className="gawago-chat-thread-note">
+                    {activeConversation?.readOnly
+                      ? "No messages were sent for this job."
+                      : `No messages yet. Send ${activeConversation?.otherPartyName || "them"} a message about ${activeConversation?.jobTitle || "the job"}.`}
+                  </p>
                 ) : (
-                  activeMessages.map((message) => (
+                  activeMessages.map((message, index) => {
+                    const day = formatChatDay(message.createdAt);
+                    const showDay = day && day !== formatChatDay(activeMessages[index - 1]?.createdAt);
+                    return (
+                    <React.Fragment key={message.clientId || message.id}>
+                    {showDay ? (
+                      <p className="gawago-chat-day" role="separator">
+                        <span>{day}</span>
+                      </p>
+                    ) : null}
                     <article
-                      key={message.clientId || message.id}
                       className={`gawago-chat-bubble ${message.isMine ? "outgoing" : "incoming"} ${message.status !== "sent" ? message.status : ""}`}
+                      aria-label={message.isMine ? "You" : message.senderName}
                     >
                       <p>{message.content}</p>
                       <div className="gawago-chat-bubble-meta">
-                        <span>{message.isMine ? "You" : message.senderName}</span>
                         <span>
                           {message.status === "sending"
                             ? "Sending…"
                             : message.status === "failed"
                               ? "Not sent"
-                              : formatTimestamp(message.createdAt)}
+                              : formatTime(message.createdAt)}
                         </span>
                       </div>
                       {message.status === "failed" ? (
@@ -288,7 +362,9 @@ export default function ChatWidget({ currentUser }) {
                         </div>
                       ) : null}
                     </article>
-                  ))
+                    </React.Fragment>
+                    );
+                  })
                 )}
               </div>
 
@@ -298,15 +374,22 @@ export default function ChatWidget({ currentUser }) {
                   <p className="gawago-chat-read-only">This job is finished, so the chat is read only.</p>
                 ) : (
                 <div className="gawago-chat-composer-row gawago-chat-composer-row-text">
-                  <input
+                  <textarea
                     id="gawago-chat-draft"
-                    type="text"
+                    ref={draftRef}
+                    rows={1}
                     value={draft}
                     maxLength={MAX_MESSAGE_LENGTH}
+                    aria-label={activeConversation ? `Message ${activeConversation.otherPartyName}` : "Message"}
                     placeholder={activeConversation ? `Message ${activeConversation.otherPartyName}...` : "Type a message..."}
-                    onChange={(event) => setDraft(event.target.value)}
+                    onChange={(event) => {
+                      setDraft(event.target.value);
+                      fitDraftBox(event.target);
+                    }}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") {
+                      // Enter sends; Shift+Enter is a new line (the phone app
+                      // sends several lines, which the web joined into one).
+                      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                         event.preventDefault();
                         submitMessage();
                       }

@@ -37,6 +37,7 @@ export default function WorkerJobDetailView({
   openWorkerNotifications,
   openWorkerProfile,
   workerApplicationUnreadCount,
+  workerUnreadCount,
   addToast,
   origin = "find-jobs",
 }) {
@@ -47,6 +48,7 @@ export default function WorkerJobDetailView({
     applications: { navId: "applications", label: "Back to My Applications", open: openWorkerApplications },
     "my-jobs": { navId: "jobs", label: "Back to My Jobs", open: openWorkerMyJobs },
     complaints: { navId: "flag", label: "Back to My Complaints", open: openMyComplaints },
+    notifications: { navId: "notifications", label: "Back to Notifications", open: openWorkerNotifications },
   };
   const from = origins[origin] || origins["find-jobs"];
   const backToList = from.open;
@@ -176,6 +178,8 @@ export default function WorkerJobDetailView({
                 {
                   id: "notifications",
                   label: "Notifications",
+                  active: from.navId === "notifications",
+                  count: workerUnreadCount,
                   onClick: openWorkerNotifications,
                 },
               ]}

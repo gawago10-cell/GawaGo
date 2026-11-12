@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { describeJobSpan, formatDistance, formatJobDate, isSameWorker } from "./formatters";
+import {
+  describeJobSpan,
+  formatDistance,
+  formatJobDate,
+  formatNotificationTime,
+  isSameWorker,
+  notificationDayGroup,
+} from "./formatters";
 
 describe("formatDistance", () => {
   it("uses the backend's wording, never '1 meters away'", () => {
@@ -45,5 +52,27 @@ describe("isSameWorker", () => {
     expect(isSameWorker(juan, { workerName: "Juan Dela Paz" })).toBe(true);
     expect(isSameWorker(juan, { workerId: 7 })).toBe(true);
     expect(isSameWorker(juan, { workerName: "Someone Else" })).toBe(false);
+  });
+});
+
+describe("notification times", () => {
+  // Local times, so the result doesn't depend on the machine's time zone.
+  const now = new Date(2026, 10, 12, 21, 0);
+
+  it("groups by day", () => {
+    expect(notificationDayGroup(new Date(2026, 10, 12, 0, 5).toISOString(), now)).toBe("Today");
+    expect(notificationDayGroup(new Date(2026, 10, 11, 23, 59).toISOString(), now)).toBe("Yesterday");
+    expect(notificationDayGroup(new Date(2026, 10, 1, 3, 14).toISOString(), now)).toBe("Earlier");
+    expect(notificationDayGroup("Recently", now)).toBe("Earlier");
+  });
+
+  it("uses the short date style", () => {
+    expect(formatNotificationTime(new Date(2026, 10, 12, 20, 13).toISOString(), { now })).toBe("Today · 8:13 PM");
+    expect(formatNotificationTime(new Date(2026, 10, 12, 20, 13).toISOString(), { now, timeOnly: true })).toBe("8:13 PM");
+    expect(formatNotificationTime(new Date(2026, 10, 11, 3, 14).toISOString(), { now })).toBe("Yesterday · 3:14 AM");
+    expect(formatNotificationTime(new Date(2026, 10, 1, 3, 14).toISOString(), { now, timeOnly: true })).toBe(
+      "Nov 1, 2026 · 3:14 AM",
+    );
+    expect(formatNotificationTime("Recently", { now })).toBe("Recently");
   });
 });

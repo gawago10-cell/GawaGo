@@ -778,6 +778,7 @@ class VerificationRequest {
     required this.secondaryName,
     required this.submittedAt,
     required this.reviewNote,
+    this.reviewedAt = '',
   });
 
   final int id;
@@ -787,6 +788,17 @@ class VerificationRequest {
   final String submittedAt;
   final String reviewNote;
 
+  /// When the admin approved (or rejected) it; empty while pending.
+  final String reviewedAt;
+
+  /// "Approved on Oct 20, 2026. " for the verified screen, or "".
+  String get approvedOnSentence {
+    final date = parseBackendDateTime(reviewedAt);
+    return date == null
+        ? ''
+        : 'Approved on ${_month(date.month)} ${date.day}, ${date.year}. ';
+  }
+
   factory VerificationRequest.fromJson(Map<String, dynamic> json) {
     return VerificationRequest(
       id: _integer(json['id']),
@@ -795,6 +807,7 @@ class VerificationRequest {
       secondaryName: _text(json['secondary_doc_name']),
       submittedAt: _text(json['submitted_at']),
       reviewNote: _text(json['review_note']),
+      reviewedAt: _text(json['reviewed_at']),
     );
   }
 }

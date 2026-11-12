@@ -132,6 +132,42 @@ export function formatDateTime(dateValue, timeValue) {
   });
 }
 
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function parseNotificationDate(value) {
+  if (!value) return null;
+  const parsed = new Date(String(value).trim());
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** "Today", "Yesterday" or "Earlier": the heading a notification sits under
+ * (anything that isn't a timestamp, e.g. "Recently", counts as earlier). */
+export function notificationDayGroup(value, now = new Date()) {
+  const date = parseNotificationDate(value);
+  if (!date) return "Earlier";
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return "Earlier";
+}
+
+/** When a notification arrived, in the app's short date style:
+ * "Today · 8:13 PM", "Yesterday · 3:14 AM", "Nov 1, 2026 · 3:14 AM".
+ * `timeOnly` drops the day under a "Today"/"Yesterday" heading. */
+export function formatNotificationTime(value, { now = new Date(), timeOnly = false } = {}) {
+  const date = parseNotificationDate(value);
+  if (!date) return value ? String(value) : "";
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const group = notificationDayGroup(date, now);
+  if (group !== "Earlier") {
+    return timeOnly ? time : `${group} · ${time}`;
+  }
+  const day = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return `${day} · ${time}`;
+}
+
 export function formatExperience(years) {
   const numericYears = Number(years || 0);
   return `${numericYears} ${numericYears === 1 ? "year" : "years"}`;

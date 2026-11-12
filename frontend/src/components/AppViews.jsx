@@ -31,7 +31,12 @@ import {
   getPendingApplicationCount,
   getWorkersNeeded,
 } from "../utils/jobUtils";
-import { getHouseholdInitials, isSameWorker } from "../utils/formatters";
+import {
+  formatNotificationTime,
+  getHouseholdInitials,
+  isSameWorker,
+  notificationDayGroup,
+} from "../utils/formatters";
 import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
 import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_WORKER_SKILLS, OTHER_SKILL } from "../constants/appConstants";
 import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
@@ -1105,6 +1110,69 @@ export default function AppViews({
       return nextIds;
     });
   };
+  // Where a worker's notification leads when it's clicked; null opens its
+  // details instead. Reaching a job used to take three clicks (the menu,
+  // "View details", then "View Job Details").
+  const workerNotificationDestination = (notification) => {
+    if (!notification) return null;
+    const type = notification.notificationType;
+    if (type === "review") {
+      return {
+        label: "See the review",
+        open: () => {
+          openWorkerProfile();
+          setWorkerProfilePanel("feedback");
+        },
+      };
+    }
+    if (type === "completion" && notification.actionType === "review") {
+      // "Job marked done": rating the household happens on My Jobs.
+      return { label: "Go to My Jobs", open: openWorkerMyJobs };
+    }
+    if (type === "verification") {
+      return { label: "Go to Verification", open: openWorkerGetVerified };
+    }
+    if (type === "account_activity") {
+      return null;
+    }
+    if (notification.jobId) {
+      return { label: "View job", open: () => openWorkerJobDetail(notification.jobId, "notifications") };
+    }
+    return null;
+  };
+  const openWorkerNotification = (notification) => {
+    const destination = workerNotificationDestination(notification);
+    if (!destination) {
+      openWorkerNotificationPreview(notification);
+      return;
+    }
+    setWorkerNotificationMenuId(null);
+    if (notification.id) {
+      markNotificationRead(notification.id);
+    }
+    destination.open();
+  };
+  // Newest first, under "Today", "Yesterday" and "Earlier".
+  const workerNotificationGroups = (() => {
+    const now = new Date();
+    const time = (item) => {
+      const parsed = new Date(item.date || "").getTime();
+      return Number.isNaN(parsed) ? -Infinity : parsed;
+    };
+    const groups = [];
+    [...workerGeneralNotifications]
+      .sort((a, b) => time(b) - time(a))
+      .forEach((item) => {
+        const label = notificationDayGroup(item.date, now);
+        const last = groups[groups.length - 1];
+        if (last && last.label === label) {
+          last.items.push(item);
+        } else {
+          groups.push({ label, items: [item] });
+        }
+      });
+    return groups;
+  })();
   const openWorkerNotificationPreview = (notification) => {
     setWorkerNotificationMenuId(null);
     if (notification.id) {
@@ -2627,6 +2695,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {workerUnreadCount > 0 && <span className="nav-count-badge">{workerUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -2829,6 +2898,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {workerUnreadCount > 0 && <span className="nav-count-badge">{workerUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -2956,6 +3026,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {workerUnreadCount > 0 && <span className="nav-count-badge">{workerUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -3819,6 +3890,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {workerUnreadCount > 0 && <span className="nav-count-badge">{workerUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -4138,6 +4210,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openWorkerNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {workerUnreadCount > 0 && <span className="nav-count-badge">{workerUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -4359,6 +4432,11 @@ export default function AppViews({
                   >
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {(isHouseholdVerification ? householdUnreadCount : workerUnreadCount) > 0 && (
+                      <span className="nav-count-badge">
+                        {isHouseholdVerification ? householdUnreadCount : workerUnreadCount}
+                      </span>
+                    )}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -4370,13 +4448,24 @@ export default function AppViews({
               </aside>
               <div className="worker-content">
                 {verificationAccount?.verification === "Verified" ? (
+                  (() => {
+                    // When it was approved, as the rest of the app writes dates; the
+                    // timestamp is already in Philippine time, so its date part is
+                    // the local day.
+                    const approvedAt =
+                      verificationAccount.verificationSubmission?.reviewedAt || verificationAccount.verificationReviewedAt || "";
+                    const approvedOn = approvedAt ? formatJobDate(String(approvedAt).slice(0, 10)) : "";
+                    return (
                   <div className="verification-wrap verification-approved-wrap">
                     <div className="verification-card verification-approved-card">
-                      <div className="verification-card-head">{verificationNavLabel}</div>
+                      <div className="verification-card-head">Verification</div>
                       <div className="verification-approved-body">
                         <section className="verification-approved-banner">
-                          <h2>You're already verified</h2>
-                          <p>Your verification is already approved by the admin, so the details below are now read-only.</p>
+                          <h2>You're verified</h2>
+                          <p>
+                            {approvedOn ? `Approved on ${approvedOn}. ` : ""}
+                            Your documents were approved. There's nothing else you need to do.
+                          </p>
                         </section>
 
                         <div className="verification-approved-grid">
@@ -4399,7 +4488,7 @@ export default function AppViews({
                           </article>
 
                           <article className="verification-approved-box">
-                            <p className="verification-approved-label">Supporting Documents</p>
+                            <p className="verification-approved-label">Supporting Document</p>
                             <p className="verification-approved-value">
                               {verificationAccount.verificationSubmission?.secondaryDocName || "Supporting document"}
                             </p>
@@ -4419,16 +4508,18 @@ export default function AppViews({
 
                         <section className="verification-approved-box verification-approved-note">
                           <p className="verification-approved-label">Admin Note</p>
+                          {/* Without a typed note this used to read "Verified by
+                              <admin username> on <raw timestamp>". */}
                           <p className="verification-approved-value mb-0">
                             {verificationAccount.verificationSubmission?.reviewNote ||
-                              (verificationAccount.verificationReviewedBy
-                                ? `Verified by ${verificationAccount.verificationReviewedBy} on ${verificationAccount.verificationReviewedAt}.`
-                                : "Verified by admin.")}
+                              (approvedOn ? `Approved by the admin team on ${approvedOn}.` : "Approved by the admin team.")}
                           </p>
                         </section>
                       </div>
                     </div>
                   </div>
+                    );
+                  })()
                 ) : pendingVerificationSubmission ? (
                   <div className="verification-wrap verification-approved-wrap">
                     <div className="verification-card verification-approved-card">
@@ -4651,8 +4742,11 @@ export default function AppViews({
                     {navIcon("verified")}
                     <span>{verificationNavLabel}</span>
                   </button>
-                  <button className="worker-nav-item active">{navIcon("notifications")}
-                    <span>Notifications</span></button>
+                  <button className="worker-nav-item active">
+                    {navIcon("notifications")}
+                    <span>Notifications</span>
+                    {workerUnreadCount > 0 && <span className="nav-count-badge">{workerUnreadCount}</span>}
+                  </button>
                 </nav>
                 <div className="worker-sidebar-footer">
                   <button className="worker-sidebar-logout" type="button" onClick={handleLogout}>
@@ -4663,14 +4757,19 @@ export default function AppViews({
               </aside>
               <div className="worker-content">
                 <div className="worker-notifications-header">
-                  <h1>Notifications</h1>
+                  <div>
+                    <h1>Notifications</h1>
+                    <p className="worker-notifications-count mb-0">
+                      {workerUnreadCount > 0 ? `${workerUnreadCount} unread` : "You're all caught up."}
+                    </p>
+                  </div>
                   <button
                     className="btn btn-outline-secondary worker-mark-read-button"
                     type="button"
+                    disabled={workerUnreadCount === 0}
                     onClick={() => markAllNotificationsRead(workerNotificationsWithReadState)}
                   >
-                    {" "}
-                    Mark all as read{" "}
+                    Mark all as read
                   </button>
                 </div>
                 {currentWorker?.verification !== "Verified" && (
@@ -4682,13 +4781,29 @@ export default function AppViews({
                 <div className="worker-notifications-list">
                   {workerHireRequestCards.map((job) => (
                     <article
-                      className={`notification-card worker-hire-request-card ${job.unread ? "unread" : ""}`}
+                      className={`notification-card worker-hire-request-card is-clickable ${job.unread ? "unread" : ""}`}
                       key={`hire-request-${job.applicationId || job.notificationId || job.id}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Hire request${job.unread ? ", unread" : ""}: open details`}
+                      onClick={() => {
+                        if (job.notificationId) {
+                          markNotificationRead(job.notificationId);
+                        }
+                        setWorkerHireRequestPreview(job);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          event.currentTarget.click();
+                        }
+                      }}
                     >
                       <div className="worker-hire-request-head">
                         <div>
                           <p className="small text-muted mb-1">
-                            {formatDateTime(job.updatedAt || job.appliedAt)}
+                            {formatNotificationTime(job.updatedAt || job.appliedAt)}
                           </p>
                           <h2 className="h6 mb-1">Hire request</h2>
                           <p className="mb-0">
@@ -4792,13 +4907,30 @@ export default function AppViews({
                       )}
                     </article>
                   ))}
-                  {workerGeneralNotifications.map((item) => (
+                  {workerNotificationGroups.map((group) => (
+                    <React.Fragment key={group.label}>
+                      <h2 className="worker-notifications-group">{group.label}</h2>
+                  {group.items.map((item) => (
                     <article
-                      className={`notification-card worker-notification-item ${item.unread ? "unread" : ""}`}
+                      className={`notification-card worker-notification-item is-clickable ${item.unread ? "unread" : ""}`}
                       key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${item.title}${item.unread ? ", unread" : ""}: open`}
+                      onClick={() => openWorkerNotification(item)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openWorkerNotification(item);
+                        }
+                      }}
                     >
                       <div className="worker-notification-copy">
-                        <p className="small text-muted mb-1">{formatDateTime(item.date)}</p>
+                        <p className="small text-muted mb-1">
+                          {item.unread && <span className="worker-notification-new">New</span>}
+                          {formatNotificationTime(item.date, { timeOnly: group.label !== "Earlier" })}
+                        </p>
                         <h2 className="h6 mb-1">{item.title}</h2>
                         <p className="mb-0">{item.message}</p>
                       </div>
@@ -4845,6 +4977,8 @@ export default function AppViews({
                       </div>
                     </article>
                   ))}
+                    </React.Fragment>
+                  ))}
                   {workerHireRequestCards.length === 0 && workerGeneralNotifications.length === 0 && (
                     <article className="notification-card">
                       <h2 className="h6 mb-1">No notifications yet</h2>
@@ -4868,7 +5002,7 @@ export default function AppViews({
                       <div className="worker-hire-request-modal-head">
                         <div>
                           <p className="small text-muted mb-1">
-                            {formatDateTime(workerNotificationPreview.date)}
+                            {formatNotificationTime(workerNotificationPreview.date)}
                           </p>
                           <h2 id="worker-notification-modal-title">
                             {workerNotificationPreview.title || "Notification"}
@@ -4883,20 +5017,18 @@ export default function AppViews({
                         </button>
                       </div>
                       <p className="worker-notification-modal-message">{workerNotificationPreview.message}</p>
-                      {workerNotificationPreview.jobId && (
+                      {workerNotificationDestination(workerNotificationPreview) && (
                         <div className="worker-hire-request-actions">
                           <button
                             className="btn btn-outline-secondary btn-sm"
                             type="button"
                             onClick={() => {
-                              const notification = workerNotificationPreview;
+                              const destination = workerNotificationDestination(workerNotificationPreview);
                               setWorkerNotificationPreview(null);
-                              if (!openStructuredNotificationAction(notification)) {
-                                openWorkerJobDetail(notification.jobId);
-                              }
+                              destination.open();
                             }}
                           >
-                            View Job Details
+                            {workerNotificationDestination(workerNotificationPreview).label}
                           </button>
                         </div>
                       )}
@@ -5290,6 +5422,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -5564,6 +5697,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -5885,6 +6019,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -6011,6 +6146,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -6155,6 +6291,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">
@@ -6428,6 +6565,7 @@ export default function AppViews({
                   <button className="worker-nav-item" onClick={openHouseholdNotifications}>
                     {navIcon("notifications")}
                     <span>Notifications</span>
+                    {householdUnreadCount > 0 && <span className="nav-count-badge">{householdUnreadCount}</span>}
                   </button>
                 </nav>
                 <div className="worker-sidebar-footer">

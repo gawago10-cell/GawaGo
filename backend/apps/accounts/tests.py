@@ -344,11 +344,12 @@ class ProfileUpdateTests(TestCase):
             Notification.objects.filter(
                 recipient=self.user,
                 notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
-                title="Profile updated",
+                title="Contact details changed",
+                message="You changed your phone number. If this wasn't you, reset your password right away.",
             ).exists()
         )
         self.assertEqual(mail.outbox[-1].to, [self.user.email])
-        self.assertEqual(mail.outbox[-1].subject, "GawaGo: Profile updated")
+        self.assertEqual(mail.outbox[-1].subject, "GawaGo: Contact details changed")
 
     def test_worker_cannot_clear_last_service_rate(self):
         response = self.client.patch(

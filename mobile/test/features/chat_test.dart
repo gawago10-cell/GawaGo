@@ -8,6 +8,7 @@ import 'package:gawago_mobile/src/core/storage/session_storage.dart';
 import 'package:gawago_mobile/src/features/chat/data/chat_models.dart';
 import 'package:gawago_mobile/src/features/chat/presentation/chat_screen.dart';
 import 'package:gawago_mobile/src/features/chat/presentation/conversations_view.dart';
+import 'package:gawago_mobile/src/shared/utils/display_formatters.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -284,5 +285,112 @@ void main() {
       ChatConversation.fromJson({'id': 1, 'read_only': true}).readOnly,
       isTrue,
     );
+  });
+  testWidgets('two chats with the same person show which job each is', (
+    tester,
+  ) async {
+    Map<String, dynamic> hire(int id, String job, Object? last) => {
+      'id': id,
+      'job_title': job,
+      'status_label': 'In progress',
+      'other_party': {
+        'name': 'Hana Tester',
+        'role': 'household',
+        'photo_url': '',
+      },
+      'last_message': last,
+      'unread_count': 0,
+    };
+    GawaGoApi.setClient(
+      MockClient(
+        (request) async => _json([
+          hire(7, 'Deep clean', _message(3, 'on my way', mine: true)),
+          hire(8, 'Laundry', null),
+        ]),
+      ),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: ConversationsView(role: 'worker')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hana Tester'), findsNWidgets(2));
+    expect(find.text('Deep clean'), findsOneWidget);
+    expect(find.text('Laundry'), findsOneWidget);
+    expect(find.text('You: on my way'), findsOneWidget);
+  });
+
+  testWidgets('a day divider above the messages; bubbles show just the time', (
+    tester,
+  ) async {
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        if (request.url.path.endsWith('/read/')) {
+          return _json({'marked_read': 1});
+        }
+        return _json(
+          request.url.queryParameters['after'] == null
+              ? [_message(1, 'hello')]
+              : [],
+        );
+      }),
+    );
+
+    await _openChat(tester);
+    final sent = DateTime.parse('2026-09-23T08:00:00Z').toLocal();
+    expect(find.text('Sep ${sent.day}, 2026'), findsOneWidget);
+    expect(find.text(formatClockTime(sent)), findsOneWidget);
+    expect(find.textContaining('Hana Tester  '), findsNothing);
+    await _closeChat(tester);
+  });
+
+  testWidgets('an empty chat names the person and the job', (tester) async {
+    GawaGoApi.setClient(MockClient((request) async => _json([])));
+
+    await _openChat(tester);
+    expect(
+      find.text(
+        'No messages yet. Send Hana Tester a message about Deep clean.',
+      ),
+      findsOneWidget,
+    );
+    await _closeChat(tester);
+  });
+
+  testWidgets('no polling while the app is in the background', (tester) async {
+    var gets = 0;
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        if (request.method == 'GET') gets++;
+        return _json([]);
+      }),
+    );
+
+    await _openChat(tester);
+    // Flutter only allows these one step at a time.
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    final before = gets;
+    await tester.pump(const Duration(seconds: 13));
+    expect(gets, before, reason: 'paused: no polls');
+
+    for (final state in [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    expect(gets, greaterThan(before), reason: 'catches up on return');
+    await _closeChat(tester);
   });
 }

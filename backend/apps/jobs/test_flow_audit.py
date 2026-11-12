@@ -45,7 +45,7 @@ class OnlyTheHouseholdMarksDoneTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, JobPosting.STATUS_ASSIGNED)
-        self.assertNotIn("Job completed", titles(self.worker))
+        self.assertNotIn("Job marked done", titles(self.worker))
 
     def test_an_admin_can_still_cancel_it(self):
         response = client_for(self.admin).patch(
@@ -301,7 +301,7 @@ class ReviewNoticeUsesTheNameTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.data)
         notice = Notification.objects.get(recipient=worker, notification_type=Notification.TYPE_REVIEW)
-        self.assertEqual(notice.message, "You received a new review from Maria Santos.")
+        self.assertEqual(notice.message, f"Maria Santos rated you 5.0 / 5 for {job.title}.")
         self.assertTrue(Review.objects.filter(job=job, author=household).exists())
 
 

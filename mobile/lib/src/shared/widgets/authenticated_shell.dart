@@ -914,6 +914,32 @@ class NotificationControlsCard extends StatelessWidget {
   }
 }
 
+/// "TODAY", "YESTERDAY", "EARLIER" above each day's notifications.
+class NotificationDayHeading extends StatelessWidget {
+  const NotificationDayHeading({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+      child: Semantics(
+        header: true,
+        child: Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            color: GawaGoColors.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class NotificationActionMenu extends StatelessWidget {
   const NotificationActionMenu({
     super.key,

@@ -8357,6 +8357,45 @@ a,
   background: #fffdf8 !important;
 }
 
+.worker-notifications-page .notification-card.is-clickable {
+  cursor: pointer;
+}
+
+.worker-notifications-page .notification-card.is-clickable:hover {
+  border-color: #b9ad94 !important;
+}
+
+.worker-notifications-page .notification-card.is-clickable:focus-visible {
+  outline: 3px solid rgba(76, 175, 116, 0.45);
+  outline-offset: 2px;
+}
+
+.worker-notifications-count {
+  color: var(--gg-text-muted, #6b6656);
+  font-size: 0.95rem;
+}
+
+.worker-notifications-page .worker-notifications-group {
+  margin: 10px 0 0 !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gg-text-muted, #6b6656) !important;
+}
+
+.worker-notification-new {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gg-leaf, #9ebf5e);
+  color: var(--gg-on-leaf, #1f2a19);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .worker-notifications-page .notification-card h2 {
   margin-bottom: 4px !important;
 }
@@ -13712,7 +13751,8 @@ a,
 .worker-notifications-page .notification-card,
 .worker-hire-request-modal,
 .household-my-jobs-page .job-summary-card,
-.gawago-chat-composer-row input[type="text"] {
+.gawago-chat-composer-row input[type="text"],
+.gawago-chat-composer-row textarea {
   color: var(--gg-text);
 }
 
@@ -14514,6 +14554,18 @@ a,
 
 .worker-dashboard :is(.household-notification-item, .notification-card) :is(.notif-time, time, small) {
   color: var(--gg-ink-faint) !important;
+}
+
+/* Worker Notifications: every card had the leaf stripe, read or not, so
+   nothing looked new. Only unread cards keep it; read ones sit back. */
+.worker-dashboard.worker-notifications-page .notification-card:not(.unread) {
+  border-left-color: transparent !important;
+  background: var(--gg-card-muted) !important;
+  box-shadow: none !important;
+}
+
+.worker-dashboard.worker-notifications-page .notification-card:not(.unread) h2 {
+  font-weight: 600;
 }
 
 .worker-dashboard .household-notifications-panel .household-notifications-filter {
@@ -16390,6 +16442,160 @@ a,
   white-space: nowrap;
   display: inline-block;
   vertical-align: middle;
+}
+
+/* Chat audit, 2026-11-12. */
+/* A message keeps its line breaks, and a long word can't push the bubble wide. */
+.gawago-chat-bubble p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gawago-chat-bubble-meta {
+  justify-content: flex-end;
+}
+
+.gawago-chat-bubble.incoming .gawago-chat-bubble-meta {
+  justify-content: flex-start;
+}
+
+.gawago-chat-day {
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 0;
+  color: #667268;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.gawago-chat-day::before,
+.gawago-chat-day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e4dccd;
+}
+
+/* List entries: one-line name with its count, the job, the last message.
+   Every span in an entry used to be a full-width block, the count too. */
+.gawago-chat-panel-body {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.gawago-chat-conversation-item {
+  grid-template-columns: 38px minmax(0, 1fr);
+}
+
+.gawago-chat-conversation-avatar {
+  width: 38px;
+  height: 38px;
+  font-size: 0.85rem;
+}
+
+.gawago-chat-conversation-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.gawago-chat-conversation-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gawago-chat-conversation-name strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gawago-chat-conversation-copy .gawago-chat-unread-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: auto;
+  overflow: visible;
+  background: #1a4a2e;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* Times on your own (dark) bubbles were grey on dark green. */
+.gawago-chat-bubble.outgoing .gawago-chat-bubble-meta {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.gawago-chat-conversation-copy .gawago-chat-conversation-job {
+  color: #2f5a3d;
+  font-weight: 600;
+}
+
+.gawago-chat-thread {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.gawago-chat-panel-title {
+  min-width: 0;
+}
+
+.gawago-chat-toggle {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.gawago-chat-toggle .material-symbols-outlined {
+  font-size: 24px;
+}
+
+.gawago-chat-composer-row textarea {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  min-height: 50px;
+  max-height: 120px;
+  padding: 13px 14px;
+  border: 1px solid #e4dccd;
+  border-radius: 14px;
+  background: #fffdfa;
+  font: inherit;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+  .gawago-chat-panel-body {
+    grid-template-columns: 1fr;
+  }
+
+  .gawago-chat-panel-head {
+    padding: 12px 14px;
+  }
+
+  .gawago-chat-profile-trigger {
+    width: 44px;
+    height: 44px;
+    font-size: 1rem;
+  }
+
+  .gawago-chat-conversation-list {
+    padding: 8px;
+  }
+
+  .gawago-chat-conversation-item {
+    padding: 8px;
+  }
+
+  /* The send button beside the box, not under it. */
+  .gawago-chat-composer-row.gawago-chat-composer-row-text {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
 }
 
 /* Chat: a finished job's thread is read only. */

@@ -309,9 +309,9 @@ export function useGawaGoActions({
                       id: `hire-request-${selectedJob.id}-${selectedWorker.id}-${Date.now()}`,
                       applicationId: normalizedApplication?.id || applicationRecord.id,
                       jobId: selectedJob.id,
-                      title: isApplicant ? "Application accepted" : "Hire request",
+                      title: isApplicant ? "You're hired" : "Hire request",
                       message: isApplicant
-                        ? `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} accepted your application for ${selectedJob.jobTitle || selectedJob.serviceType}.`
+                        ? `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} hired you for ${selectedJob.jobTitle || selectedJob.serviceType}.`
                         : `${getDisplayName(currentHousehold.firstName, currentHousehold.lastName, currentHousehold.username)} wants to hire you for ${selectedJob.jobTitle || selectedJob.serviceType}.`,
                       date: requestedAt,
                       unread: true,

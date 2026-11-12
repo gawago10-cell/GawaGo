@@ -395,6 +395,8 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
         key: _notificationKey,
         repository: _repository,
         onOpenJob: _openJob,
+        onOpenReviews: () => _select(_WorkerPage.reviews),
+        onOpenMyJobs: () => _select(_WorkerPage.myJobs),
         onToolbarChanged: () => setState(() {}),
         onNotificationsChanged: _refreshUnreadCount,
       ),
@@ -5628,12 +5630,20 @@ class _WorkerNotifications extends StatefulWidget {
     super.key,
     required this.repository,
     required this.onOpenJob,
+    required this.onOpenReviews,
+    required this.onOpenMyJobs,
     required this.onToolbarChanged,
     required this.onNotificationsChanged,
   });
 
   final WorkerRepository repository;
   final ValueChanged<int> onOpenJob;
+
+  /// Where a review notice leads: the reviews page, not the job.
+  final VoidCallback onOpenReviews;
+
+  /// "Job marked done": the household is rated from My Jobs.
+  final VoidCallback onOpenMyJobs;
   final VoidCallback onToolbarChanged;
   final VoidCallback onNotificationsChanged;
 
@@ -5685,6 +5695,16 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
         item.actionType == 'hire_request' &&
         item.applicationId != null) {
       await _showHireRequestDecision(item);
+      _reload();
+      return;
+    }
+    if (item.type == 'review') {
+      widget.onOpenReviews();
+      _reload();
+      return;
+    }
+    if (item.type == 'completion' && item.actionType == 'review') {
+      widget.onOpenMyJobs();
       _reload();
       return;
     }
@@ -6036,9 +6056,7 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
     if (unread.isEmpty) return;
     setState(() => _markingAllRead = true);
     try {
-      for (final item in unread) {
-        await widget.repository.markNotificationRead(item.id);
-      }
+      await widget.repository.markAllNotificationsRead();
       _reload();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -6094,8 +6112,17 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
               const AppEmptyState(
                 message: 'No notifications found for the selected date.',
               ),
-            ...visible.map(
-              (item) => StatusCard(
+            // Under "Today", "Yesterday" and "Earlier", like the website.
+            for (final (index, item) in visible.indexed) ...[
+              if (index == 0 ||
+                  notificationDayGroup(item.createdDate) !=
+                      notificationDayGroup(visible[index - 1].createdDate))
+                NotificationDayHeading(
+                  label: notificationDayGroup(item.createdDate),
+                ),
+              StatusCard(
+                // The card opens it; only the menu did before.
+                onTap: () => _viewDetails(item),
                 icon: item.requiresAction
                     ? Icons.notification_important_outlined
                     : Icons.notifications_none,
@@ -6121,7 +6148,7 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
                   },
                 ),
               ),
-            ),
+            ],
           ],
         );
       },
@@ -6268,10 +6295,10 @@ class _WorkerVerificationState extends State<_WorkerVerification> {
                       ? Icons.verified_outlined
                       : Icons.pending_actions_outlined,
                   title: verified
-                      ? 'You are already verified'
+                      ? "You're verified"
                       : 'Verification is under review',
                   subtitle: verified
-                      ? 'Your worker account has been approved. Your verification details are now read-only.'
+                      ? "${latest.approvedOnSentence}Your documents were approved. There's nothing else you need to do."
                       : 'Your submission is locked while the admin reviews your documents.',
                   status: latest.status,
                 ),

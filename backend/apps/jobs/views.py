@@ -32,6 +32,7 @@ from apps.jobs.services import (
     WithdrawError,
     close_open_applications,
     complete_job,
+    format_job_days,
     get_user_display_name,
     hire_application,
     hold_apply_message,
@@ -687,11 +688,17 @@ class JobApplicationStatusView(APIView):
                     {"detail": "Only pending worker applications can be hired directly."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            # My Applications and My Jobs call this "Hired"; the notice
+            # said "Application accepted".
+            start_day = application.job.job_start_date
             create_notification(
                 recipient=application.worker,
                 notification_type=Notification.TYPE_ACCEPTED,
-                title="Application accepted",
-                message=f"Your application for {application.job.title} was accepted.",
+                title="You're hired",
+                message=(
+                    f"{get_user_display_name(application.job.household)} hired you for {application.job.title}."
+                    + (f" It starts {format_job_days((start_day, start_day))}." if start_day else "")
+                ),
                 actor=application.job.household,
                 related_job_id=application.job_id,
                 related_application_id=application.id,

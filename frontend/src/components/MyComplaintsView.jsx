@@ -107,6 +107,7 @@ function buildHouseholdNavItems({
   openHouseholdProfile,
   openHouseholdGetVerified,
   openHouseholdNotifications,
+  householdUnreadCount,
   verificationNavLabel,
 }) {
   return [
@@ -116,7 +117,7 @@ function buildHouseholdNavItems({
     { id: "flag", label: "My Complaints", active: true },
     { id: "profile", label: "My Profile", section: "Account", onClick: openHouseholdProfile },
     { id: "verified", label: verificationNavLabel, onClick: openHouseholdGetVerified },
-    { id: "notifications", label: "Notifications", onClick: openHouseholdNotifications },
+    { id: "notifications", label: "Notifications", count: householdUnreadCount, onClick: openHouseholdNotifications },
   ];
 }
 
@@ -129,6 +130,7 @@ function buildWorkerNavItems({
   openWorkerGetVerified,
   openWorkerNotifications,
   workerApplicationUnreadCount,
+  workerUnreadCount,
   verificationNavLabel,
 }) {
   return [
@@ -139,7 +141,7 @@ function buildWorkerNavItems({
     { id: "jobs", label: "My Jobs", onClick: openWorkerMyJobs },
     { id: "flag", label: "My Complaints", active: true },
     { id: "verified", label: verificationNavLabel, section: "Account", onClick: openWorkerGetVerified },
-    { id: "notifications", label: "Notifications", onClick: openWorkerNotifications },
+    { id: "notifications", label: "Notifications", count: workerUnreadCount, onClick: openWorkerNotifications },
   ];
 }
 
@@ -168,6 +170,8 @@ export default function MyComplaintsView({
   openWorkerNotifications,
   openWorkerJobDetail,
   workerApplicationUnreadCount,
+  workerUnreadCount = 0,
+  householdUnreadCount = 0,
 }) {
   const [complaints, setComplaints] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -205,6 +209,7 @@ export default function MyComplaintsView({
         openHouseholdProfile,
         openHouseholdGetVerified,
         openHouseholdNotifications,
+        householdUnreadCount,
         verificationNavLabel,
       })
     : role === ROLES.WORKER
@@ -217,6 +222,7 @@ export default function MyComplaintsView({
           openWorkerGetVerified,
           openWorkerNotifications,
           workerApplicationUnreadCount,
+          workerUnreadCount,
           verificationNavLabel,
         })
       : [];

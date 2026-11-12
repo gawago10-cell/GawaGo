@@ -694,8 +694,11 @@ def complete_job(job: JobPosting, actor=None, previous_status=None) -> JobPostin
         create_notification(
             recipient=application.worker,
             notification_type=Notification.TYPE_COMPLETION,
-            title="Job completed",
-            message=f"{job.title} was marked completed.",
+            title="Job marked done",
+            message=(
+                f"{get_user_display_name(job.household)} marked {job.title} as done. "
+                "You can now rate the household; your feedback stays anonymous."
+            ),
             actor=job.household,
             related_job_id=job.id,
             related_application_id=application.id,

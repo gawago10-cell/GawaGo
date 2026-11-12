@@ -148,10 +148,14 @@ class ReviewListCreateView(APIView):
             except IntegrityError:
                 return Response({"detail": "This user has already been reviewed for this completed job."}, status=status.HTTP_400_BAD_REQUEST)
             response_status = status.HTTP_201_CREATED
+        reviewer_name = author_user.get_full_name().strip() or author_user.username
         notification_message = (
             "You received anonymous feedback from a worker."
             if author_role == "worker"
-            else f"You received a new review from {author_user.get_full_name().strip() or author_user.username}."
+            # Used to be only "a new review from <name>": no job, no rating.
+            else f"{reviewer_name} rated you {review.rating:.1f} / 5 for {job.title}."
+            if review.rating is not None
+            else f"{reviewer_name} reviewed your work on {job.title}."
         )
         create_notification(
             recipient=target_user,
@@ -164,6 +168,14 @@ class ReviewListCreateView(APIView):
             action_type=Notification.ACTION_REVIEW,
             action_url=f"/reviews/jobs/{job.id}",
         )
+        if author_role == Review.ROLE_WORKER:
+            # The "Job marked done" notice asked for this feedback.
+            Notification.objects.filter(
+                recipient=author_user,
+                notification_type=Notification.TYPE_COMPLETION,
+                related_job_id=job.id,
+                requires_action=True,
+            ).update(requires_action=False)
         if author_role == Review.ROLE_HOUSEHOLD:
             # The reminder asked for exactly this review; leaving it as an
             # unread action item after it was done read as still owed.
