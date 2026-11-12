@@ -61,7 +61,8 @@ export function parseLocationLabel(locationLabel) {
   const barangayIndex = parts.findIndex((part) => BARANGAYS.some((barangay) => barangay.toLowerCase() === part.replace(/^barangay\s+/i, "").trim().toLowerCase()));
   if (barangayIndex >= 0) {
     const barangay = normalizeBarangayName(parts[barangayIndex]);
-    const streetParts = parts.filter((_, index) => index !== barangayIndex).filter((part) => !/^(tayabas|tayabas city|quezon|philippines)$/i.test(part));
+    // "QZ" is Quezon too: labels like "Anos, QZ" showed it as the street.
+    const streetParts = parts.filter((_, index) => index !== barangayIndex).filter((part) => !/^(tayabas|tayabas city|quezon|qz|philippines)$/i.test(part));
     return {
       barangay,
       streetAddress: streetParts.join(", "),

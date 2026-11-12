@@ -37,8 +37,10 @@ export function formatWorkerRate(amount, suffix = "") {
   return `${formatCurrency(value)}${suffix}`;
 }
 
+// Same wording as the Find Jobs cards ("PHP 600.00/per day"); "PHP 600.00 /
+// Per Day" wrapped onto two lines in table cells.
 export function formatRate(amount, rateType) {
-  return `${formatCurrency(amount)} / ${rateType || "Per Day"}`;
+  return `${formatCurrency(amount)}/${(rateType || "Per Day").toLowerCase()}`;
 }
 
 export function isImagePreviewUrl(url) {

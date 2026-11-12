@@ -33,6 +33,7 @@ export function useGawaGoNavigation({
   setSelectedWorkerId,
   setView,
   setWorkerForm,
+  setWorkerJobDetailOrigin,
   setWorkerProfileForm,
   workerApplications,
   workerNotificationsWithReadState,
@@ -247,9 +248,12 @@ export function useGawaGoNavigation({
     setView("household-job-matches");
   }
 
-  function openWorkerJobDetail(jobId) {
+  // `origin` is the list the worker came from, so the details page highlights
+  // it and its Back button returns there ("find-jobs" or "applications").
+  function openWorkerJobDetail(jobId, origin = "find-jobs") {
     setSelectedJobId(jobId);
     setSelectedWorkerId(null);
+    setWorkerJobDetailOrigin?.(origin);
     setView("worker-job-detail");
   }
 

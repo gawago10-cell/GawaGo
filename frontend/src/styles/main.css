@@ -16751,3 +16751,14 @@ a,
 .pf-sample-list-large .pf-sample-img { height: 240px; }
 .pf-sample-list-large .pf-sample-single { height: 280px; }
 @media (max-width: 575.98px) { .pf-sample-list-large { grid-template-columns: minmax(0, 1fr); } }
+
+/* My Applications (audit 2026-11-12): the rate stays on one line, and the
+   "Invited" line under the date is only for the full table -- a stacked
+   card's row label already says "Invited". */
+.worker-applications-table td[data-label="Rate"] { white-space: nowrap; }
+@media (max-width: 640px) {
+  .worker-applications-table .worker-application-invited { display: none; }
+}
+@container ggstack (max-width: 780px) {
+  .gg-stack-table:not(.gg-stack-wide) .worker-application-invited { display: none; }
+}

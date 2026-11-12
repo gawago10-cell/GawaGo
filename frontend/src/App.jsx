@@ -251,6 +251,8 @@ function App() {
   // Kept per tab so a reload of a job detail or matches screen shows the
   // same job: the URL hash only carries the view, and without this the page
   // fell back to whichever job happened to be first.
+  // Which list opened the worker's job details: "find-jobs" or "applications".
+  const [workerJobDetailOrigin, setWorkerJobDetailOrigin] = useState("find-jobs");
   const [selectedJobId, setSelectedJobId] = useState(() => {
     try {
       return window.sessionStorage.getItem(SELECTED_JOB_STORAGE_KEY) || null;
@@ -742,6 +744,7 @@ function App() {
             updatedAt: application.updatedAt,
             applicationStatus: application.status,
             applicationStatusLabel: application.statusLabel || "",
+            applicationInvited: Boolean(application.invited),
             applicationId: application.id,
             canWithdraw: application.canWithdraw,
             canBackOut: application.canBackOut,
@@ -1147,6 +1150,7 @@ function App() {
     openWorkerProfile,
     openWorkerRegister,
   } = useGawaGoNavigation({
+    setWorkerJobDetailOrigin,
     backendNotifications,
     currentHousehold,
     currentUser,
@@ -1599,6 +1603,7 @@ function App() {
           handleWorkerHireDecision={handleWorkerHireDecision}
           handleWorkerWithdraw={handleWorkerWithdraw}
           openWorkerApplications={openWorkerApplications}
+          origin={workerJobDetailOrigin}
           openWorkerDashboard={openWorkerDashboard}
           openWorkerFindJobs={openWorkerFindJobs}
           openWorkerGetVerified={openWorkerGetVerified}

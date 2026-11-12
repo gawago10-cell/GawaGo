@@ -568,6 +568,7 @@ class WorkerApplication {
     required this.statusLabel,
     required this.note,
     required this.appliedAt,
+    this.invited = false,
   });
 
   final int id;
@@ -615,6 +616,9 @@ class WorkerApplication {
   final String note;
   final String appliedAt;
 
+  /// The household invited this worker rather than the worker applying.
+  final bool invited;
+
   factory WorkerApplication.fromJson(Map<String, dynamic> json) {
     return WorkerApplication(
       id: _integer(json['id']),
@@ -652,6 +656,7 @@ class WorkerApplication {
       statusLabel: _text(json['status_label']),
       note: _text(json['note']),
       appliedAt: _text(json['applied_at']),
+      invited: json['invited'] == true,
     );
   }
 }

@@ -156,4 +156,21 @@ void main() {
     expect(profile.ratingCount, 1);
     expect(profile.verificationLabel, 'Not submitted');
   });
+
+  test('an application says whether the household invited the worker', () {
+    final invited = WorkerApplication.fromJson({
+      'id': 1,
+      'job_id': 2,
+      'status': 'hired',
+      'invited': true,
+    });
+    final applied = WorkerApplication.fromJson({
+      'id': 3,
+      'job_id': 4,
+      'status': 'pending',
+    });
+
+    expect(invited.invited, isTrue);
+    expect(applied.invited, isFalse);
+  });
 }

@@ -357,7 +357,14 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
         onApplied: _refreshAfterJobAction,
         initialSkill: _initialJobSkill,
       ),
-      _WorkerPage.applications => _WorkerApplications(repository: _repository),
+      _WorkerPage.applications => _WorkerApplications(
+        repository: _repository,
+        onOpenJob: (id) => _openJob(
+          id,
+          backLabel: 'Back to My Applications',
+          refreshPage: _WorkerPage.applications,
+        ),
+      ),
       _WorkerPage.myJobs => _WorkerMyJobs(
         repository: _repository,
         onChanged: _refreshAll,
@@ -389,13 +396,20 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
     };
   }
 
-  Future<void> _openJob(int id) async {
+  /// [backLabel] names the list Back returns to, and [refreshPage] is the
+  /// page shown after a change there.
+  Future<void> _openJob(
+    int id, {
+    String backLabel = 'Back to Find Jobs',
+    _WorkerPage refreshPage = _WorkerPage.myJobs,
+  }) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _WorkerJobDetail(
           repository: _repository,
           jobId: id,
-          onChanged: () => _refreshAll(page: _WorkerPage.myJobs),
+          backLabel: backLabel,
+          onChanged: () => _refreshAll(page: refreshPage),
         ),
       ),
     );
@@ -2122,11 +2136,15 @@ class _WorkerJobDetail extends StatefulWidget {
     required this.repository,
     required this.jobId,
     required this.onChanged,
+    this.backLabel = 'Back to Find Jobs',
   });
 
   final WorkerRepository repository;
   final int jobId;
   final VoidCallback onChanged;
+
+  /// The list Back returns to (the page that opened this one).
+  final String backLabel;
 
   @override
   State<_WorkerJobDetail> createState() => _WorkerJobDetailState();
@@ -2455,7 +2473,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                 actions: actions,
                 backLabel: job.canAcceptHireRequest
                     ? 'Back to Notifications'
-                    : 'Back to Find Jobs',
+                    : widget.backLabel,
                 notice: notice,
                 onBack: () => Navigator.pop(context),
               ),
@@ -2909,9 +2927,15 @@ class _WorkerMyReportsState extends State<_WorkerMyReports> {
 }
 
 class _WorkerApplications extends StatefulWidget {
-  const _WorkerApplications({required this.repository});
+  const _WorkerApplications({
+    required this.repository,
+    required this.onOpenJob,
+  });
 
   final WorkerRepository repository;
+
+  /// Opens the job's details; the list had no way there.
+  final ValueChanged<int> onOpenJob;
 
   @override
   State<_WorkerApplications> createState() => _WorkerApplicationsState();
@@ -3007,6 +3031,10 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
                                       child: Text('Awaiting Confirmation'),
                                     ),
                                     DropdownMenuItem<String?>(
+                                      value: 'Waiting to be marked done',
+                                      child: Text('Waiting to be marked done'),
+                                    ),
+                                    DropdownMenuItem<String?>(
                                       value: 'Completed',
                                       child: Text('Completed'),
                                     ),
@@ -3061,6 +3089,7 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
                       ...visible.map(
                         (item) => _WorkerApplicationRow(
                           application: item,
+                          onOpenJob: () => widget.onOpenJob(item.jobId),
                           onStepAway: item.canWithdraw || item.canBackOut
                               ? () async {
                                   final done = await _stepAwayFromJob(
@@ -3087,9 +3116,14 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
 /// One application inside the My Applications card: title and live status on
 /// the header line, then the facts a worker checks before following up.
 class _WorkerApplicationRow extends StatelessWidget {
-  const _WorkerApplicationRow({required this.application, this.onStepAway});
+  const _WorkerApplicationRow({
+    required this.application,
+    required this.onOpenJob,
+    this.onStepAway,
+  });
 
   final WorkerApplication application;
+  final VoidCallback onOpenJob;
 
   /// Withdraw (pending) or back out (hired, before the start); null if neither.
   final VoidCallback? onStepAway;
@@ -3142,16 +3176,22 @@ class _WorkerApplicationRow extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 3),
-          Text(
-            application.jobType.isEmpty ? 'Not set' : application.jobType,
-            style: const TextStyle(
-              color: GawaGoColors.leafDeep,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
+          // Left out when it only repeats the title (a job named after its
+          // own service showed the same text twice).
+          if (application.jobType.isNotEmpty &&
+              application.jobType.trim().toLowerCase() !=
+                  application.jobTitle.trim().toLowerCase()) ...[
+            const SizedBox(height: 3),
+            Text(
+              application.jobType,
+              style: const TextStyle(
+                color: GawaGoColors.leafDeep,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
             ),
-          ),
+          ],
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3163,8 +3203,9 @@ class _WorkerApplicationRow extends StatelessWidget {
               Expanded(
                 child: _ApplicationFact(
                   label: 'Rate',
+                  // Same wording as the Find Jobs cards and the web.
                   value:
-                      'PHP ${application.serviceRate.toStringAsFixed(2)} / ${application.rateTypeLabel}',
+                      'PHP ${application.serviceRate.toStringAsFixed(2)}/${application.rateTypeLabel.toLowerCase()}',
                 ),
               ),
             ],
@@ -3214,15 +3255,28 @@ class _WorkerApplicationRow extends StatelessWidget {
           ],
           const SizedBox(height: 12),
           Text(
-            'Applied ${formatLocalDateTime(application.appliedAt)}',
+            '${application.invited ? 'Invited' : 'Applied'} '
+            '${formatLocalDateTime(application.appliedAt)}',
             style: const TextStyle(
               color: GawaGoColors.textFaint,
               fontSize: 13,
               letterSpacing: 0,
             ),
           ),
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: onOpenJob,
+            style: TextButton.styleFrom(
+              foregroundColor: GawaGoColors.leafDeep,
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 36),
+            ),
+            child: const Text(
+              'View job',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
           if (onStepAway != null) ...[
-            const SizedBox(height: 6),
             TextButton(
               onPressed: onStepAway,
               style: TextButton.styleFrom(

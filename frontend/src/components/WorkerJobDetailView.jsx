@@ -38,7 +38,11 @@ export default function WorkerJobDetailView({
   openWorkerProfile,
   workerApplicationUnreadCount,
   addToast,
+  origin = "find-jobs",
 }) {
+  const fromApplications = origin === "applications";
+  const backToList = fromApplications ? openWorkerApplications : openWorkerFindJobs;
+  const backToListLabel = fromApplications ? "Back to My Applications" : "Back to Find Jobs";
   const job = currentWorkerJobDetail;
   const household = currentWorkerJobHousehold;
   const householdName = getDisplayName(
@@ -128,7 +132,7 @@ export default function WorkerJobDetailView({
                 {
                   id: "find-jobs",
                   label: "Find Jobs",
-                  active: true,
+                  active: !fromApplications,
                   onClick: openWorkerFindJobs,
                 },
                 {
@@ -139,6 +143,7 @@ export default function WorkerJobDetailView({
                 {
                   id: "applications",
                   label: "My Applications",
+                  active: fromApplications,
                   count: workerApplicationUnreadCount,
                   onClick: openWorkerApplications,
                 },
@@ -176,8 +181,8 @@ export default function WorkerJobDetailView({
                   <div className="profile-card-head">Job not found</div>
                   <div className="p-3">
                     <p className="mb-3 text-muted">This job is no longer available or could not be loaded.</p>
-                    <button className="btn btn-primary" type="button" onClick={openWorkerFindJobs}>
-                      Back to Find Jobs
+                    <button className="btn btn-primary" type="button" onClick={backToList}>
+                      {backToListLabel}
                     </button>
                   </div>
                 </div>
@@ -213,7 +218,12 @@ export default function WorkerJobDetailView({
                     <div className="profile-card worker-job-info-card">
                       <div className="profile-card-head d-flex justify-content-between align-items-center gap-3">
                         <span>{job.jobTitle || job.serviceType}</span>
-                        <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>{getJobStatusText(job)}</span>
+                        {/* A hired worker sees their own status, the same words as My
+                            Applications ("Waiting to be marked done" once the last day
+                            has passed), not the job's. */}
+                        <span className={`badge ${getJobStatusBadgeClass(job.status)}`}>
+                          {(isAssignedWorker && currentWorkerApplication?.statusLabel) || getJobStatusText(job)}
+                        </span>
                       </div>
                       <div className="worker-job-info-body">
                         <dl className="worker-job-detail-list">
@@ -281,9 +291,9 @@ export default function WorkerJobDetailView({
                           <button
                             className="btn btn-outline-secondary btn-sm"
                             type="button"
-                            onClick={canAcceptHireRequest ? openWorkerNotifications : openWorkerFindJobs}
+                            onClick={canAcceptHireRequest ? openWorkerNotifications : backToList}
                           >
-                            {canAcceptHireRequest ? "Back to Notifications" : "Back to Find Jobs"}
+                            {canAcceptHireRequest ? "Back to Notifications" : backToListLabel}
                           </button>
                           {canAcceptHireRequest ? (
                             <>
@@ -322,9 +332,13 @@ export default function WorkerJobDetailView({
                               onClick={() => handleApplyToJob(job.id)}
                             >
                               {alreadyApplied
-                                ? hasRejectedHireRequest
-                                  ? "Request Rejected"
-                                  : "Already Applied"
+                                ? isAssignedWorker
+                                  ? currentWorkerApplicationStatus === "Completed"
+                                    ? "Completed"
+                                    : "Hired"
+                                  : hasRejectedHireRequest
+                                    ? "Request Rejected"
+                                    : "Already Applied"
                                 : job.applyBlockedReason
                                   ? "Not available"
                                   : hasWithdrawn

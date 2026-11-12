@@ -51,7 +51,7 @@ class ConversationSerializer(serializers.Serializer):
             "job_id": job.id,
             "job_title": job.title,
             "job_status": job.status,
-            "status_label": get_stage_label(get_application_stage(application.status, job.status)),
+            "status_label": get_stage_label(get_application_stage(application.status, job.status, job=job)),
             # The job is done or cancelled: the thread can be read, not added to.
             "read_only": job.status not in (job.STATUS_ASSIGNED, job.STATUS_COMPLETION_REQUESTED),
             "service_rate": str(job.service_rate),

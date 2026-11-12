@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -64,6 +65,10 @@ def applicant_sort_key(application, distance_km):
     return (inactive, 0, smart_match_sort_key(application.job, profile, distance_km))
 
 logger = logging.getLogger(__name__)
+
+# How soon after an application is created a household request counts as
+# the invitation that created it (see get_invited).
+INVITE_WINDOW = timedelta(minutes=1)
 
 def validate_offered_rate(value):
     """A job pays something: PHP 0.00 or PHP 0.11 posts made the agreed rate
@@ -170,9 +175,24 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     household_can_review = serializers.SerializerMethodField()
     status_stage = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
+    invited = serializers.SerializerMethodField()
 
     def get_status_stage(self, obj):
-        return get_application_stage(obj.status, obj.job.status)
+        return get_application_stage(obj.status, obj.job.status, job=obj.job)
+
+    def get_invited(self, obj):
+        """True when the household invited this worker instead of the worker
+        applying. The invite view creates the application and moves it to
+        hire_requested at once, logging that first change as the household's;
+        applying logs nothing, and a later invite of an applicant comes long
+        after the application, so those read as applied."""
+        first = obj.status_events.order_by("created_at", "id").first()
+        return bool(
+            first
+            and first.to_status == JobApplication.STATUS_HIRE_REQUESTED
+            and first.actor_id == obj.job.household_id
+            and first.created_at - obj.applied_at <= INVITE_WINDOW
+        )
 
     def get_household_can_review(self, obj):
         """Whether the job's household can still review *this* worker. The
@@ -203,6 +223,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "id",
             "status_stage",
             "status_label",
+            "invited",
             "job_id",
             "job_title",
             "job_type",

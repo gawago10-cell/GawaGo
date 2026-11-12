@@ -4160,20 +4160,38 @@ export default function AppViews({
                           <th>Location</th>
                           <th>Rate</th>
                           <th>Status</th>
-                          <th>Applied</th>
+                          <th>Applied / Invited</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {visibleWorkerApplications.map((job) => (
+                        {visibleWorkerApplications.map((job) => {
+                          // A line repeating the one above it is left out: a job whose
+                          // title, service and description were the same text showed
+                          // it three times.
+                          const title = job.jobTitle || job.serviceType;
+                          const sameText = (a, b) =>
+                            String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+                          const showService = job.serviceType && !sameText(job.serviceType, title);
+                          const showDescription =
+                            job.description && !sameText(job.description, title) && !sameText(job.description, job.serviceType);
+                          return (
                             <tr key={`${job.id}-${job.appliedAt}`}>
                               <td>
-                                <div className="fw-semibold">{job.jobTitle || job.serviceType}</div>
-                                <div className="small text-muted">{job.serviceType || "Service not specified"}</div>
-                                {job.description && (
+                                <div className="fw-semibold">{title}</div>
+                                {showService && <div className="small text-muted">{job.serviceType}</div>}
+                                {showDescription && (
                                   <div className="small text-muted worker-application-description">
                                     {job.description.length > 90 ? `${job.description.slice(0, 90)}...` : job.description}
                                   </div>
                                 )}
+                                {/* The list had no way to the job's details. */}
+                                <button
+                                  type="button"
+                                  className="btn btn-link btn-sm p-0 worker-application-view"
+                                  onClick={() => openWorkerJobDetail(job.id, "applications")}
+                                >
+                                  View job
+                                </button>
                               </td>
                               <td data-label="Household">{job.householdName || "Household"}</td>
                               <td data-label="Schedule">
@@ -4209,9 +4227,19 @@ export default function AppViews({
                                   )}
                                 </div>
                               </td>
-                              <td data-label="Applied">{formatDateTime(job.appliedAt)}</td>
+                              <td data-label={job.applicationInvited ? "Invited" : "Applied"}>
+                                {/* One wrapper, so the stacked card keeps the date beside its
+                                    label; there the label already says "Invited". */}
+                                <div>
+                                  {job.applicationInvited && (
+                                    <div className="small fw-semibold worker-application-invited">Invited</div>
+                                  )}
+                                  {formatDateTime(job.appliedAt)}
+                                </div>
+                              </td>
                             </tr>
-                          ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

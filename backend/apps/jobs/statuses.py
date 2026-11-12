@@ -13,6 +13,7 @@ from .models import JobApplication, JobPosting
 STAGE_PENDING = "pending"
 STAGE_AWAITING_WORKER = "awaiting_worker"
 STAGE_IN_PROGRESS = "in_progress"
+STAGE_AWAITING_MARK_DONE = "awaiting_mark_done"
 STAGE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 STAGE_COMPLETED = "completed"
 STAGE_REJECTED = "rejected"
@@ -25,6 +26,7 @@ STAGE_LABELS = {
     STAGE_PENDING: "Pending",
     STAGE_AWAITING_WORKER: "Awaiting worker response",
     STAGE_IN_PROGRESS: "In progress",
+    STAGE_AWAITING_MARK_DONE: "Waiting to be marked done",
     STAGE_AWAITING_CONFIRMATION: "Awaiting confirmation",
     STAGE_COMPLETED: "Completed",
     STAGE_REJECTED: "Rejected",
@@ -35,7 +37,7 @@ STAGE_LABELS = {
 }
 
 
-def get_application_stage(application_status, job_status=None):
+def get_application_stage(application_status, job_status=None, job=None):
     # The worker's own decision to step away reads the same whatever the job
     # did afterwards.
     if application_status == JobApplication.STATUS_WITHDRAWN:
@@ -55,6 +57,15 @@ def get_application_stage(application_status, job_status=None):
     if application_status == JobApplication.STATUS_HIRED:
         if job_status == JobPosting.STATUS_COMPLETION_REQUESTED:
             return STAGE_AWAITING_CONFIRMATION
+        # Past the job's last day only the household can finish it
+        # (can_mark_done); "In progress" read as if the work were still
+        # going on (My Applications audit, 2026-11-12). Callers that pass
+        # the job get this; the stage stays the same without it.
+        if job is not None and job_status == JobPosting.STATUS_ASSIGNED:
+            from .services import job_has_lapsed
+
+            if job_has_lapsed(job):
+                return STAGE_AWAITING_MARK_DONE
         return STAGE_IN_PROGRESS
     if application_status == JobApplication.STATUS_HIRE_REQUESTED:
         return STAGE_AWAITING_WORKER
