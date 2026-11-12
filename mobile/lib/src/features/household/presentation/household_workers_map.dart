@@ -176,6 +176,7 @@ class _HouseholdWorkersMapState extends State<HouseholdWorkersMap> {
                           ),
                       ],
                     ),
+                    if (shouldLoadMapTiles) osmAttribution(),
                   ],
                 ),
                 Positioned(

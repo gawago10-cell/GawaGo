@@ -1725,6 +1725,7 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
                             ),
                           ],
                   ),
+                  if (shouldLoadMapTiles) osmAttribution(),
                 ],
               ),
             ),

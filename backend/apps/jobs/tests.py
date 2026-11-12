@@ -2575,6 +2575,12 @@ class SameDaysRuleTests(TestCase):
     when they're hired (panel review, 2026-11-01)."""
 
     def setUp(self):
+        # The jobs below have fixed November 2026 dates; hold "today" before
+        # them, or they lapse once the calendar passes (and every hold with
+        # them).
+        today = patch("django.utils.timezone.localdate", return_value=date(2026, 11, 4))
+        today.start()
+        self.addCleanup(today.stop)
         self.client = APIClient()
         self.home_a = User.objects.create_user(username="sd-home-a", password="password", first_name="Emman", last_name="Aviles")
         self.home_b = User.objects.create_user(username="sd-home-b", password="password", first_name="Ralph", last_name="Amarillo")

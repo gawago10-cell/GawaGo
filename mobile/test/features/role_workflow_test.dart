@@ -155,10 +155,13 @@ void main() {
     // Rate, schedule and distance as the card lays them out.
     expect(find.text('Cleaning'), findsWidgets);
     expect(find.text('One-Time'), findsOneWidget);
+    // One date line: the start date used to show there and again in a
+    // period line below it.
     expect(
-      find.text('2026-06-12 to 2026-06-12 (1 working day)'),
+      find.textContaining('Jun 12, 2026 (1 working day)', findRichText: true),
       findsOneWidget,
     );
+    expect(find.textContaining('2026-06-12'), findsNothing);
   });
 
   testWidgets('worker job detail matches the website card order and rows', (
@@ -222,7 +225,7 @@ void main() {
     expect(find.text('FULL-TIME'), findsOneWidget);
     expect(find.text('Job Period'), findsOneWidget);
     expect(
-      find.text('2026-06-12 TO 2026-06-15 (3 WORKING DAYS)'),
+      find.text('2026-06-12 TO 2026-06-15 (3 WORKING DAYS OUT OF 4)'),
       findsOneWidget,
     );
     expect(find.text('Working Days'), findsOneWidget);

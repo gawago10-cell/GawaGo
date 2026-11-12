@@ -6,18 +6,31 @@ import 'package:gawago_mobile/src/shared/widgets/profile_section.dart';
 Widget _host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
-  testWidgets('explains the match as skill fit versus proximity', (
+  testWidgets('an exact match reads as a full skill fit, not its 70% share', (
     tester,
   ) async {
     await tester.pumpWidget(
       _host(
-        const AiMatchBreakdown(skillSharePercent: 70, exactSkillMatch: true),
+        const AiMatchBreakdown(
+          skillContribution: 0.7,
+          proximityContribution: 0.3,
+          skillSimilarity: 1,
+          distanceKm: 0,
+          exactSkillMatch: true,
+        ),
       ),
     );
 
     expect(
       find.text(
-        'Why this match: 70% skill fit, 30% proximity — exact skill match',
+        'Why this match: 100% skill fit (exact skill match), '
+        'under 0.1 km away',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel(
+        '100% match: 70 points from skill fit, 30 from distance',
       ),
       findsOneWidget,
     );
@@ -28,7 +41,13 @@ void main() {
   ) async {
     await tester.pumpWidget(
       _host(
-        const AiMatchBreakdown(skillSharePercent: null, exactSkillMatch: false),
+        const AiMatchBreakdown(
+          skillContribution: 0,
+          proximityContribution: 0,
+          skillSimilarity: 0,
+          distanceKm: null,
+          exactSkillMatch: false,
+        ),
       ),
     );
 

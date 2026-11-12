@@ -1042,3 +1042,48 @@ class RadiusWithoutRoutingTests(TestCase):
         JobPosting.objects.filter(pk=self.job.pk).update(worker_slots=1)
         with patch("apps.matching.recommendations.get_road_route_for_match", return_value=self.no_route):
             self.assertNotIn(self.job.id, [row["job"].id for row in get_recommended_jobs(self.near.user)])
+
+
+class RecommendedJobsLeaveOutTests(TestCase):
+    """Find Jobs for Me recommends only jobs the worker's skills fit and can
+    still apply to (Find Jobs audit, 2026-11-12)."""
+
+    def setUp(self):
+        RecommendedWorkersRankingTests.setUp(self)
+        self.worker = RecommendedWorkersRankingTests.create_worker_profile(
+            self, "audit-worker", ["House Cleaning"], verification_status="verified"
+        ).user
+        self.route = {"distance_km": 0.2, "route_points": []}
+
+    def recommended_ids(self):
+        from apps.matching.recommendations import get_recommended_jobs
+
+        with patch("apps.matching.recommendations.get_road_route_for_match", return_value=self.route):
+            return [row["job"].id for row in get_recommended_jobs(self.worker)]
+
+    def test_a_nearby_job_no_skill_fits_is_not_recommended(self):
+        elder_care = JobPosting.objects.create(
+            household=self.household, title="Elder care", job_type="Elder Care", required_skill="Elder Care",
+            schedule="Flexible schedule", location_label="Isabang, Tayabas",
+            latitude="13.9622745", longitude="121.5632841", service_rate="500.00", max_distance_km=10.0,
+        )
+
+        ids = self.recommended_ids()
+        self.assertIn(self.job.id, ids)
+        self.assertNotIn(elder_care.id, ids)
+
+    def test_jobs_already_applied_to_are_left_out_until_the_worker_may_apply_again(self):
+        application = JobApplication.objects.create(
+            job=self.job, worker=self.worker, status=JobApplication.STATUS_PENDING
+        )
+        for status in [
+            JobApplication.STATUS_PENDING,
+            JobApplication.STATUS_HIRE_REQUESTED,
+            JobApplication.STATUS_REJECTED,
+        ]:
+            JobApplication.objects.filter(pk=application.pk).update(status=status)
+            self.assertNotIn(self.job.id, self.recommended_ids(), status)
+
+        for status in [JobApplication.STATUS_WITHDRAWN, JobApplication.STATUS_CLOSED]:
+            JobApplication.objects.filter(pk=application.pk).update(status=status)
+            self.assertIn(self.job.id, self.recommended_ids(), status)

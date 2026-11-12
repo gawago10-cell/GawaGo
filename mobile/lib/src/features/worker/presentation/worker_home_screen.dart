@@ -1267,8 +1267,11 @@ class _WorkerJobsState extends State<_WorkerJobs> {
                   if (_aiJobs.isEmpty)
                     const AppEmptyState(
                       message:
-                          'No matching jobs found within your job radius right '
-                          'now.',
+                          'No job that fits your skills is within the distance '
+                          'its household set. Each household chooses how far '
+                          'away its workers can be. Jobs farther off still '
+                          'show when you go back to browsing, and you can '
+                          'apply to them there.',
                     )
                   else
                     ..._aiJobs.map(
@@ -1278,7 +1281,11 @@ class _WorkerJobsState extends State<_WorkerJobs> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             AiMatchBreakdown(
-                              skillSharePercent: match.skillSharePercent,
+                              skillContribution: match.skillContribution,
+                              proximityContribution:
+                                  match.proximityContribution,
+                              skillSimilarity: match.skillSimilarity,
+                              distanceKm: match.distanceKm,
                               exactSkillMatch: match.exactSkillMatch,
                             ),
                             const SizedBox(height: 8),
@@ -1693,19 +1700,16 @@ class _AvailableJobCard extends StatelessWidget {
                       ),
                     if (job.scheduleType.isNotEmpty)
                       _JobCardChip(label: job.scheduleType),
+                    // A job needing several workers says how many are
+                    // still wanted.
+                    if (job.workerSlots > 1)
+                      _JobCardChip(
+                        label:
+                            '${(job.workerSlots - job.hiredCount).clamp(0, job.workerSlots)} '
+                            'of ${job.workerSlots} spots open',
+                      ),
                   ],
                 ),
-                if (job.jobStartDate.isNotEmpty ||
-                    job.jobEndDate.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    _jobPeriodLabel(job),
-                    style: const TextStyle(
-                      color: GawaGoColors.textFaint,
-                      fontSize: 13.5,
-                    ),
-                  ),
-                ],
                 if (job.applyBlockedReason.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   ApplyBlockedNote(
@@ -1961,7 +1965,7 @@ class _JobCardWhenRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final when = _jobStartDateLabel(job);
+    final when = _jobCardWhenLabel(job);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2053,19 +2057,35 @@ String _householdInitials(String name) {
   return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
 }
 
-String _jobStartDateLabel(WorkerJob job) {
-  if (job.jobStartDate.isNotEmpty) return _jobDate(job.jobStartDate);
-  return _scheduleLabel(job.schedule);
+/// When the job runs, for the card's one date line: the start date used to
+/// show there and again in a period line below it.
+String _jobCardWhenLabel(WorkerJob job) {
+  if (job.jobStartDate.isEmpty && job.jobEndDate.isEmpty) {
+    return _scheduleLabel(job.schedule);
+  }
+  final start = job.jobStartDate.isEmpty
+      ? 'Start not set'
+      : _jobDate(job.jobStartDate);
+  final end = job.jobEndDate.isNotEmpty && job.jobEndDate != job.jobStartDate
+      ? ' to ${_jobDate(job.jobEndDate)}'
+      : '';
+  final days = workingDaysText(
+    job.jobStartDate,
+    job.jobEndDate,
+    job.estimatedWorkingDays,
+  );
+  return '$start$end${days.isEmpty ? '' : ' ($days)'}';
 }
 
 String _jobPeriodLabel(WorkerJob job) {
   final start = job.jobStartDate.isEmpty ? 'Not set' : job.jobStartDate;
   final end = job.jobEndDate.isEmpty ? '' : ' to ${job.jobEndDate}';
-  final days = job.estimatedWorkingDays == null
-      ? ''
-      : ' (${job.estimatedWorkingDays} working '
-            '${job.estimatedWorkingDays == 1 ? 'day' : 'days'})';
-  return '$start$end$days';
+  final days = workingDaysText(
+    job.jobStartDate,
+    job.jobEndDate,
+    job.estimatedWorkingDays,
+  );
+  return '$start$end${days.isEmpty ? '' : ' ($days)'}';
 }
 
 class _SkillMatchPill extends StatelessWidget {
@@ -4415,6 +4435,7 @@ class _ProfileFormState extends State<_ProfileForm> {
                                 ),
                               ],
                             ),
+                          if (shouldLoadMapTiles) osmAttribution(),
                         ],
                       ),
                     ),

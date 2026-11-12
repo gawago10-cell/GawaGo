@@ -140,6 +140,7 @@ void main() {
       'worker_rating_count': 3,
       'worker_completed_jobs': 5,
       'ai_score': 0.76,
+      'skill_similarity': 0.86,
       'skill_contribution': 0.6,
       'proximity_contribution': 0.2,
       'exact_skill_match': true,
@@ -149,12 +150,13 @@ void main() {
     expect(worker.aiScore, 0.76);
     expect(worker.completedJobs, 5);
     expect(worker.exactSkillMatch, isTrue);
-    // 0.6 of a 0.8 total, rounded to a whole percent.
-    expect(worker.skillSharePercent, 75);
+    expect(worker.skillSimilarity, 0.86);
+    expect(worker.skillContribution, 0.6);
+    expect(worker.proximityContribution, 0.2);
   });
 
   test('displayName falls back to the username and an unexplained '
-      'match reports no skill share', () {
+      'match reports no breakdown', () {
     final worker = RecommendedWorker.fromJson({
       'worker_id': 9,
       'worker_username': 'worker9',
@@ -162,7 +164,8 @@ void main() {
     });
 
     expect(worker.displayName, 'worker9');
-    expect(worker.skillSharePercent, isNull);
+    expect(worker.skillSimilarity, 0);
+    expect(worker.skillContribution + worker.proximityContribution, 0);
   });
 
   test('job history prefers the confirmed completion date', () {

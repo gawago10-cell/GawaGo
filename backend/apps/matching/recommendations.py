@@ -267,12 +267,14 @@ def get_recommended_jobs(worker: User, limit: int = 20):
     open_jobs = list(
         jobs_accepting_applications(JobPosting.objects.all())
         .exclude(household_id=worker.id)
-        # A multi-worker job stays open after a hire; the worker hired on
-        # it doesn't need it recommended back (second scan, 2026-11-01).
+        # Leave out jobs the worker already applied to, was hired on (a
+        # multi-worker job stays open after a hire; second scan, 2026-11-01)
+        # or was turned down for. A withdrawn or closed application can
+        # apply again (JobApplicationView), so those jobs stay.
         .exclude(
-            pk__in=JobApplication.objects.filter(
-                worker=worker, status__in=[JobApplication.STATUS_HIRED, JobApplication.STATUS_COMPLETED]
-            ).values("job_id")
+            pk__in=JobApplication.objects.filter(worker=worker)
+            .exclude(status__in=[JobApplication.STATUS_WITHDRAWN, JobApplication.STATUS_CLOSED])
+            .values("job_id")
         )
         .exclude(currently_suspended_q("household__profile__"))
         .select_related("household")
@@ -291,7 +293,10 @@ def get_recommended_jobs(worker: User, limit: int = 20):
             continue
 
         scored = score_pair_with_distance(job, profile, distance_km)
-        if scored is None:
+        # A job none of the worker's skills fit isn't a recommendation, however
+        # close it is -- the household direction drops these too
+        # (RecommendedWorkersView). Browsing still lists it.
+        if scored is None or scored["skill_similarity"] <= 0:
             continue
         results.append({"job": job, **scored})
 

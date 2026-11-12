@@ -349,6 +349,7 @@ export function useBackendSync({
             matchScore: result.match_score,
             availableAtRequestedTime: result.available_at_requested_time,
             aiScore: result.ai_score,
+            aiSkillSimilarity: result.skill_similarity,
             aiSkillContribution: result.skill_contribution,
             aiProximityContribution: result.proximity_contribution,
             aiExactSkillMatch: result.exact_skill_match,

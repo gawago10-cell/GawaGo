@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
+import JobScheduleBox, { JobScheduleLines, workingDaysText } from "./JobScheduleBox";
 import { formatJobDay } from "../utils/formatters";
 
 describe("formatJobDay", () => {
@@ -63,6 +63,15 @@ describe("JobScheduleBox", () => {
     rerender(<JobScheduleLines startDate="" endDate="" scheduleLabel="Part-Time" />);
     expect(screen.getByText("Part-Time")).toBeTruthy();
     expect(screen.queryByText("Not set")).toBeNull();
+  });
+
+  it("says when the working days are fewer than the dates span", () => {
+    at("2026-10-31");
+    render(<JobScheduleBox startDate="2026-12-08" endDate="2026-12-09" workingDays={1} />);
+    expect(screen.getByText("1 working day out of 2")).toBeTruthy();
+    expect(workingDaysText("2026-12-08", "2026-12-10", 3)).toBe("3 working days");
+    expect(workingDaysText("2026-12-08", "", 2)).toBe("2 working days");
+    expect(workingDaysText("2026-12-08", "2026-12-09", null)).toBe("");
   });
 
   it("says Not set for a missing end on a longer job", () => {

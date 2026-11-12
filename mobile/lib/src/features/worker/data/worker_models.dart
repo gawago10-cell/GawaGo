@@ -386,15 +386,6 @@ class RecommendedJob {
 
   int get matchPercent => (aiScore * 100).round();
 
-  /// Share of the score that came from skill fit, as a whole percentage.
-  /// Null when nothing could be scored, so the UI can hide the breakdown
-  /// rather than draw an empty bar.
-  int? get skillSharePercent {
-    final total = skillContribution + proximityContribution;
-    if (total <= 0) return null;
-    return ((skillContribution / total) * 100).round();
-  }
-
   factory RecommendedJob.fromJson(Map<String, dynamic> json) {
     return RecommendedJob(
       job: WorkerJob.fromJson(_map(json['job'])),

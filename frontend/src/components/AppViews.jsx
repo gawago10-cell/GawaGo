@@ -17,7 +17,7 @@ import VerificationBanFlag from "./VerificationBanFlag";
 import WorkerPortfolioViewPublic from "./WorkerPortfolioViewPublic";
 import VerificationRoleTabs, { filterVerificationRequestsByRole } from "./VerificationRoleTabs";
 import RequiredMark, { hasAnswer } from "./RequiredMark";
-import JobScheduleBox, { JobScheduleLines } from "./JobScheduleBox";
+import JobScheduleBox, { JobScheduleLines, workingDaysText } from "./JobScheduleBox";
 import RateGuideHint from "./RateGuideHint";
 import ChangePasswordCard from "./ChangePasswordCard";
 import ProfileTabs from "./ProfileTabs";
@@ -909,24 +909,36 @@ export default function AppViews({
     const safeAmount = Number.isFinite(amount) ? amount : 0;
     return `₱${safeAmount.toFixed(2)}${job?.rateType ? ` / ${job.rateType}` : ""}`;
   };
-  const renderAiMatchBreakdown = (job) => {
-    const skillPart = Number(job.aiSkillContribution) || 0;
-    const proximityPart = Number(job.aiProximityContribution) || 0;
-    const total = skillPart + proximityPart;
-    if (total <= 0) {
+  // The bar is the match score itself, split into the points skill fit and
+  // distance earned; the words give the real skill fit and distance. The
+  // old "70% skill fit, 30% proximity" was each part's share of the score,
+  // which read as a 70% skill fit on an exact match.
+  const renderAiMatchBreakdown = (item) => {
+    const skillPart = Number(item.aiSkillContribution) || 0;
+    const distancePart = Number(item.aiProximityContribution) || 0;
+    if (skillPart + distancePart <= 0) {
       return null;
     }
-    const skillSharePct = Math.round((skillPart / total) * 100);
-    const proximitySharePct = 100 - skillSharePct;
+    // Rounded so the two always add up to the "N% match" shown with them.
+    const matchPoints = Math.round((skillPart + distancePart) * 100);
+    const skillPoints = Math.min(matchPoints, Math.round(skillPart * 100));
+    const distancePoints = matchPoints - skillPoints;
+    const skillFitPct = Math.round((Number(item.aiSkillSimilarity) || 0) * 100);
+    const distanceKm = item.aiDistanceKm ?? item.distanceKm;
+    const km = distanceKm === null || distanceKm === undefined || distanceKm === "" ? NaN : Number(distanceKm);
+    const distanceText = Number.isFinite(km) ? (km < 0.1 ? "under 0.1 km away" : `${km.toFixed(1)} km away`) : "";
     return (
       <div className="worker-ai-match-breakdown mb-2">
-        <div className="worker-ai-match-breakdown-bar">
-          <span className="worker-ai-match-breakdown-skill" style={{ width: `${skillSharePct}%` }} />
-          <span className="worker-ai-match-breakdown-proximity" style={{ width: `${proximitySharePct}%` }} />
+        <div
+          className="worker-ai-match-breakdown-bar"
+          title={`${matchPoints}% match: ${skillPoints} points from skill fit, ${distancePoints} from distance`}
+        >
+          <span className="worker-ai-match-breakdown-skill" style={{ width: `${skillPoints}%` }} />
+          <span className="worker-ai-match-breakdown-proximity" style={{ width: `${distancePoints}%` }} />
         </div>
         <p className="small text-muted mb-0">
-          Why this match: {skillSharePct}% skill fit, {proximitySharePct}% proximity
-          {job.aiExactSkillMatch ? " — exact skill match" : ""}
+          Why this match: {skillFitPct}% skill fit{item.aiExactSkillMatch ? " (exact skill match)" : ""}
+          {distanceText ? `, ${distanceText}` : ""}
         </p>
       </div>
     );
@@ -2338,7 +2350,7 @@ export default function AppViews({
                 {!aiModeActive && (
                   <div className="jobs-filter-panel mt-3">
                     <div className="row g-2 align-items-end">
-                      <div className="col-md-4">
+                      <div className="col-md-5">
                         <label className="form-label fw-semibold mb-1">Filter by Job Type</label>
                         <select
                           className="form-select"
@@ -2351,7 +2363,7 @@ export default function AppViews({
                           ))}
                         </select>
                       </div>
-                      <div className="col-md-4">
+                      <div className="col-md-5">
                         <label className="form-label fw-semibold mb-1">Barangay</label>
                         <input
                           className="form-control"
@@ -2460,9 +2472,23 @@ export default function AppViews({
                             <p className="worker-jobcard-location">
                               {formatLocation(job.barangay, job.streetAddress)}
                             </p>
+                            {/* One line for when and how far: the start date
+                                used to show here and again in the period
+                                line below it. */}
                             <p className="worker-jobcard-when">
                               <span aria-hidden="true">🗓</span>
-                              <span>{formatJobDate(job.jobStartDate) || "Schedule not set"}</span>
+                              <span>
+                                {!job.jobStartDate && !job.jobEndDate
+                                  ? "Schedule not set"
+                                  : `${formatJobDate(job.jobStartDate) || "Start not set"}${
+                                      job.jobEndDate && job.jobEndDate !== job.jobStartDate
+                                        ? ` to ${formatJobDate(job.jobEndDate)}`
+                                        : ""
+                                    }`}
+                                {workingDaysText(job.jobStartDate, job.jobEndDate, job.estimatedWorkingDays)
+                                  ? ` (${workingDaysText(job.jobStartDate, job.jobEndDate, job.estimatedWorkingDays)})`
+                                  : ""}
+                              </span>
                               {getWorkerJobDistanceLabel(job) && (
                                 <span className="worker-jobcard-distance">
                                   · {getWorkerJobDistanceLabel(job)}
@@ -2485,16 +2511,15 @@ export default function AppViews({
                                   {formatScheduleLabel(job.scheduleType)}
                                 </span>
                               )}
+                              {/* A job needing several workers says how many
+                                  are still wanted. */}
+                              {getWorkersNeeded(job) > 1 && (
+                                <span className="worker-jobcard-chip">
+                                  {Math.max(getWorkersNeeded(job) - getHiredWorkerCount(job), 0)} of{" "}
+                                  {getWorkersNeeded(job)} spots open
+                                </span>
+                              )}
                             </div>
-                            {(job.jobStartDate || job.jobEndDate) && (
-                              <p className="worker-jobcard-period">
-                                {formatJobDate(job.jobStartDate) || "Not set"}
-                                {job.jobEndDate ? ` to ${formatJobDate(job.jobEndDate)}` : ""}
-                                {job.estimatedWorkingDays
-                                  ? ` (${job.estimatedWorkingDays} working day${Number(job.estimatedWorkingDays) === 1 ? "" : "s"})`
-                                  : ""}
-                              </p>
-                            )}
                             <div className="worker-jobcard-actions">
                               <button
                                 className="worker-jobcard-btn is-ghost"
@@ -2534,7 +2559,7 @@ export default function AppViews({
                         <div className="p-4 text-center text-muted">
                           {" "}
                           {aiModeActive
-                            ? "No matching jobs found within your job radius right now."
+                            ? "No job that fits your skills is within the distance its household set. Each household chooses how far away its workers can be. Jobs farther off still show when you go back to browsing, and you can apply to them there."
                             : workerJobTypeFilter === "All Types"
                               ? "There are no household job posts available right now."
                               : `Wala pang household job posts para sa ${workerJobTypeFilter}.`}{" "}

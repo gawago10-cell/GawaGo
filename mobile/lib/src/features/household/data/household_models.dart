@@ -427,6 +427,7 @@ class RecommendedWorker {
     required this.ratingLabel,
     required this.workerRate,
     required this.aiScore,
+    required this.skillSimilarity,
     required this.skillContribution,
     required this.proximityContribution,
     required this.exactSkillMatch,
@@ -456,19 +457,15 @@ class RecommendedWorker {
   final String ratingLabel;
   final String workerRate;
   final double aiScore;
+
+  /// The skill fit itself in [0, 1], and the two weighted terms that sum to
+  /// [aiScore].
+  final double skillSimilarity;
   final double skillContribution;
   final double proximityContribution;
   final bool exactSkillMatch;
 
   String get displayName => name.isNotEmpty ? name : username;
-
-  /// Skill's share of the AI score, as a whole percent; null when the
-  /// recommender returned no contribution breakdown to explain.
-  int? get skillSharePercent {
-    final total = skillContribution + proximityContribution;
-    if (total <= 0) return null;
-    return (skillContribution / total * 100).round();
-  }
 
   factory RecommendedWorker.fromJson(Map<String, dynamic> json) {
     return RecommendedWorker(
@@ -491,6 +488,7 @@ class RecommendedWorker {
       ratingLabel: _text(json['rating_label']),
       workerRate: _text(json['worker_rate']),
       aiScore: _number(json['ai_score']) ?? 0,
+      skillSimilarity: _number(json['skill_similarity']) ?? 0,
       skillContribution: _number(json['skill_contribution']) ?? 0,
       proximityContribution: _number(json['proximity_contribution']) ?? 0,
       exactSkillMatch: json['exact_skill_match'] == true,

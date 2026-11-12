@@ -172,6 +172,7 @@ class _WorkerJobsMapState extends State<WorkerJobsMap> {
                           ),
                       ],
                     ),
+                    if (shouldLoadMapTiles) osmAttribution(),
                   ],
                 ),
                 Positioned(

@@ -2521,6 +2521,7 @@ class _PostJobMapPanelState extends State<_PostJobMapPanel> {
                       ),
                     ],
                   ),
+                if (shouldLoadMapTiles) osmAttribution(),
               ],
             ),
           ),
@@ -4709,7 +4710,10 @@ Future<void> _showWorkerMatchProfile(
             ? 'Not verified yet'
             : null,
         matchBreakdown: AiMatchBreakdown(
-          skillSharePercent: worker.skillSharePercent,
+          skillContribution: worker.skillContribution,
+          proximityContribution: worker.proximityContribution,
+          skillSimilarity: worker.skillSimilarity,
+          distanceKm: worker.distanceKm,
           exactSkillMatch: worker.exactSkillMatch,
         ),
         onHire: () => _hireRecommendedWorker(
@@ -7077,7 +7081,10 @@ class _JobMatchesState extends State<_JobMatches> {
                         skills: worker.skills,
                         bio: worker.bio,
                         breakdown: AiMatchBreakdown(
-                          skillSharePercent: worker.skillSharePercent,
+                          skillContribution: worker.skillContribution,
+                          proximityContribution: worker.proximityContribution,
+                          skillSimilarity: worker.skillSimilarity,
+                          distanceKm: worker.distanceKm,
                           exactSkillMatch: worker.exactSkillMatch,
                         ),
                         requestSent:

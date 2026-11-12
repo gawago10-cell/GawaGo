@@ -118,31 +118,47 @@ void main() {
   });
 
   group('AI match breakdown edges', () {
-    testWidgets('all skill fit', (tester) async {
+    testWidgets('a partial fit far away, points adding up to the match', (
+      tester,
+    ) async {
+      // 0.7 x 0.62 = 0.434 and 0.3 x 1/(1+2.4) = 0.088: a 52% match whose
+      // parts round to 43 and 9.
       await tester.pumpWidget(
         _host(
           const AiMatchBreakdown(
-            skillSharePercent: 100,
+            skillContribution: 0.434,
+            proximityContribution: 0.0882,
+            skillSimilarity: 0.62,
+            distanceKm: 2.4,
             exactSkillMatch: false,
           ),
         ),
       );
       expect(
-        find.text('Why this match: 100% skill fit, 0% proximity'),
+        find.text('Why this match: 62% skill fit, 2.4 km away'),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsLabel(
+          '52% match: 43 points from skill fit, 9 from distance',
+        ),
         findsOneWidget,
       );
     });
 
-    testWidgets('all proximity', (tester) async {
+    testWidgets('no distance leaves the distance out', (tester) async {
       await tester.pumpWidget(
         _host(
-          const AiMatchBreakdown(skillSharePercent: 0, exactSkillMatch: false),
+          const AiMatchBreakdown(
+            skillContribution: 0.7,
+            proximityContribution: 0,
+            skillSimilarity: 1,
+            distanceKm: null,
+            exactSkillMatch: false,
+          ),
         ),
       );
-      expect(
-        find.text('Why this match: 0% skill fit, 100% proximity'),
-        findsOneWidget,
-      );
+      expect(find.text('Why this match: 100% skill fit'), findsOneWidget);
     });
   });
 

@@ -3,6 +3,30 @@ import 'package:flutter/material.dart';
 import '../../core/theme/gawago_colors.dart';
 import '../utils/display_formatters.dart';
 
+/// "3 working days", or "1 working day out of 2" when the household set
+/// fewer working days than the dates span (the old Post a Job form allowed
+/// that, and reports pay by the count), so "Dec 8 to Dec 9 (1 working day)"
+/// no longer reads as a mistake -- the web's workingDaysText. "" without a
+/// count.
+String workingDaysText(String? startDate, String? endDate, int? workingDays) {
+  final days = workingDays ?? 0;
+  if (days < 1) return '';
+  final text = '$days working day${days == 1 ? '' : 's'}';
+  final span = _calendarSpan(startDate, endDate);
+  return span != null && days < span ? '$text out of $span' : text;
+}
+
+/// Calendar days from start to end, both counted; null without both dates.
+int? _calendarSpan(String? startDate, String? endDate) {
+  final start = (startDate ?? '').trim();
+  final end = (endDate ?? '').trim();
+  if (start.isEmpty || end.isEmpty) return null;
+  final from = DateTime.tryParse('${start}T00:00:00Z');
+  final to = DateTime.tryParse('${end}T00:00:00Z');
+  if (from == null || to == null || to.isBefore(from)) return null;
+  return to.difference(from).inDays + 1;
+}
+
 /// A job's schedule in words, shared by the box (My Jobs, dashboard) and the
 /// compact lines (My Applications), like the web's describeJobSchedule.
 class JobScheduleWords {
@@ -20,9 +44,7 @@ class JobScheduleWords {
   final String endWord;
   final int? workingDays;
 
-  String get daysText => workingDays == null
-      ? ''
-      : '$workingDays working day${workingDays == 1 ? '' : 's'}';
+  String get daysText => workingDaysText(start, end, workingDays);
 
   static String _iso(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-'

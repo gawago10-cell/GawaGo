@@ -6,6 +6,32 @@ function localIsoDate() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
+// Calendar days from start to end, both counted; null without both dates.
+function calendarSpan(startDate, endDate) {
+  const start = Date.parse(`${startDate}T00:00:00Z`);
+  const end = Date.parse(`${endDate}T00:00:00Z`);
+  if (!startDate || !endDate || !Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return null;
+  }
+  return Math.round((end - start) / 86400000) + 1;
+}
+
+/**
+ * "3 working days", or "1 working day out of 2" when the household set fewer
+ * working days than the dates span (the old Post a Job form allowed that,
+ * and reports pay by the count), so "Dec 8 to Dec 9 (1 working day)" no
+ * longer reads as a mistake. "" without a count.
+ */
+export function workingDaysText(startDate, endDate, workingDays) {
+  const days = Number(workingDays) || 0;
+  if (days < 1) {
+    return "";
+  }
+  const text = `${days} working day${days === 1 ? "" : "s"}`;
+  const span = calendarSpan(startDate, endDate);
+  return span && days < span ? `${text} out of ${span}` : text;
+}
+
 /**
  * A job's schedule in words, shared by the box (My Jobs, dashboard) and the
  * compact lines (My Applications): Starts / Started, Ends / Ended, each date
@@ -26,7 +52,7 @@ export function describeJobSchedule({ startDate, endDate, workingDays, finished 
     endWord: !end ? "End" : finished || end < today ? "Ended" : "Ends",
     endText: formatJobDay(end) || "Not set",
     endSet: Boolean(end),
-    daysText: days ? `${days} working day${days === 1 ? "" : "s"}` : "",
+    daysText: workingDaysText(startDate, endDate, days),
   };
 }
 

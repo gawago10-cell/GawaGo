@@ -177,6 +177,7 @@ class LocationRouteMap extends StatelessWidget {
               ),
           ],
         ),
+        if (showMapTiles && shouldLoadMapTiles) osmAttribution(),
       ],
     );
   }
