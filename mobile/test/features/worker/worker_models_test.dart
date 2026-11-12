@@ -140,4 +140,20 @@ void main() {
     expect(job.skillRatings.first.rating, 5.0);
     expect(job.skillRatings.last.rating, 4.0);
   });
+
+  test('Jobs Done counts finished jobs and verification reads the stage', () {
+    final profile = WorkerProfile.fromJson({
+      'user': {'username': 'worker2'},
+      'profile': {
+        'rating_count': 1,
+        'completed_jobs': 2,
+        'verification_status': 'pending',
+        'verification_stage': 'not_submitted',
+      },
+    });
+
+    expect(profile.completedJobs, 2);
+    expect(profile.ratingCount, 1);
+    expect(profile.verificationLabel, 'Not submitted');
+  });
 }

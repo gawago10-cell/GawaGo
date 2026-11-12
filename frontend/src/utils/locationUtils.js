@@ -72,3 +72,34 @@ export function parseLocationLabel(locationLabel) {
     streetAddress: parts.slice(1).join(", "),
   };
 }
+
+// Parts of a saved location label that name no street: the city, province
+// and country, and "Poblacion", which older versions filed unmatched places
+// under although no Tayabas barangay has that name.
+const NOT_A_STREET = /^(tayabas|tayabas city|quezon|qz|philippines|poblacion)$/i;
+
+/** The Tayabas barangay `value` names, spelled as the list spells it, or "". */
+export function knownBarangay(value) {
+  const normalized = String(value || "").trim().replace(/^barangay\s+/i, "").toLowerCase();
+  return BARANGAYS.find((barangay) => barangay.toLowerCase() === normalized) || "";
+}
+
+/**
+ * A profile's barangay and street from its saved location label. Unlike
+ * parseLocationLabel, a first part that names no barangay is not taken as
+ * one: "Poblacion, QZ, Philippines" showed "Poblacion" as the barangay, which
+ * the profile's barangay list can't select, and "QZ, Philippines" as the
+ * street. Such a profile reads as having no barangay until one is picked.
+ */
+export function parseProfileLocation(locationLabel) {
+  const parsed = parseLocationLabel(locationLabel);
+  const barangay = knownBarangay(parsed.barangay);
+  if (barangay) {
+    return { barangay, streetAddress: parsed.streetAddress };
+  }
+  const streetParts = String(locationLabel || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part && !NOT_A_STREET.test(part));
+  return { barangay: "", streetAddress: streetParts.join(", ") };
+}

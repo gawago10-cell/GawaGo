@@ -338,7 +338,8 @@ class ProfileUpdateTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.role, UserProfile.ROLE_WORKER)
-        self.assertEqual(self.profile.phone, "09170000000")
+        # Stored the way sign-up stores it, the ten digits after +63.
+        self.assertEqual(self.profile.phone, "9170000000")
         self.assertTrue(
             Notification.objects.filter(
                 recipient=self.user,

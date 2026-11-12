@@ -80,6 +80,20 @@ from apps.reviews.services import assign_due_default_worker_ratings_on_read
 logger = logging.getLogger(__name__)
 
 
+def refresh_credentials(user, profile):
+    """Sign out every other session after a password or email change, and
+    return a fresh access token for the one that made it. A token is stale
+    when issued before credentials_updated_at (common/authentication.py);
+    stamping whole seconds keeps the new token, issued this same second,
+    valid."""
+    if profile is not None:
+        profile.credentials_updated_at = timezone.now().replace(microsecond=0)
+        profile.save(update_fields=["credentials_updated_at"])
+    return create_jwt_token(
+        {"user_id": user.id, "username": user.username, "role": get_account_role(user, profile)}
+    )
+
+
 def get_account_role(user, profile=None):
     if is_platform_superadmin(user):
         return "superadmin"
@@ -509,13 +523,22 @@ class ChangePasswordView(APIView):
             return Response({"new_password": list(error.messages)}, status=status.HTTP_400_BAD_REQUEST)
         user.set_password(new_password)
         user.save(update_fields=["password"])
+        # Other signed-in devices are signed out, as after a password reset;
+        # this one carries on with the new token.
+        profile = getattr(user, "profile", None)
+        access = refresh_credentials(user, profile)
         create_notification(
             recipient=user,
             notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
             title="Password changed",
             message="Your GawaGo password was changed. If this wasn't you, reset it from the login page right away.",
         )
-        return Response({"detail": "Your password was updated."})
+        detail = (
+            "Your password was updated. Your other devices have been signed out."
+            if profile is not None
+            else "Your password was updated."
+        )
+        return Response({"detail": detail, "access": access})
 
 
 class ForgotPasswordRequestView(APIView):
@@ -674,12 +697,6 @@ class MeProfileView(APIView):
             if user_fields:
                 user.save(update_fields=user_fields)
             profile_fields = []
-            if email_changed:
-                # Same "every previously issued token is now stale" guard used
-                # by password reset -- an email change is just as
-                # credential-sensitive.
-                profile.credentials_updated_at = timezone.now()
-                profile_fields.append("credentials_updated_at")
             for field in ["phone", "bio", "years_experience", "skills", "hourly_rate", "daily_rate", "location_label", "latitude", "longitude", "profile_photo"]:
                 if field in data:
                     setattr(profile, field, data[field])
@@ -688,6 +705,11 @@ class MeProfileView(APIView):
                 profile.save(update_fields=profile_fields)
             if "skills" in data and profile.role == UserProfile.ROLE_WORKER:
                 ensure_portfolio_skills(user, profile.skills)
+        # Same "every previously issued token is now stale" guard used by
+        # password reset -- an email change is just as credential-sensitive.
+        # It used to stale this session's token too, signing the worker out
+        # mid-save; the fresh token keeps them signed in here.
+        access = refresh_credentials(user, profile) if email_changed else None
         create_notification(
             recipient=user,
             notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
@@ -696,6 +718,7 @@ class MeProfileView(APIView):
         )
         return Response({
             "detail": "Profile updated.",
+            **({"access": access} if access else {}),
             "user": {
                 "id": user.id,
                 "username": user.username,

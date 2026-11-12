@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { normalizeBarangayName } from "../utils/locationUtils";
+import { knownBarangay, normalizeBarangayName } from "../utils/locationUtils";
 import { dashboardViewForRole, getUserRole, isAdminRole, ROLES } from "../utils/roles";
 import {
   focusFirstInvalidField,
@@ -89,6 +89,7 @@ export function useGawaGoActions({
   setView,
   setWorkerFeedbackForm,
   setWorkerForm,
+  setWorkerProfileForm,
   verificationForm,
   verificationRequests,
   workerFeedbackForm,
@@ -793,20 +794,28 @@ export function useGawaGoActions({
     event.preventDefault();
     if (!currentUser || currentUser.role !== "worker") {
       window.alert("No worker account is currently logged in.");
-      return;
+      return false;
     }
     // Changing the barangay clears the pin; the worker pins the new spot
     // rather than being moved to a geocoded guess.
     if (workerProfileForm.latitude == null || workerProfileForm.longitude == null) {
       window.alert(WORKER_PIN_REQUIRED_MESSAGE);
-      return;
+      return false;
+    }
+    // Saving used to keep a barangay the list can't show (an old
+    // "Poblacion" label), so the profile never got a real one.
+    if (!knownBarangay(workerProfileForm.barangay)) {
+      window.alert("Choose your barangay from the list.");
+      return false;
     }
     const skillErrors = validateWorkerSkills(workerProfileForm.skills, "");
     if (skillErrors.skills) {
       window.alert(skillErrors.skills);
-      return;
+      return false;
     }
-    runExclusive("worker-profile-save", async () => {
+    // Resolves true once saved, so the form leaves edit mode only then: a
+    // refused save used to lock the form with the worker's edits in it.
+    return runExclusive("worker-profile-save", async () => {
       const normalizedBarangay = normalizeBarangayName(workerProfileForm.barangay);
       const workerLatitude = workerProfileForm.latitude;
       const workerLongitude = workerProfileForm.longitude;
@@ -849,6 +858,8 @@ export function useGawaGoActions({
             location_label: workerLocationLabel,
             latitude: nextWorkerPatch.latitude,
             longitude: nextWorkerPatch.longitude,
+            // Only an email change needs it (the backend asks then).
+            ...(workerProfileForm.currentPassword ? { current_password: workerProfileForm.currentPassword } : {}),
           };
           const requestBody = workerProfileForm.profilePhotoFile ? new FormData() : profilePayload;
           if (requestBody instanceof FormData) {
@@ -865,6 +876,12 @@ export function useGawaGoActions({
           const data = await readResponseData(response);
           if (!response.ok) {
             throw new Error(getApiErrorMessage(data, "Unable to update worker profile."));
+          }
+          // An email change signs out other devices and hands this one a
+          // fresh token; the old one no longer works, even for the request
+          // just below.
+          if (data?.access) {
+            setAuthToken(data.access);
           }
           const availabilityResponse = await apiRequest("accounts/me/availability/", {
             method: "PUT",
@@ -929,10 +946,12 @@ export function useGawaGoActions({
             };
           }),
         );
+        setWorkerProfileForm((prev) => ({ ...prev, currentPassword: "" }));
         setCurrentUser((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
+            email: workerProfileForm.email,
             displayName: getDisplayName(
               workerProfileForm.firstName,
               workerProfileForm.lastName,
@@ -957,8 +976,10 @@ export function useGawaGoActions({
           };
         });
         window.alert("Worker profile updated.");
+        return true;
       } catch (error) {
         window.alert(error.message || "Unable to update worker profile.");
+        return false;
       }
     });
   }

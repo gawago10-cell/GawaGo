@@ -1,4 +1,5 @@
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -78,6 +79,26 @@ def viewer_may_see_credential_review(request, worker_id):
     if user is None or not user.is_authenticated:
         return False
     return user.is_staff or user.id == worker_id
+
+
+PHONE_FORMAT_MESSAGE = "Enter a Philippine mobile number, like 0912 345 6789."
+
+
+def clean_mobile_number(value):
+    """A Philippine mobile number stored the way sign-up stores it: the ten
+    digits after +63 or 0 ("9123456789"). Spaces, dashes, a leading 0 or
+    +63 are accepted; anything else is refused. Blank stays blank."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 12 and digits.startswith("63"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if not re.fullmatch(r"9\d{9}", digits):
+        raise serializers.ValidationError(PHONE_FORMAT_MESSAGE)
+    return digits
 
 
 def validate_worker_profile_requirements(attrs, *, role, profile=None):
@@ -200,6 +221,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
     verification_stage = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
     availability_windows = serializers.SerializerMethodField()
+    # Jobs the worker finished, for "Jobs Done": rating_count counted only
+    # the jobs a household had rated.
+    completed_jobs = serializers.SerializerMethodField()
     date_joined = serializers.DateTimeField(source="user.date_joined", read_only=True)
     # Account-suspension state -- admin-only (see PublicUserProfileSerializer,
     # which strips these), surfaced for the User Management screen.
@@ -245,6 +269,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "verification_request",
             "verification_stage",
             "availability_windows",
+            "completed_jobs",
             "date_joined",
             "is_blocked",
             "blocked_until",
@@ -287,6 +312,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         url = obj.profile_photo.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_completed_jobs(self, obj):
+        if obj.role != UserProfile.ROLE_WORKER:
+            return 0
+        from apps.jobs.models import JobApplication
+
+        return JobApplication.objects.filter(worker_id=obj.user_id, status=JobApplication.STATUS_COMPLETED).count()
 
     def get_availability_windows(self, obj):
         if obj.role != UserProfile.ROLE_WORKER:
@@ -480,6 +512,7 @@ class ProfileUpdateSerializer(serializers.Serializer):
         return email
 
     def validate_phone(self, value):
+        value = clean_mobile_number(value)
         profile = self.context.get("profile")
         if banned_match(BannedCredential.KIND_PHONE, value, exclude_user=getattr(profile, "user", None)):
             raise serializers.ValidationError(PHONE_BLOCKED_MESSAGE)

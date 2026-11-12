@@ -196,10 +196,12 @@ class GawaGoApi {
     required String currentPassword,
     required String newPassword,
   }) async {
-    await post(
+    final data = await post(
       '/accounts/me/password/',
       body: {'current_password': currentPassword, 'new_password': newPassword},
     );
+    // Other devices are signed out; this one keeps going on the new token.
+    await SessionStorage.adoptToken(data['access']);
   }
 
   static Future<Map<String, dynamic>> get(

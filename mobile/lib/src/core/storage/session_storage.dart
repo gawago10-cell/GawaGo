@@ -61,6 +61,15 @@ class SessionStorage {
     _cachedSession = session;
   }
 
+  /// Carries on with the fresh token the server hands back after a password
+  /// or email change: that change signs out every other session, and the
+  /// old token of this one too.
+  static Future<void> adoptToken(Object? token) async {
+    final role = _cachedSession?.role;
+    if (token is! String || token.isEmpty || role == null) return;
+    await save(AuthSession(accessToken: token, role: role));
+  }
+
   static Future<void> clear() async {
     try {
       await Future.wait([

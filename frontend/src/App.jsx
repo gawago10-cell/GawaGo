@@ -102,7 +102,7 @@ import { useGawaGoDomEffects } from "./hooks/useGawaGoDomEffects";
 import { useGawaGoPersistence } from "./hooks/useGawaGoPersistence";
 import useViewRouting from "./hooks/useViewRouting";
 import ChatWidget from "./components/ChatWidget";
-import { AppDialogHost } from "./components/AppDialogs";
+import { AppDialogHost, confirmDialog } from "./components/AppDialogs";
 
 const AppViews = lazy(() => import("./components/AppViews"));
 const ForgotPasswordView = lazy(() => import("./components/ForgotPasswordView"));
@@ -812,7 +812,7 @@ function App() {
       lastName: currentWorker.lastName || "",
       username: currentWorker.username || "",
       email: currentWorker.email || "",
-      phone: currentWorker.phone || "",
+      phone: sanitizePhilippinesPhone(currentWorker.phone || ""),
       barangay: currentWorker.barangay || "",
       streetAddress: currentWorker.streetAddress || "",
       latitude: currentWorker.latitude ?? null,
@@ -822,8 +822,10 @@ function App() {
       locationWarning: "",
       locationAccuracy: "",
       bio: currentWorker.bio || "",
-      hourlyRate: currentWorker.hourlyRate || "0.00",
-      dailyRate: currentWorker.dailyRate || "0.00",
+      // Empty when undisclosed, as on the My Profile click: "0.00" here
+      // saved an undisclosed rate as PHP 0.00 after a page refresh.
+      hourlyRate: currentWorker.hourlyRate ?? "",
+      dailyRate: currentWorker.dailyRate ?? "",
       yearsExperience: currentWorker.yearsExperience || "0",
       skills: currentWorker.skills || [],
       availability: true,
@@ -1298,6 +1300,7 @@ function App() {
     setView,
     setWorkerFeedbackForm,
     setWorkerForm,
+    setWorkerProfileForm,
     verificationForm,
     verificationRequests,
     workerFeedbackForm,
@@ -1508,6 +1511,14 @@ function App() {
   const handleDeleteCertification = async (index) => {
     const certification = workerProfileForm.certifications?.[index];
     if (!certification) return;
+    // One click used to delete it for good, verification included.
+    const confirmed = await confirmDialog({
+      title: `Delete "${certification.name || certification.certificateName || "this certificate"}"?`,
+      message: "Households will no longer see it, and a verified certificate has to be sent for review again.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       if (certification.id) {
         await deletePortfolioCertification(certification.id);
@@ -1524,6 +1535,13 @@ function App() {
   const handleDeleteWorkSample = async (index) => {
     const sample = workerProfileForm.workSamples?.[index];
     if (!sample) return;
+    const confirmed = await confirmDialog({
+      title: `Delete "${sample.title || "this work sample"}"?`,
+      message: "Its photos are removed from your portfolio.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       if (sample.id) {
         await deletePortfolioItem(sample.id);

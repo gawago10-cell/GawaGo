@@ -3817,6 +3817,13 @@ class _ProfileFormState extends State<_ProfileForm> {
   late final _firstName = TextEditingController(text: widget.profile.firstName);
   late final _lastName = TextEditingController(text: widget.profile.lastName);
   late final _email = TextEditingController(text: widget.profile.email);
+
+  /// Asked only when the email changes: the backend wants the password for
+  /// that, and the form never asked, so an email change always failed.
+  late final _emailPassword = TextEditingController();
+  bool get _emailChanged =>
+      _email.text.trim().toLowerCase() !=
+      widget.profile.email.trim().toLowerCase();
   late final _phone = TextEditingController(text: widget.profile.phone);
   late final _bio = TextEditingController(text: widget.profile.bio);
   late final _hourly = TextEditingController(
@@ -3889,6 +3896,7 @@ class _ProfileFormState extends State<_ProfileForm> {
       _firstName.text = profile.firstName;
       _lastName.text = profile.lastName;
       _email.text = profile.email;
+      _emailPassword.clear();
       _phone.text = profile.phone;
       _bio.text = profile.bio;
       _hourly.text = profile.hourlyRate?.toString() ?? '';
@@ -3930,12 +3938,17 @@ class _ProfileFormState extends State<_ProfileForm> {
       _message('Availability start and end time must be different.');
       return;
     }
+    if (_emailChanged && _emailPassword.text.isEmpty) {
+      _message('Enter your current password to change your email.');
+      return;
+    }
     setState(() => _saving = true);
     try {
       await widget.repository.updateProfile({
         'first_name': _firstName.text.trim(),
         'last_name': _lastName.text.trim(),
         'email': _email.text.trim(),
+        if (_emailChanged) 'current_password': _emailPassword.text,
         'phone': sanitizePhilippinesPhone(_phone.text),
         'bio': _bio.text.trim(),
         'hourly_rate': _hourly.text.trim(),
@@ -3947,6 +3960,7 @@ class _ProfileFormState extends State<_ProfileForm> {
         'skills': skills,
       }, profilePhotoPath: _photoPath);
       await widget.repository.saveAvailabilityWindows(_availabilityWindows);
+      _emailPassword.clear();
       _skills
         ..clear()
         ..addAll(skills);
@@ -4394,7 +4408,16 @@ class _ProfileFormState extends State<_ProfileForm> {
                   label: 'Email',
                   controller: _email,
                   enabled: _editing,
+                  keyboardType: TextInputType.emailAddress,
+                  onChanged: (_) => setState(() {}),
                 ),
+                if (_editing && _emailChanged)
+                  _ProfileField(
+                    label: 'Current password (needed to change your email)',
+                    controller: _emailPassword,
+                    enabled: true,
+                    obscureText: true,
+                  ),
                 _ProfileField(
                   label: 'Phone Number',
                   controller: _phone,
@@ -4854,6 +4877,8 @@ class _ProfileField extends StatelessWidget {
     required this.enabled,
     this.lines = 1,
     this.keyboardType,
+    this.obscureText = false,
+    this.onChanged,
   });
 
   final String label;
@@ -4861,6 +4886,8 @@ class _ProfileField extends StatelessWidget {
   final bool enabled;
   final int lines;
   final TextInputType? keyboardType;
+  final bool obscureText;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -4884,6 +4911,8 @@ class _ProfileField extends StatelessWidget {
             enabled: enabled,
             maxLines: lines,
             keyboardType: keyboardType,
+            obscureText: obscureText,
+            onChanged: onChanged,
             style: const TextStyle(
               color: GawaGoColors.ink,
               fontSize: 15,
@@ -5303,7 +5332,9 @@ class _WorkerProfileSummary extends StatelessWidget {
           ),
           _SummaryFact(
             label: 'Phone',
-            value: profile.phone.isEmpty ? 'Not set' : profile.phone,
+            value: profile.phone.isEmpty
+                ? 'Not set'
+                : '+63 ${sanitizePhilippinesPhone(profile.phone)}',
           ),
           _SummaryFact(
             label: 'Email',
@@ -5324,12 +5355,17 @@ class _WorkerProfileSummary extends StatelessWidget {
                   letterSpacing: 0,
                 ),
               ),
-              StatusBadge(status: profile.verificationStatus),
+              StatusBadge(
+                status: profile.verificationStatus,
+                label: profile.verificationLabel.isEmpty
+                    ? null
+                    : profile.verificationLabel,
+              ),
             ],
           ),
           const SizedBox(height: 8),
           _SummaryFact(label: 'Rating', value: profile.displayRating),
-          _SummaryFact(label: 'Jobs Done', value: '${profile.ratingCount}'),
+          _SummaryFact(label: 'Jobs Done', value: '${profile.completedJobs}'),
           _SummaryFact(
             label: 'Hourly Rate',
             value: profile.hourlyRate == null
@@ -5392,7 +5428,7 @@ class _SummaryFact extends StatelessWidget {
   }
 }
 
-class _WorkerProfilePhoto extends StatelessWidget {
+class _WorkerProfilePhoto extends StatefulWidget {
   const _WorkerProfilePhoto({
     required this.profile,
     required this.localPhotoPath,
@@ -5404,17 +5440,34 @@ class _WorkerProfilePhoto extends StatelessWidget {
   final double radius;
 
   @override
+  State<_WorkerProfilePhoto> createState() => _WorkerProfilePhotoState();
+}
+
+class _WorkerProfilePhotoState extends State<_WorkerProfilePhoto> {
+  /// A saved photo whose file is gone (uploads don't survive a redeploy on
+  /// the free host) left an empty circle; the person icon shows instead.
+  String _failedUrl = '';
+
+  @override
   Widget build(BuildContext context) {
+    final localPhotoPath = widget.localPhotoPath;
+    final photoUrl = widget.profile.profilePhotoUrl;
+    final radius = widget.radius;
     ImageProvider? image;
-    if (localPhotoPath != null && File(localPhotoPath!).existsSync()) {
-      image = FileImage(File(localPhotoPath!));
-    } else if (profile.profilePhotoUrl.isNotEmpty) {
-      image = NetworkImage(profile.profilePhotoUrl);
+    if (localPhotoPath != null && File(localPhotoPath).existsSync()) {
+      image = FileImage(File(localPhotoPath));
+    } else if (photoUrl.isNotEmpty && photoUrl != _failedUrl) {
+      image = NetworkImage(photoUrl);
     }
     return CircleAvatar(
       radius: radius,
       backgroundColor: GawaGoColors.primary.withValues(alpha: 0.16),
       backgroundImage: image,
+      onBackgroundImageError: image is NetworkImage
+          ? (_, _) {
+              if (mounted) setState(() => _failedUrl = photoUrl);
+            }
+          : null,
       child: image == null
           ? Icon(
               Icons.person_outline,

@@ -36,7 +36,7 @@ import { deleteBackendNotification, fetchRecommendedJobs } from "../services/bac
 import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_WORKER_SKILLS, OTHER_SKILL } from "../constants/appConstants";
 import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
 import { describeJobSpan, formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, formatWorkerRate, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
-import { getVerificationNavLabel } from "../utils/normalizers";
+import { getVerificationNavLabel, getVerificationStageLabel } from "../utils/normalizers";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
 import { confirmDialog } from "./AppDialogs";
 import { usePostingStatus } from "../hooks/usePostingStatus";
@@ -341,6 +341,14 @@ export default function AppViews({
   };
   const [workerProfileEditing, setWorkerProfileEditing] = useState(false);
   const [workerPhotoModalOpen, setWorkerPhotoModalOpen] = useState(false);
+  // A saved photo whose file is gone (uploads don't survive a redeploy on
+  // the free host) showed a broken image; show the initial instead.
+  const [brokenWorkerPhoto, setBrokenWorkerPhoto] = useState("");
+  const showWorkerPhoto = Boolean(workerMiniPhoto) && workerMiniPhoto !== brokenWorkerPhoto;
+  const workerVerificationLabel = getVerificationStageLabel(currentWorker);
+  const workerEmailChanged =
+    String(workerProfileForm.email || "").trim().toLowerCase() !==
+    String(currentWorker?.email || "").trim().toLowerCase();
   const [dashboardModal, setDashboardModal] = useState(null);
   const [myJobsFilter, setMyJobsFilter] = useState("all");
   const [pendingHireWorkerId, setPendingHireWorkerId] = useState(null);
@@ -683,7 +691,11 @@ export default function AppViews({
       return;
     }
     const result = handleWorkerProfileSave(event);
-    Promise.resolve(result).then(() => setWorkerProfileEditing(false));
+    // Only a save that went through ends editing; a refused one keeps the
+    // form open with what the worker typed.
+    Promise.resolve(result).then((saved) => {
+      if (saved) setWorkerProfileEditing(false);
+    });
     return result;
   };
   const workerMarketCategories = useMemo(() => {
@@ -2972,14 +2984,19 @@ export default function AppViews({
                     <div className="profile-card">
                       <div className="profile-card-head">My Profile</div>
                       <div className="p-4 text-center">
-                        {workerMiniPhoto ? (
+                        {showWorkerPhoto ? (
                           <button
                             className="profile-photo-preview-trigger"
                             type="button"
                             onClick={() => setWorkerPhotoModalOpen(true)}
                             aria-label="View profile photo"
                           >
-                            <img src={workerMiniPhoto} alt="Worker profile" className="profile-photo-large mb-2" />
+                            <img
+                              src={workerMiniPhoto}
+                              alt="Worker profile"
+                              className="profile-photo-large mb-2"
+                              onError={() => setBrokenWorkerPhoto(workerMiniPhoto)}
+                            />
                           </button>
                         ) : (
                           <div className="profile-avatar mb-2">
@@ -3001,7 +3018,7 @@ export default function AppViews({
                           <strong>Barangay:</strong> {workerProfileForm.barangay || "Not set"}
                         </p>
                         <p className="mb-1 small">
-                          <strong>Phone:</strong> {workerProfileForm.phone || "Not set"}
+                          <strong>Phone:</strong> {workerProfileForm.phone ? `+63 ${workerProfileForm.phone}` : "Not set"}
                         </p>
                         <p className="mb-2 small">
                           <strong>Email:</strong> {workerProfileForm.email || "Not set"}
@@ -3010,16 +3027,22 @@ export default function AppViews({
                         <p className="mb-1 small">
                           <strong>Verification:</strong>
                           <span
-                            className={`badge ${currentWorker?.verification === "Verified" ? "text-bg-success" : "text-bg-warning"}`}
+                            className={`badge ${
+                              workerVerificationLabel === "Verified"
+                                ? "text-bg-success"
+                                : workerVerificationLabel === "Rejected"
+                                  ? "text-bg-danger"
+                                  : "text-bg-warning"
+                            }`}
                           >
-                            {currentWorker?.verification || "Pending"}
+                            {workerVerificationLabel}
                           </span>
                         </p>
                         <p className="mb-1 small">
                           <strong>Rating:</strong> {currentWorker?.rating || "No ratings yet"}
                         </p>
                         <p className="mb-1 small">
-                          <strong>Jobs Done:</strong> {currentWorker?.reviewsDone || 0}
+                          <strong>Jobs Done:</strong> {currentWorker?.completedJobs ?? 0}
                         </p>
                         <p className="mb-1 small">
                           <strong>Hourly Rate:</strong> {formatWorkerRate(workerProfileForm.hourlyRate)}
@@ -3062,8 +3085,11 @@ export default function AppViews({
                           <h3 className="h6 fw-bold mb-2">Personal Information</h3>
                           <div className="row g-2 mb-3">
                             <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">First Name</label>
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-first-name">
+                                First Name
+                              </label>
                               <input
+                                id="worker-profile-first-name"
                                 name="firstName"
                                 className="form-control"
                                 value={workerProfileForm.firstName}
@@ -3071,8 +3097,11 @@ export default function AppViews({
                               />
                             </div>
                             <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Last Name</label>
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-last-name">
+                                Last Name
+                              </label>
                               <input
+                                id="worker-profile-last-name"
                                 name="lastName"
                                 className="form-control"
                                 value={workerProfileForm.lastName}
@@ -3080,8 +3109,11 @@ export default function AppViews({
                               />
                             </div>
                             <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Email</label>
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-email">
+                                Email
+                              </label>
                               <input
+                                id="worker-profile-email"
                                 type="email"
                                 name="email"
                                 className="form-control"
@@ -3090,17 +3122,56 @@ export default function AppViews({
                               />
                             </div>
                             <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Phone Number</label>
-                              <input
-                                name="phone"
-                                className="form-control"
-                                value={workerProfileForm.phone}
-                                onChange={handleWorkerProfileChange}
-                              />
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-phone">
+                                Phone Number
+                              </label>
+                              <div className="input-group">
+                                <span className="input-group-text">+63</span>
+                                <input
+                                  id="worker-profile-phone"
+                                  type="tel"
+                                  name="phone"
+                                  className="form-control"
+                                  placeholder="9XXXXXXXXX"
+                                  inputMode="numeric"
+                                  maxLength={10}
+                                  value={workerProfileForm.phone}
+                                  onChange={handleWorkerProfileChange}
+                                />
+                              </div>
                             </div>
+                            {/* The backend asks for the password before an
+                                email change, and the form never did, so the
+                                change always failed. */}
+                            {workerProfileEditing && workerEmailChanged && (
+                              <div className="col-md-6">
+                                <label
+                                  className="form-label small fw-semibold mb-1"
+                                  htmlFor="worker-profile-email-password"
+                                >
+                                  Current password
+                                </label>
+                                <input
+                                  id="worker-profile-email-password"
+                                  type="password"
+                                  name="currentPassword"
+                                  className="form-control"
+                                  autoComplete="current-password"
+                                  aria-describedby="worker-profile-email-password-hint"
+                                  value={workerProfileForm.currentPassword || ""}
+                                  onChange={handleWorkerProfileChange}
+                                />
+                                <div id="worker-profile-email-password-hint" className="form-text">
+                                  Needed to change your email.
+                                </div>
+                              </div>
+                            )}
                             <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Barangay</label>
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-barangay">
+                                Barangay
+                              </label>
                               <select
+                                id="worker-profile-barangay"
                                 name="barangay"
                                 className="form-select"
                                 value={workerProfileForm.barangay}
@@ -3111,8 +3182,11 @@ export default function AppViews({
                               </select>
                             </div>
                             <div className="col-md-6">
-                              <label className="form-label small fw-semibold mb-1">Street / House No.</label>
+                              <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-street">
+                                Street / House No.
+                              </label>
                               <input
+                                id="worker-profile-street"
                                 name="streetAddress"
                                 className="form-control"
                                 value={workerProfileForm.streetAddress}
@@ -3273,8 +3347,16 @@ export default function AppViews({
                                         type="button"
                                         className="btn btn-sm btn-outline-danger align-self-start"
                                         aria-label={`Remove ${skill}`}
-                                        onClick={() => {
-                                          // Saved straight away, like the Add Skills dialog.
+                                        onClick={async () => {
+                                          // Saved straight away, like the Add Skills dialog, so
+                                          // ask first: its proficiency and ratings go with it.
+                                          const confirmed = await confirmDialog({
+                                            title: `Remove ${skill}?`,
+                                            message: "Matching stops using it, and its level is cleared.",
+                                            confirmLabel: "Remove",
+                                            tone: "danger",
+                                          });
+                                          if (!confirmed) return;
                                           handleSaveWorkerSkills(
                                             (workerProfileForm.skills || []).filter((item) => item !== skill),
                                           ).catch((error) => window.alert(error.message));

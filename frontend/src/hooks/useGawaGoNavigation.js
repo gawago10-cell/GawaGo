@@ -4,6 +4,7 @@ import { EMPTY_HOUSEHOLD_FORM, EMPTY_WORKER_FORM } from "../constants/appConstan
 import { getSavedHouseholdLocation } from "../utils/locationServices";
 import { markBackendNotificationRead } from "../services/backendDataService";
 import { dashboardViewForRole, getUserRole, ROLES } from "../utils/roles";
+import { sanitizePhilippinesPhone } from "../utils/formatters";
 
 export function useGawaGoNavigation({
   backendNotifications,
@@ -124,7 +125,7 @@ export function useGawaGoNavigation({
         lastName: currentWorker.lastName || "",
         username: currentWorker.username || "",
         email: currentWorker.email || "",
-        phone: currentWorker.phone || "",
+        phone: sanitizePhilippinesPhone(currentWorker.phone || ""),
         barangay: currentWorker.barangay || "",
         streetAddress: currentWorker.streetAddress || "",
         latitude: currentWorker.latitude ?? null,

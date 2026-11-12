@@ -19,6 +19,8 @@ class WorkerProfile {
     this.verificationRequestStatus = '',
     required this.displayRating,
     required this.ratingCount,
+    this.completedJobs = 0,
+    this.verificationStage = '',
     required this.reputationTier,
     required this.ratingTrend,
     required this.availabilityWindows,
@@ -49,8 +51,27 @@ class WorkerProfile {
   final String verificationRequestStatus;
   final String displayRating;
 
-  /// How many households have rated this worker -- the "Jobs Done" figure.
+  /// How many households have rated this worker.
   final int ratingCount;
+
+  /// Jobs the worker finished, rated or not -- the "Jobs Done" figure, which
+  /// used to be [ratingCount] and so missed unrated jobs.
+  final int completedJobs;
+
+  /// The backend's verification stage: verified, pending_review, rejected
+  /// or not_submitted ('' from an older backend).
+  final String verificationStage;
+
+  /// Verification wording from [verificationStage] (AGENTS.md: screens show
+  /// verification_stage), as on the web; "pending" alone can't tell "under
+  /// review" from "nothing sent".
+  String get verificationLabel => switch (verificationStage) {
+    'verified' => 'Verified',
+    'pending_review' => 'Under Review',
+    'rejected' => 'Rejected',
+    'not_submitted' => 'Not submitted',
+    _ => '',
+  };
 
   /// Earned standing: new | established | trusted | elite.
   final String reputationTier;
@@ -104,6 +125,8 @@ class WorkerProfile {
           : '',
       displayRating: _text(profile['display_rating'], 'No ratings yet'),
       ratingCount: _integer(profile['rating_count']),
+      completedJobs: _integer(profile['completed_jobs']),
+      verificationStage: _text(profile['verification_stage']),
       reputationTier: _text(profile['reputation_tier'], 'new'),
       ratingTrend: _text(profile['rating_trend'], 'neutral'),
       availabilityWindows: _list(

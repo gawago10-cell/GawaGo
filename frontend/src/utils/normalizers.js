@@ -1,4 +1,4 @@
-import { parseLocationLabel } from "./locationUtils";
+import { knownBarangay, parseLocationLabel, parseProfileLocation } from "./locationUtils";
 import { isTransientBlobUrl } from "./mediaUtils";
 
 function splitFullName(fullName, fallbackUsername = "") {
@@ -151,7 +151,7 @@ export function normalizeBackendWorker(currentUser) {
     return null;
   }
   const profile = currentUser.profile;
-  const locationParts = parseLocationLabel(profile.location_label);
+  const locationParts = parseProfileLocation(profile.location_label);
   return {
     id: currentUser.id || currentUser.username,
     username: currentUser.username,
@@ -159,8 +159,8 @@ export function normalizeBackendWorker(currentUser) {
     lastName: currentUser.last_name || currentUser.lastName || "",
     email: currentUser.email || "",
     phone: profile.phone || currentUser.phone || "",
-    barangay: currentUser.barangay || locationParts.barangay || "",
-    streetAddress: currentUser.streetAddress || locationParts.streetAddress || "",
+    barangay: knownBarangay(currentUser.barangay) || locationParts.barangay,
+    streetAddress: (knownBarangay(currentUser.barangay) && currentUser.streetAddress) || locationParts.streetAddress,
     bio: profile.bio || currentUser.bio || "",
     // Empty, not "0.00", when undisclosed: the profile form saves what it
     // shows, and a zero rate read as a free service.
@@ -173,6 +173,7 @@ export function normalizeBackendWorker(currentUser) {
     verificationStage: profile.verification_stage || "",
     rating: profile.display_rating || "No ratings yet",
     reviewsDone: profile.rating_count || 0,
+    completedJobs: profile.completed_jobs ?? 0,
     reputationTier: profile.reputation_tier || "new",
     ratingTrend: profile.rating_trend || "neutral",
     status: "Available",
@@ -215,7 +216,7 @@ export function normalizeProfileRecord(profile) {
     return null;
   }
   const { firstName, lastName, displayName } = splitFullName(profile.full_name, profile.username);
-  const locationParts = parseLocationLabel(profile.location_label);
+  const locationParts = parseProfileLocation(profile.location_label);
   return {
     id: profile.user_id || profile.userId || profile.user || profile.id || profile.username,
     profileId: profile.id || null,
@@ -238,6 +239,7 @@ export function normalizeProfileRecord(profile) {
     verificationStage: profile.verification_stage || "",
     rating: profile.display_rating || "No ratings yet",
     reviewsDone: profile.rating_count || 0,
+    completedJobs: profile.completed_jobs ?? 0,
     latitude: profile.latitude,
     longitude: profile.longitude,
     availabilityWindows: (profile.availability_windows || []).map(normalizeAvailabilityWindow).filter(Boolean),
@@ -635,4 +637,24 @@ export function getVerificationNavLabel(account) {
   if (["Pending", "Under Review"].includes(account?.verificationSubmission?.status)) return "Under Review";
   if (account?.verification === "Rejected") return "Verify Again";
   return "Get Verified";
+}
+
+/**
+ * A worker's verification wording for a screen, from the backend's stage
+ * (AGENTS.md: screens show verification_stage). The label made up from
+ * verification_status said "Under Review" before anything was sent.
+ */
+export function getVerificationStageLabel(account) {
+  switch (account?.verificationStage) {
+    case "verified":
+      return "Verified";
+    case "pending_review":
+      return "Under Review";
+    case "rejected":
+      return "Rejected";
+    case "not_submitted":
+      return "Not submitted";
+    default:
+      return account?.verification || "Not submitted";
+  }
 }

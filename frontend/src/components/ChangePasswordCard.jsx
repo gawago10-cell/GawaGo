@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { setAuthToken } from "../api/apiClient";
 import { changePassword } from "../services/backendDataService";
 
 const EMPTY = { current: "", next: "", confirm: "" };
@@ -37,9 +38,13 @@ export default function ChangePasswordCard({
     }
     setSaving(true);
     try {
-      await changePassword(form.current, form.next);
+      const data = await changePassword(form.current, form.next);
+      // Other devices are signed out; this one keeps going on the new token.
+      if (data?.access) {
+        setAuthToken(data.access);
+      }
       setForm(EMPTY);
-      setNotice("Your password was updated.");
+      setNotice(data?.detail || "Your password was updated.");
     } catch (submitError) {
       setError(submitError.message || "Unable to change your password.");
     } finally {

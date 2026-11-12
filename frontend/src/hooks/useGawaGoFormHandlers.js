@@ -1,6 +1,6 @@
 import { sanitizePhilippinesPhone } from "../utils/formatters";
 import { readFileAsDataUrl } from "../utils/mediaUtils";
-import { normalizeBarangayName } from "../utils/locationUtils";
+import { knownBarangay, normalizeBarangayName } from "../utils/locationUtils";
 import { isAutoFilledStreetAddress } from "../utils/locationServices";
 import { MAX_WORKER_SKILLS } from "../constants/appConstants";
 
@@ -209,20 +209,31 @@ export function useGawaGoFormHandlers({
         );
       return;
     }
+    // Same shape as sign-up: the ten digits after the +63 shown beside it.
+    if (name === "phone") {
+      setWorkerProfileForm((prev) => ({ ...prev, phone: sanitizePhilippinesPhone(value) }));
+      return;
+    }
     // A new barangay needs a new pin; editing the street only relabels the
     // pin, and clearing it there used to drop workers back to a geocoded
-    // guess on save.
+    // guess on save. Naming the barangay of a profile that had none (an old
+    // "Poblacion" label), or picking the same one again, keeps its pin:
+    // nothing about the spot changed.
     if (name === "barangay") {
-      setWorkerProfileForm((prev) => ({
-        ...prev,
-        [name]: value,
-        latitude: null,
-        longitude: null,
-        locationLabel: "",
-        locationSource: "",
-        locationWarning: "",
-        locationAccuracy: "",
-      }));
+      setWorkerProfileForm((prev) =>
+        knownBarangay(prev.barangay) && prev.barangay !== value
+          ? {
+              ...prev,
+              [name]: value,
+              latitude: null,
+              longitude: null,
+              locationLabel: "",
+              locationSource: "",
+              locationWarning: "",
+              locationAccuracy: "",
+            }
+          : { ...prev, [name]: value },
+      );
       return;
     }
     setWorkerProfileForm((prev) => ({

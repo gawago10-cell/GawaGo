@@ -1,5 +1,6 @@
 import '../../../core/api/gawago_api.dart';
 import '../../../core/config/api_config.dart';
+import '../../../core/storage/session_storage.dart';
 import 'worker_models.dart';
 
 class WorkerRepository {
@@ -20,6 +21,9 @@ class WorkerRepository {
             fields: GawaGoApi.multipartFields(values),
             files: {'profile_photo': profilePhotoPath},
           );
+    // An email change hands back a fresh token (it signs out other devices
+    // and this one's old token); without it the next request signed out.
+    await SessionStorage.adoptToken(response['access']);
     return WorkerProfile.fromJson(response);
   }
 

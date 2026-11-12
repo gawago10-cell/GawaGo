@@ -36,6 +36,34 @@ void main() {
     expect(authorization, 'Bearer test-token');
   });
 
+  test(
+    'a password change carries on with the fresh token it returns',
+    () async {
+      await SessionStorage.save(
+        const AuthSession(accessToken: 'old-token', role: 'worker'),
+      );
+      GawaGoApi.setClient(
+        MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'detail': 'Your password was updated.',
+              'access': 'new-token',
+            }),
+            200,
+          ),
+        ),
+      );
+
+      await GawaGoApi.changePassword(
+        currentPassword: 'old-pass-123',
+        newPassword: 'new-pass-456',
+      );
+
+      expect(SessionStorage.accessToken, 'new-token');
+      expect(SessionStorage.currentSession?.role, 'worker');
+    },
+  );
+
   test('401 expires and clears the current session', () async {
     await SessionStorage.save(
       const AuthSession(accessToken: 'expired-token', role: 'worker'),
