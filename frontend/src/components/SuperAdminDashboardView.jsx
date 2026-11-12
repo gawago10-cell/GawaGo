@@ -139,6 +139,17 @@ export default function SuperAdminDashboardView({
     if (superAdminSection !== "adminmgmt") return;
     loadAdminAccounts();
   }, [superAdminSection, loadAdminAccounts]);
+  // Change Password opens from a button beside Add Admin instead of sitting
+  // under the admin table.
+  const [passwordDialogOpen, setPasswordDialogOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (!passwordDialogOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setPasswordDialogOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [passwordDialogOpen]);
 
   async function handleCreateAdmin(event) {
     event.preventDefault();
@@ -1219,17 +1230,22 @@ export default function SuperAdminDashboardView({
                 <div className="profile-card mt-3">
                   <div className="profile-card-head d-flex justify-content-between align-items-center gap-3 flex-wrap">
                     <span>Registered Admins</span>
-                    <button
-                      className="btn btn-primary btn-sm"
-                      type="button"
-                      onClick={() => {
-                        setAdminFormOpen((open) => !open);
-                        setAdminFormError("");
-                        setAdminNotice("");
-                      }}
-                    >
-                      {adminFormOpen ? "Cancel" : "Add Admin"}
-                    </button>
+                    <div className="d-flex gap-2 flex-wrap">
+                      <button className="btn btn-primary btn-sm" type="button" onClick={() => setPasswordDialogOpen(true)}>
+                        Change Password
+                      </button>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        type="button"
+                        onClick={() => {
+                          setAdminFormOpen((open) => !open);
+                          setAdminFormError("");
+                          setAdminNotice("");
+                        }}
+                      >
+                        {adminFormOpen ? "Cancel" : "Add Admin"}
+                      </button>
+                    </div>
                   </div>
 
                   {adminFormOpen && (
@@ -1394,9 +1410,32 @@ export default function SuperAdminDashboardView({
                   )}
                 </div>
               )}
-              {superAdminSection === "adminmgmt" && (
-                <div className="mt-3" style={{ maxWidth: 520 }}>
-                  <ChangePasswordCard />
+              {superAdminSection === "adminmgmt" && passwordDialogOpen && (
+                <div
+                  className="gg-modal-backdrop app-dialog-backdrop"
+                  role="presentation"
+                  onClick={() => setPasswordDialogOpen(false)}
+                >
+                  <section
+                    className="gg-modal-panel app-dialog-panel"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="admin-password-dialog-title"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="gg-modal-head">
+                      <h2 id="admin-password-dialog-title">Change Password</h2>
+                      <button
+                        type="button"
+                        className="gg-modal-close"
+                        aria-label="Close"
+                        onClick={() => setPasswordDialogOpen(false)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <ChangePasswordCard className="admin-password-dialog-form" showHeading={false} />
+                  </section>
                 </div>
               )}
 

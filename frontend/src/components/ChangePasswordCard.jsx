@@ -8,7 +8,12 @@ const EMPTY = { current: "", next: "", confirm: "" };
  * except Forgot password, though Add Admin tells a new admin to change the
  * temporary one (third scan, 2026-11-01).
  */
-export default function ChangePasswordCard({ className = "profile-card", headClassName = "profile-card-head" }) {
+export default function ChangePasswordCard({
+  className = "profile-card",
+  headClassName = "profile-card-head",
+  // False inside a dialog that carries its own "Change Password" title.
+  showHeading = true,
+}) {
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -43,10 +48,15 @@ export default function ChangePasswordCard({ className = "profile-card", headCla
   }
 
   return (
-    <section className={`${className} change-password-card`} aria-labelledby="change-password-title">
-      <div className={headClassName} id="change-password-title">
-        Change Password
-      </div>
+    <section
+      className={`${className} change-password-card`}
+      aria-labelledby={showHeading ? "change-password-title" : undefined}
+    >
+      {showHeading && (
+        <div className={headClassName} id="change-password-title">
+          Change Password
+        </div>
+      )}
       <form className="change-password-form" onSubmit={handleSubmit}>
         <label className="form-label fw-semibold" htmlFor="change-password-current">
           Current password
