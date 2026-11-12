@@ -16444,6 +16444,54 @@ a,
   vertical-align: middle;
 }
 
+/* Household dashboard audit, 2026-11-13. */
+.household-process-worker-row small.is-unavailable {
+  color: #9a3412;
+  font-weight: 600;
+}
+
+.gawago-update-banner {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px 10px 16px;
+  border-radius: 14px;
+  background: #1f2a19;
+  color: #f4efe0;
+  box-shadow: 0 14px 30px rgba(15, 45, 31, 0.3);
+  font-size: 0.92rem;
+}
+
+.gawago-update-banner span {
+  min-width: 0;
+}
+
+.gawago-update-refresh,
+.gawago-update-later {
+  flex-shrink: 0;
+  border-radius: 10px;
+  padding: 6px 14px;
+  font-weight: 700;
+}
+
+.gawago-update-refresh {
+  border: 0;
+  background: #9ebf5e;
+  color: #1f2a19;
+}
+
+.gawago-update-later {
+  border: 1px solid rgba(244, 239, 224, 0.4);
+  background: transparent;
+  color: #f4efe0;
+}
+
 /* Chat audit, 2026-11-12. */
 /* A message keeps its line breaks, and a long word can't push the bubble wide. */
 .gawago-chat-bubble p {

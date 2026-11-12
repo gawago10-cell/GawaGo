@@ -568,7 +568,7 @@ class JobPostingSerializer(serializers.ModelSerializer):
         return [{"skill_name": rating.skill.skill_name, "rating": float(rating.rating)} for rating in ratings]
 
     def get_status_stage(self, obj):
-        return get_job_stage(obj.status)
+        return get_job_stage(obj.status, job=obj)
 
     def get_status_label(self, obj):
         return get_stage_label(self.get_status_stage(obj))
@@ -919,6 +919,17 @@ class JobPostingSerializer(serializers.ModelSerializer):
         """Why "Mark as done" is not available yet, for the household to read
         beside the disabled button; "" when it is available or not theirs."""
         if not self._household_can_finish(obj):
+            # Under way with nobody hired: the button used to sit greyed out
+            # with no reason given (household dashboard audit, 2026-11-13).
+            request = self.context.get("request")
+            user = getattr(request, "user", None)
+            if (
+                user
+                and user.is_authenticated
+                and obj.household_id == user.id
+                and obj.status in {JobPosting.STATUS_ASSIGNED, JobPosting.STATUS_COMPLETION_REQUESTED}
+            ):
+                return "Nobody is hired on this job any more, so it can't be marked done. You can cancel it."
             return ""
         profile = getattr(obj.household, "profile", None)
         if not profile or profile.verification_status != "verified":

@@ -10,3 +10,5 @@ class JobsConfig(AppConfig):
         from apps.jobs.models import JobImage
 
         cleanup_files_on_change_and_delete(JobImage, ["image"])
+
+        from apps.jobs import signals  # noqa: F401  (registers the receivers)

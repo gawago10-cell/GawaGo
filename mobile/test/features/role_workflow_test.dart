@@ -470,6 +470,16 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Browse Workers'), findsNothing);
+
+      // A suspended worker's hire still stands, and an ended job waits on
+      // the household -- in the backend's words, not "In progress".
+      await tester.scrollUntilVisible(
+        find.text('Pedro Cruz'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Not available right now'), findsOneWidget);
+      expect(find.text('Waiting to be marked done'), findsOneWidget);
     },
   );
 
@@ -1085,6 +1095,39 @@ Future<http.Response> _scanFixResponses(http.Request request) async {
             'Edit the dates to post it again, or cancel it.',
         'can_review': false,
         'applications': [],
+        'images': [],
+      },
+      {
+        'id': 33,
+        'household_username': 'juan',
+        'title': 'Gardening',
+        'job_type': 'Gardening',
+        'required_skill': 'Gardening',
+        'schedule': '',
+        'description': '',
+        'location_label': 'Alitao',
+        'latitude': 13.95,
+        'longitude': 121.59,
+        'service_rate': '300.00',
+        'workers_needed': 1,
+        'hired_count': 1,
+        'status': 'assigned',
+        'status_stage': 'awaiting_mark_done',
+        'status_label': 'Waiting to be marked done',
+        'job_start_date': '2026-11-08',
+        'job_end_date': '2026-11-09',
+        'can_mark_done': true,
+        'can_review': false,
+        'applications': [
+          {
+            'id': 53,
+            'worker_username': 'pedro',
+            'worker_name': 'Pedro Cruz',
+            'worker_verification_status': 'verified',
+            'worker_available': false,
+            'status': 'hired',
+          },
+        ],
         'images': [],
       },
     ]);

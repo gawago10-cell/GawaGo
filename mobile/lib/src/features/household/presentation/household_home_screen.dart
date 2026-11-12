@@ -874,7 +874,9 @@ class _InProcessJobCard extends StatelessWidget {
         ? 'Start date passed \u2014 nobody was hired'
         : isAssigned
         ? [
-            'In progress',
+            // The backend's words: "Waiting to be marked done" once the
+            // last day has passed (household dashboard audit, 2026-11-13).
+            job.statusLabel.isNotEmpty ? job.statusLabel : 'In progress',
             if (job.workerSlots > 1)
               '${job.hiredCount} of ${job.workerSlots} hired',
             if (hasApplicants)
@@ -999,12 +1001,25 @@ class _InProcessJobCard extends StatelessWidget {
                       Text(
                         hiredNames.length > 1
                             ? '${hiredNames.length} of ${job.workerSlots} hired'
+                            // A suspended worker's hire still stands; it
+                            // read "Verified" as if nothing had changed.
+                            : !assignedApp.workerAvailable
+                            ? 'Not available right now'
                             : isVerified
                             ? 'Verified'
                             : 'Not Yet Verified',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11.5,
-                          color: GawaGoColors.textMuted,
+                          color:
+                              hiredNames.length <= 1 &&
+                                  !assignedApp.workerAvailable
+                              ? GawaGoColors.danger
+                              : GawaGoColors.textMuted,
+                          fontWeight:
+                              hiredNames.length <= 1 &&
+                                  !assignedApp.workerAvailable
+                              ? FontWeight.w600
+                              : FontWeight.w400,
                         ),
                       ),
                   ],

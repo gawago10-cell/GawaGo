@@ -1401,6 +1401,20 @@ export default function AppViews({
     if (matchedWorker) {
       return matchedWorker;
     }
+    // The worker list leaves suspended accounts out, but their hire still
+    // stands: the dashboard said "No worker hired yet" for it (household
+    // dashboard audit, 2026-11-13). Name them from the hire itself.
+    if (acceptedApplication) {
+      return {
+        id: acceptedApplication.workerId,
+        username: acceptedApplication.workerUsername,
+        firstName: acceptedApplication.workerName,
+        lastName: "",
+        verification: acceptedApplication.workerVerification,
+        unavailable: acceptedApplication.workerAvailable === false,
+        fromHireOnly: true,
+      };
+    }
     const matchedWorkerId = (job.matchedWorkerIds || [])[0];
     return registeredWorkers.find((worker) => String(worker.id) === String(matchedWorkerId)) || null;
   }
@@ -7390,7 +7404,7 @@ export default function AppViews({
                       );
                       const workersNeeded = getWorkersNeeded(job);
                       const progressText = [
-                        "In progress",
+                        job.statusLabel || "In progress",
                         workersNeeded > 1 ? `${getHiredWorkerCount(job)} of ${workersNeeded} hired` : "",
                         hasApplicants ? `${pendingCount} applicant${pendingCount === 1 ? "" : "s"} waiting` : "",
                         awaitingReply ? `${requestedCount} request${requestedCount === 1 ? "" : "s"} sent` : "",
@@ -7468,7 +7482,11 @@ export default function AppViews({
                               </div>
                               <div>
                                 <span>{worker ? workerName : "No worker hired yet"}</span>
-                                {worker && <small>{worker.verification || "Verified"}</small>}
+                                {worker && (
+                                  <small className={worker.unavailable ? "is-unavailable" : ""}>
+                                    {worker.unavailable ? "Not available right now" : worker.verification || "Verified"}
+                                  </small>
+                                )}
                               </div>
                             </div>
                           )}
@@ -7507,7 +7525,7 @@ export default function AppViews({
                           {isAssigned && job.markDoneNote && (
                             <div className="household-process-note">{job.markDoneNote}</div>
                           )}
-                          {worker && isAssigned && (
+                          {worker && isAssigned && !worker.fromHireOnly && (
                             <button
                               type="button"
                               className="household-process-outline-cta"

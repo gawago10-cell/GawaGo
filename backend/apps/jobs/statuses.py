@@ -72,8 +72,21 @@ def get_application_stage(application_status, job_status=None, job=None):
     return STAGE_PENDING
 
 
-def get_job_stage(job_status):
+def get_job_stage(job_status, job=None):
     if job_status == JobPosting.STATUS_ASSIGNED:
+        # Callers that pass the job get the household's view of it: past its
+        # last day it waits on them to mark it done (the dashboard said "In
+        # progress" for a job that ended days before), and with nobody hired
+        # it isn't under way at all. Without the job the stage is as before.
+        if job is not None:
+            from .services import job_has_lapsed
+
+            if not job.applications.filter(
+                status__in=[JobApplication.STATUS_HIRED, JobApplication.STATUS_COMPLETED]
+            ).exists():
+                return STAGE_OPEN
+            if job_has_lapsed(job):
+                return STAGE_AWAITING_MARK_DONE
         return STAGE_IN_PROGRESS
     if job_status == JobPosting.STATUS_COMPLETION_REQUESTED:
         return STAGE_AWAITING_CONFIRMATION

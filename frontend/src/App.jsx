@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+import UpdateAvailableBanner from "./components/UpdateAvailableBanner";
 import { apiRequest, clearAuthToken, getAuthToken, setAuthToken, setUnauthorizedHandler } from "./api/apiClient";
 import {
   BARANGAYS,
@@ -1585,6 +1586,7 @@ function App() {
     <>
       <GawaGoToastHost toasts={appToasts} onDismiss={dismissToast} />
       <AppDialogHost />
+      <UpdateAvailableBanner />
       {content}
       <ChatWidget currentUser={currentUser} />
     </>

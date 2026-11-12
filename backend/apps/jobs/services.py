@@ -421,6 +421,29 @@ def record_job_status_event(job, from_status, to_status, actor=None, note=""):
     )
 
 
+def reopen_if_nobody_hired(job_id, note=""):
+    """A job left "in progress" with nobody hired goes back to open, so it
+    lapses or takes workers again like any other open job. The worker's own
+    back-out already does this (withdraw_application); this covers a hire
+    removed any other way -- the worker's account deleted, or the hire
+    changed in the Django admin -- which used to leave the job stuck: "No
+    worker hired yet", and a "Mark as done" that could never be pressed.
+    Returns True when the job was reopened."""
+    with transaction.atomic():
+        job = JobPosting.objects.select_for_update().filter(pk=job_id).first()
+        if job is None or job.status not in UNDERWAY_JOB_STATUSES:
+            return False
+        if job.applications.filter(
+            status__in=[JobApplication.STATUS_HIRED, JobApplication.STATUS_COMPLETED]
+        ).exists():
+            return False
+        previous_status = job.status
+        job.status = JobPosting.STATUS_OPEN
+        job.save(update_fields=["status"])
+        record_job_status_event(job, previous_status, job.status, note=note)
+        return True
+
+
 AWAITING_DECISION_STATUSES = (JobApplication.STATUS_PENDING, JobApplication.STATUS_HIRE_REQUESTED)
 
 
