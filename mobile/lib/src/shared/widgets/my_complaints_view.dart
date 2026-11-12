@@ -14,10 +14,21 @@ class MyComplaintsView extends StatefulWidget {
     super.key,
     this.repository = const ComplaintRepository(),
     this.currentUsername,
+    this.emptyMessage = 'Complaints you file will appear here.',
+    this.emptyActions = const [],
+    this.onOpenJob,
   });
 
   final ComplaintRepository repository;
   final String? currentUsername;
+
+  /// Where to go to file one, with buttons there: the empty page used to
+  /// say nothing about how to file.
+  final String emptyMessage;
+  final List<(String, VoidCallback)> emptyActions;
+
+  /// Opens the complaint's job (workers); null hides the link.
+  final ValueChanged<int>? onOpenJob;
 
   @override
   State<MyComplaintsView> createState() => _MyComplaintsViewState();
@@ -71,11 +82,28 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
                       ),
                     ),
                     const Divider(height: 1, color: GawaGoColors.border),
-                    const AppEmptyState(
+                    AppEmptyState(
                       icon: Icons.flag_outlined,
                       title: 'No complaints yet',
-                      message: 'Complaints you file will appear here.',
+                      message: widget.emptyMessage,
                     ),
+                    if (widget.emptyActions.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.center,
+                          children: [
+                            for (final (label, onPressed)
+                                in widget.emptyActions)
+                              OutlinedButton(
+                                onPressed: onPressed,
+                                child: Text(label),
+                              ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -88,8 +116,10 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
             itemCount: complaints.length,
             separatorBuilder: (context, index) => const SizedBox(height: 12),
-            itemBuilder: (context, index) =>
-                _ComplaintCard(complaint: complaints[index]),
+            itemBuilder: (context, index) => _ComplaintCard(
+              complaint: complaints[index],
+              onOpenJob: widget.onOpenJob,
+            ),
           ),
         );
       },
@@ -98,9 +128,15 @@ class _MyComplaintsViewState extends State<MyComplaintsView> {
 }
 
 class _ComplaintCard extends StatelessWidget {
-  const _ComplaintCard({required this.complaint});
+  const _ComplaintCard({required this.complaint, this.onOpenJob});
 
   final ComplaintReport complaint;
+  final ValueChanged<int>? onOpenJob;
+
+  /// "2026-11-12T09:15:00+08:00" is already in Philippine time, so the date
+  /// part is the local day.
+  static String _day(String value) =>
+      formatJobDate(value.length >= 10 ? value.substring(0, 10) : value);
 
   @override
   Widget build(BuildContext context) {
@@ -131,9 +167,10 @@ class _ComplaintCard extends StatelessWidget {
                         fontSize: 14,
                       ),
                     ),
-                    if (complaint.respondentUsername.isNotEmpty)
+                    if (complaint.respondentName.isNotEmpty ||
+                        complaint.respondentUsername.isNotEmpty)
                       Text(
-                        'About ${complaint.respondentUsername}',
+                        'About ${complaint.respondentName.isNotEmpty ? complaint.respondentName : complaint.respondentUsername}',
                         style: const TextStyle(
                           color: GawaGoColors.textMuted,
                           fontSize: 11,
@@ -148,9 +185,24 @@ class _ComplaintCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             '${complaint.jobTitle.isEmpty ? "Job complaint" : complaint.jobTitle} '
-            '· ${formatJobDate(complaint.createdAt.length >= 10 ? complaint.createdAt.substring(0, 10) : complaint.createdAt)}',
+            '· Filed ${_day(complaint.createdAt)}'
+            // When the admin team moved it on, if on a later day.
+            '${complaint.status != 'submitted' && complaint.updatedAt.isNotEmpty && _day(complaint.updatedAt) != _day(complaint.createdAt) ? ' · Updated ${_day(complaint.updatedAt)}' : ''}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
           ),
+          if (onOpenJob != null && complaint.jobId != null)
+            TextButton(
+              onPressed: () => onOpenJob!(complaint.jobId!),
+              style: TextButton.styleFrom(
+                foregroundColor: GawaGoColors.leafDeep,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 32),
+              ),
+              child: const Text(
+                'View job',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
           if (complaint.description.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(

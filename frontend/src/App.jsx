@@ -745,6 +745,8 @@ function App() {
             applicationStatus: application.status,
             applicationStatusLabel: application.statusLabel || "",
             applicationInvited: Boolean(application.invited),
+            applicationStatusStage: application.statusStage || "",
+            applicationHoldFreeFrom: application.holdFreeFrom || "",
             applicationId: application.id,
             canWithdraw: application.canWithdraw,
             canBackOut: application.canBackOut,
@@ -1701,6 +1703,7 @@ function App() {
           openWorkerMyJobs={openWorkerMyJobs}
           openWorkerGetVerified={openWorkerGetVerified}
           openWorkerNotifications={openWorkerNotifications}
+          openWorkerJobDetail={openWorkerJobDetail}
           workerApplicationUnreadCount={workerApplicationUnreadCount}
         />
       </Suspense>

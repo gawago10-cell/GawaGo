@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getVerificationNavLabel } from "../utils/normalizers";
+import { formatJobDate } from "../utils/formatters";
 
 import { fetchMyComplaints } from "../services/backendDataService";
 import AuthImage from "./AuthImage";
@@ -165,6 +166,7 @@ export default function MyComplaintsView({
   openWorkerMyJobs,
   openWorkerGetVerified,
   openWorkerNotifications,
+  openWorkerJobDetail,
   workerApplicationUnreadCount,
 }) {
   const [complaints, setComplaints] = useState(null);
@@ -224,6 +226,20 @@ export default function MyComplaintsView({
     if (statusFilter === "all") return complaints;
     return complaints.filter((complaint) => complaint.status === statusFilter);
   }, [complaints, statusFilter]);
+  // Only statuses the list has, each with its count; empty ones led nowhere.
+  const statusCounts = useMemo(() => {
+    const counts = {};
+    (complaints || []).forEach((complaint) => {
+      counts[complaint.status] = (counts[complaint.status] || 0) + 1;
+    });
+    return counts;
+  }, [complaints]);
+  const filterOptions = STATUS_FILTERS.filter(
+    (value) => value === "all" || statusCounts[value] || value === statusFilter,
+  );
+  // "2026-11-12T09:15:00+08:00" is already in Philippine time, so the date
+  // part is the local day; written the way the rest of the app writes dates.
+  const shortDate = (value) => formatJobDate(String(value || "").slice(0, 10));
 
   return (
     <>
@@ -250,14 +266,16 @@ export default function MyComplaintsView({
 
           {status === "ready" && complaints.length > 0 && (
             <div className="my-reports-filters">
-              {STATUS_FILTERS.map((filterValue) => (
+              {filterOptions.map((filterValue) => (
                 <button
                   type="button"
                   key={filterValue}
                   className={`my-reports-filter ${statusFilter === filterValue ? "active" : ""}`}
                   onClick={() => setStatusFilter(filterValue)}
                 >
-                  {filterValue === "all" ? "All" : STATUS_LABELS[filterValue]}
+                  {filterValue === "all"
+                    ? `All (${complaints.length})`
+                    : `${STATUS_LABELS[filterValue]} (${statusCounts[filterValue] || 0})`}
                 </button>
               ))}
             </div>
@@ -274,8 +292,33 @@ export default function MyComplaintsView({
           )}
 
           {status === "ready" && complaints.length === 0 && (
-            <div className="profile-card p-4 mt-3 text-center text-muted">
-              You haven't filed any complaints. You can file a complaint from a job's detail page.
+            <div className="profile-card p-4 mt-3 text-center text-muted my-reports-empty">
+              <p className="mb-3">
+                {isHousehold
+                  ? "You haven't filed any complaints. To file one, open the job on your Dashboard or in My Jobs and choose File a Complaint."
+                  : "You haven't filed any complaints. To file one, open the job from My Jobs or My Applications and choose File a Complaint."}
+              </p>
+              <div className="d-flex gap-2 justify-content-center flex-wrap">
+                {isHousehold ? (
+                  <>
+                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={openHouseholdDashboard}>
+                      Go to Dashboard
+                    </button>
+                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={openHouseholdMyJobs}>
+                      Go to My Jobs
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={openWorkerMyJobs}>
+                      Go to My Jobs
+                    </button>
+                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={openWorkerApplications}>
+                      Go to My Applications
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -297,8 +340,10 @@ export default function MyComplaintsView({
                           <span className="my-report-type-name">
                             {TYPE_LABELS[complaint.complaintType] || complaint.complaintType}
                           </span>
-                          {complaint.respondentUsername && (
-                            <span className="my-report-direction by-you">About {complaint.respondentUsername}</span>
+                          {(complaint.respondentName || complaint.respondentUsername) && (
+                            <span className="my-report-direction by-you">
+                              About {complaint.respondentName || complaint.respondentUsername}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -309,7 +354,25 @@ export default function MyComplaintsView({
                     </div>
 
                     <p className="my-report-meta">
-                      {complaint.jobTitle || "Job complaint"} &middot; {complaint.createdAt?.slice(0, 10)}
+                      {complaint.jobTitle || "Job complaint"} &middot; Filed {shortDate(complaint.createdAt)}
+                      {/* When the admin team last moved it on. */}
+                      {complaint.status !== "submitted" &&
+                      complaint.updatedAt &&
+                      shortDate(complaint.updatedAt) !== shortDate(complaint.createdAt)
+                        ? ` · Updated ${shortDate(complaint.updatedAt)}`
+                        : ""}
+                      {!isHousehold && complaint.jobId && openWorkerJobDetail && (
+                        <>
+                          {" "}&middot;{" "}
+                          <button
+                            type="button"
+                            className="btn btn-link btn-sm p-0 align-baseline my-report-view-job"
+                            onClick={() => openWorkerJobDetail(complaint.jobId, "complaints")}
+                          >
+                            View job
+                          </button>
+                        </>
+                      )}
                     </p>
 
                     {complaint.description && <p className="my-report-desc">{complaint.description}</p>}
@@ -326,6 +389,7 @@ export default function MyComplaintsView({
                             className="my-report-thumb"
                             src={item.imageUrl}
                             alt={`Evidence for complaint ${complaint.id}`}
+                            unavailableLabel="Photo no longer available"
                           />
                         ))}
                       </div>

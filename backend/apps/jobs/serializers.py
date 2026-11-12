@@ -24,10 +24,13 @@ from apps.jobs.services import (
     UNDERWAY_JOB_STATUSES,
     can_back_out_of_hire,
     can_withdraw_application,
+    full_time_started,
     hired_jobs_under_way,
     hold_apply_message,
+    hold_ends_on,
     hold_on,
     hold_title,
+    job_days,
     job_has_lapsed,
     job_not_started_message,
     lapsed_note,
@@ -176,6 +179,19 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     status_stage = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
     invited = serializers.SerializerMethodField()
+    hold_free_from = serializers.SerializerMethodField()
+
+    def get_hold_free_from(self, obj):
+        """For a hired worker on a full-time job past its last day: the day
+        they may take other jobs again even if the household never marks it
+        done (worker_hold). None otherwise: a one-time or part-time job only
+        holds its own days, which have passed."""
+        if obj.status != JobApplication.STATUS_HIRED or obj.job.status != JobPosting.STATUS_ASSIGNED:
+            return None
+        days = job_days(obj.job)
+        if not days or not job_has_lapsed(obj.job) or not full_time_started(obj.job.schedule_type, days):
+            return None
+        return (hold_ends_on(days) + timedelta(days=1)).isoformat()
 
     def get_status_stage(self, obj):
         return get_application_stage(obj.status, obj.job.status, job=obj.job)
@@ -224,6 +240,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "status_stage",
             "status_label",
             "invited",
+            "hold_free_from",
             "job_id",
             "job_title",
             "job_type",

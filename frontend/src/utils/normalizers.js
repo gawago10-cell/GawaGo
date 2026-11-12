@@ -31,6 +31,8 @@ export function normalizeReview(review) {
     // selected elsewhere in the UI).
     jobId: review.jobId || null,
     jobTitle: review.jobTitle || "",
+    // The automatic 3.5 given when the household didn't rate in time.
+    isAutomatic: Boolean(review.isAutomatic),
     // The four e-commerce-style metrics behind the overall rating, and the
     // backend's own computed overall_rating (their average when present,
     // else the plain `rating`). Without these the metric breakdown UI has
@@ -363,6 +365,9 @@ export function normalizeBackendApplication(application) {
     statusLabel: application.status_label || application.statusLabel || "",
     // The household invited this worker rather than the worker applying.
     invited: Boolean(application.invited),
+    // Full-time job past its last day: when the worker is free of it even if
+    // the household never marks it done ("" otherwise).
+    holdFreeFrom: application.hold_free_from || application.holdFreeFrom || "",
     // False while the worker's account is suspended (no reason is sent).
     workerAvailable: (application.worker_available ?? application.workerAvailable) !== false,
     appliedAt: application.applied_at || application.appliedAt || "",
@@ -513,6 +518,7 @@ export function normalizeBackendReview(review) {
     communication: review.communication ?? null,
     professionalism: review.professionalism ?? null,
     overallRating: review.overall_rating ?? review.overallRating ?? null,
+    isAutomatic: Boolean(review.is_automatic ?? review.isAutomatic),
     createdAt: review.created_at || review.createdAt || new Date().toLocaleString("en-PH"),
   });
 }
@@ -544,6 +550,7 @@ export function normalizeBackendComplaint(complaint) {
     id: complaint.id,
     complainantUsername: complaint.complainant_username || "",
     respondentUsername: complaint.respondent_username || "",
+    respondentName: complaint.respondent_name || complaint.respondent_username || "",
     complainantDetail: normalizeComplaintParty(complaint.complainant_detail),
     respondentDetail: normalizeComplaintParty(complaint.respondent_detail),
     jobId: complaint.job || null,

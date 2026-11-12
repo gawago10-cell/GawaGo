@@ -44,6 +44,9 @@ class ReviewSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
     target_name = serializers.SerializerMethodField()
     overall_rating = serializers.SerializerMethodField()
+    # The automatic 3.5 a worker gets when the household doesn't rate in
+    # time; My Jobs showed it as if the household had chosen it.
+    is_automatic = serializers.BooleanField(source="is_system_generated", read_only=True)
 
     class Meta:
         model = Review
@@ -66,9 +69,12 @@ class ReviewSerializer(serializers.ModelSerializer):
             "communication",
             "professionalism",
             "overall_rating",
+            "is_automatic",
             "created_at",
         ]
-        read_only_fields = ["id", "author", "author_username", "target_username", "overall_rating", "created_at"]
+        read_only_fields = [
+            "id", "author", "author_username", "target_username", "overall_rating", "is_automatic", "created_at",
+        ]
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

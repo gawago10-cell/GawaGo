@@ -328,7 +328,11 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen>
         onPostNew: () => _select(_Page.postJob),
       ),
       _Page.messages => const ConversationsView(role: 'household'),
-      _Page.myReports => _HouseholdMyReports(repository: _repository),
+      _Page.myReports => _HouseholdMyReports(
+        repository: _repository,
+        onGoToDashboard: () => _select(_Page.dashboard),
+        onGoToMyJobs: () => _select(_Page.jobs),
+      ),
       _Page.profile => _Profile(repository: _repository, onSaved: _changed),
       _Page.reviews => ReviewHistory(
         receivedLoader: _repository.getReceivedReviews,
@@ -2685,16 +2689,31 @@ class _PostJobImagesBox extends StatelessWidget {
 }
 
 class _HouseholdMyReports extends StatelessWidget {
-  const _HouseholdMyReports({required this.repository});
+  const _HouseholdMyReports({
+    required this.repository,
+    required this.onGoToDashboard,
+    required this.onGoToMyJobs,
+  });
 
   final HouseholdRepository repository;
+  final VoidCallback onGoToDashboard;
+  final VoidCallback onGoToMyJobs;
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<HouseholdProfile>(
       future: repository.getProfile(),
       builder: (context, snapshot) {
-        return MyComplaintsView(currentUsername: snapshot.data?.username);
+        return MyComplaintsView(
+          currentUsername: snapshot.data?.username,
+          emptyMessage:
+              'To file one, open the job on your Dashboard or in My Jobs '
+              'and choose File a Complaint.',
+          emptyActions: [
+            ('Go to Dashboard', onGoToDashboard),
+            ('Go to My Jobs', onGoToMyJobs),
+          ],
+        );
       },
     );
   }

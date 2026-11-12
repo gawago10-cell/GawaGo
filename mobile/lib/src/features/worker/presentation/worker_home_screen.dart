@@ -370,7 +370,16 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
         onChanged: _refreshAll,
       ),
       _WorkerPage.messages => const ConversationsView(role: 'worker'),
-      _WorkerPage.myReports => _WorkerMyReports(repository: _repository),
+      _WorkerPage.myReports => _WorkerMyReports(
+        repository: _repository,
+        onOpenJob: (id) => _openJob(
+          id,
+          backLabel: 'Back to My Complaints',
+          refreshPage: _WorkerPage.myReports,
+        ),
+        onGoToMyJobs: () => _select(_WorkerPage.myJobs),
+        onGoToApplications: () => _select(_WorkerPage.applications),
+      ),
       _WorkerPage.profile => _WorkerProfile(
         repository: _repository,
         onSaved: _refreshAll,
@@ -2904,9 +2913,17 @@ class _WorkerPhotosCard extends StatelessWidget {
 }
 
 class _WorkerMyReports extends StatefulWidget {
-  const _WorkerMyReports({required this.repository});
+  const _WorkerMyReports({
+    required this.repository,
+    required this.onOpenJob,
+    required this.onGoToMyJobs,
+    required this.onGoToApplications,
+  });
 
   final WorkerRepository repository;
+  final ValueChanged<int> onOpenJob;
+  final VoidCallback onGoToMyJobs;
+  final VoidCallback onGoToApplications;
 
   @override
   State<_WorkerMyReports> createState() => _WorkerMyReportsState();
@@ -2920,7 +2937,17 @@ class _WorkerMyReportsState extends State<_WorkerMyReports> {
     return FutureBuilder<WorkerProfile>(
       future: _future,
       builder: (context, snapshot) {
-        return MyComplaintsView(currentUsername: snapshot.data?.username);
+        return MyComplaintsView(
+          currentUsername: snapshot.data?.username,
+          emptyMessage:
+              'To file one, open the job from My Jobs or My Applications '
+              'and choose File a Complaint.',
+          emptyActions: [
+            ('Go to My Jobs', widget.onGoToMyJobs),
+            ('Go to My Applications', widget.onGoToApplications),
+          ],
+          onOpenJob: widget.onOpenJob,
+        );
       },
     );
   }
@@ -3390,6 +3417,21 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
     });
   }
 
+  /// The job's page, whose Back returns here. It holds the household's
+  /// contact, the map and "Leave Feedback for Household".
+  void _openDetail(int jobId) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _WorkerJobDetail(
+          repository: widget.repository,
+          jobId: jobId,
+          backLabel: 'Back to My Jobs',
+          onChanged: _reload,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<(List<WorkerApplication>, List<GawaGoReview>)>(
@@ -3404,9 +3446,13 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
         // The application stays Hired while the job runs, including once
         // completion has been requested, so job stage is what separates
         // active work from finished history.
+        // awaiting_mark_done is a hired job past its last day: still the
+        // worker's until the household marks it done.
         final inProgress = applications.where((item) {
           final stage = _workerApplicationStage(item);
-          return stage == 'in_progress' || stage == 'awaiting_confirmation';
+          return stage == 'in_progress' ||
+              stage == 'awaiting_confirmation' ||
+              stage == 'awaiting_mark_done';
         }).toList();
         final completed = applications
             .where((item) => _workerApplicationStage(item) == 'completed')
@@ -3417,8 +3463,10 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
             children: [
+              // "Current", not "In progress": a job past its last day is
+              // still here, waiting to be marked done.
               Text(
-                'In Progress · ${inProgress.length}',
+                'Current Jobs · ${inProgress.length}',
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 13,
@@ -3435,6 +3483,7 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
                 for (final job in inProgress) ...[
                   _WorkerInProgressJobCard(
                     job: job,
+                    onOpen: () => _openDetail(job.jobId),
                     onBackOut: job.canBackOut
                         ? () async {
                             final done = await _stepAwayFromJob(
@@ -3476,15 +3525,7 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
                     // The detail page holds "Leave Feedback for Household"
                     // and "Report an issue"; without this they were only
                     // reachable from a notification.
-                    onOpen: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => _WorkerJobDetail(
-                          repository: widget.repository,
-                          jobId: job.jobId,
-                          onChanged: _reload,
-                        ),
-                      ),
-                    ),
+                    onOpen: () => _openDetail(job.jobId),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -3521,9 +3562,14 @@ class _WorkerMyJobsEmptyCard extends StatelessWidget {
 }
 
 class _WorkerInProgressJobCard extends StatelessWidget {
-  const _WorkerInProgressJobCard({required this.job, this.onBackOut});
+  const _WorkerInProgressJobCard({
+    required this.job,
+    required this.onOpen,
+    this.onBackOut,
+  });
 
   final WorkerApplication job;
+  final VoidCallback onOpen;
 
   /// Set until the job's first day: the worker can still give it up.
   final VoidCallback? onBackOut;
@@ -3577,7 +3623,7 @@ class _WorkerInProgressJobCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}',
+            'PHP ${job.serviceRate.toStringAsFixed(2)}/${job.rateTypeLabel.toLowerCase()}',
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
           ),
           if (job.jobStartDate.isNotEmpty || job.jobEndDate.isNotEmpty) ...[
@@ -3589,17 +3635,36 @@ class _WorkerInProgressJobCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 12),
-          // The household marks a job done (AGENTS.md I.A).
+          // The household marks a job done (AGENTS.md I.A). Past the last
+          // day the card says so, and for a full-time job when the worker is
+          // free of it anyway.
           Text(
-            '$household will mark this job as done when the work is finished.',
+            job.statusStage == 'awaiting_mark_done'
+                ? 'The last day was '
+                      '${formatJobDate(job.jobEndDate.isNotEmpty ? job.jobEndDate : job.jobStartDate)}. '
+                      '$household still needs to mark this job done.'
+                      '${job.holdFreeFrom.isNotEmpty ? " If they haven't, you can take other jobs again from ${formatJobDate(job.holdFreeFrom)}." : ''}'
+                : '$household will mark this job as done when the work is finished.',
             style: const TextStyle(
               color: GawaGoColors.textMuted,
               fontSize: 13,
               fontStyle: FontStyle.italic,
             ),
           ),
-          if (onBackOut != null) ...[
-            const SizedBox(height: 6),
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: onOpen,
+            style: TextButton.styleFrom(
+              foregroundColor: GawaGoColors.leafDeep,
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 36),
+            ),
+            child: const Text(
+              'View job',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          if (onBackOut != null)
             TextButton(
               onPressed: onBackOut,
               style: TextButton.styleFrom(
@@ -3612,7 +3677,6 @@ class _WorkerInProgressJobCard extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
-          ],
         ],
       ),
     );
@@ -3752,8 +3816,19 @@ class _WorkerCompletedJobCard extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
+            // Same order as a current job: who and where, then the rate.
             Text(
-              'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}',
+              job.locationLabel.isEmpty
+                  ? 'Location not set'
+                  : job.locationLabel,
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'PHP ${job.serviceRate.toStringAsFixed(2)}/${job.rateTypeLabel.toLowerCase()}',
               style: const TextStyle(
                 color: GawaGoColors.textMuted,
                 fontSize: 13,
@@ -3761,9 +3836,11 @@ class _WorkerCompletedJobCard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              review?.rating != null
-                  ? 'Rating received: ${review!.rating!.toStringAsFixed(1)} / 5'
-                  : 'No rating yet',
+              review?.rating == null
+                  ? 'No rating yet'
+                  : review!.isAutomatic
+                  ? "Automatic rating: ${review!.rating!.toStringAsFixed(1)} / 5 (the household didn't rate in time)"
+                  : 'Rating received: ${review!.rating!.toStringAsFixed(1)} / 5',
               style: const TextStyle(
                 color: GawaGoColors.textMuted,
                 fontSize: 13,
@@ -3779,6 +3856,19 @@ class _WorkerCompletedJobCard extends StatelessWidget {
                 finished: true,
               ),
             ],
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: onOpen,
+              style: TextButton.styleFrom(
+                foregroundColor: GawaGoColors.leafDeep,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 36),
+              ),
+              child: const Text(
+                'View job',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
           ],
         ),
       ),

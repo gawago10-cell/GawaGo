@@ -173,4 +173,16 @@ void main() {
     expect(invited.invited, isTrue);
     expect(applied.invited, isFalse);
   });
+
+  test('a review says whether it was the automatic rating', () {
+    final automatic = GawaGoReview.fromJson({
+      'id': 1,
+      'rating': '3.5',
+      'is_automatic': true,
+    });
+    final chosen = GawaGoReview.fromJson({'id': 2, 'rating': '5'});
+
+    expect(automatic.isAutomatic, isTrue);
+    expect(chosen.isAutomatic, isFalse);
+  });
 }

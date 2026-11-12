@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.accounts.banned import latest_id_number
 from apps.common.sanitize import sanitize_text
 from apps.complaints.models import Complaint, ComplaintEvidence
+from apps.common.barangays import barangay_from_location_label
 from apps.jobs.privacy import masked_location_label
 
 
@@ -59,6 +60,9 @@ class ComplaintSerializer(serializers.ModelSerializer):
 
     complainant_username = serializers.CharField(source="complainant_label", read_only=True)
     respondent_username = serializers.CharField(source="respondent_label", read_only=True)
+    # The person's name, as the rest of the app shows people; the filer saw
+    # only a username. Nothing else about them (contact, ID) is added here.
+    respondent_name = serializers.SerializerMethodField()
     job_service_type = serializers.CharField(source="job.job_type", read_only=True, allow_null=True)
     job_status = serializers.CharField(source="job.status", read_only=True, allow_null=True)
     job_title = serializers.SerializerMethodField()
@@ -72,6 +76,7 @@ class ComplaintSerializer(serializers.ModelSerializer):
             "complainant_username",
             "respondent",
             "respondent_username",
+            "respondent_name",
             "job",
             "job_title",
             "job_service_type",
@@ -94,6 +99,7 @@ class ComplaintSerializer(serializers.ModelSerializer):
             "complainant_username",
             "respondent",
             "respondent_username",
+            "respondent_name",
             "job_title",
             "job_service_type",
             "job_status",
@@ -107,11 +113,18 @@ class ComplaintSerializer(serializers.ModelSerializer):
     def validate_description(self, value):
         return sanitize_text(value)
 
+    def get_respondent_name(self, obj):
+        if obj.respondent is None:
+            return obj.respondent_label
+        return obj.respondent.get_full_name().strip() or obj.respondent.username
+
     def get_job_title(self, obj):
         if obj.job:
             # Barangay, not the street: a report is filed by people who may
-            # never have been hired for this job.
-            return f"{obj.job.title} at {masked_location_label(obj.job.location_label)}"
+            # never have been hired for this job. The barangay alone, as the
+            # other screens show it; the city and province added nothing.
+            barangay = barangay_from_location_label(obj.job.location_label)
+            return f"{obj.job.title} at {barangay}" if barangay else obj.job.title
         return None
 
 

@@ -40,9 +40,17 @@ export default function WorkerJobDetailView({
   addToast,
   origin = "find-jobs",
 }) {
-  const fromApplications = origin === "applications";
-  const backToList = fromApplications ? openWorkerApplications : openWorkerFindJobs;
-  const backToListLabel = fromApplications ? "Back to My Applications" : "Back to Find Jobs";
+  // The list that opened this page: highlighted in the sidebar, and where
+  // Back returns.
+  const origins = {
+    "find-jobs": { navId: "find-jobs", label: "Back to Find Jobs", open: openWorkerFindJobs },
+    applications: { navId: "applications", label: "Back to My Applications", open: openWorkerApplications },
+    "my-jobs": { navId: "jobs", label: "Back to My Jobs", open: openWorkerMyJobs },
+    complaints: { navId: "flag", label: "Back to My Complaints", open: openMyComplaints },
+  };
+  const from = origins[origin] || origins["find-jobs"];
+  const backToList = from.open;
+  const backToListLabel = from.label;
   const job = currentWorkerJobDetail;
   const household = currentWorkerJobHousehold;
   const householdName = getDisplayName(
@@ -132,7 +140,7 @@ export default function WorkerJobDetailView({
                 {
                   id: "find-jobs",
                   label: "Find Jobs",
-                  active: !fromApplications,
+                  active: from.navId === "find-jobs",
                   onClick: openWorkerFindJobs,
                 },
                 {
@@ -143,18 +151,20 @@ export default function WorkerJobDetailView({
                 {
                   id: "applications",
                   label: "My Applications",
-                  active: fromApplications,
+                  active: from.navId === "applications",
                   count: workerApplicationUnreadCount,
                   onClick: openWorkerApplications,
                 },
                 {
                   id: "jobs",
                   label: "My Jobs",
+                  active: from.navId === "jobs",
                   onClick: openWorkerMyJobs,
                 },
                 {
                   id: "flag",
                   label: "My Complaints",
+                  active: from.navId === "flag",
                   onClick: openMyComplaints,
                 },
                 {

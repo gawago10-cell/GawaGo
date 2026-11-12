@@ -91,3 +91,32 @@ class InvitedFlagTests(TestCase):
             self.invite()
 
         self.assertFalse(self.invited_flag())
+
+
+class HoldFreeFromTests(TestCase):
+    """My Jobs: when a hired worker may take other jobs again after a job's
+    last day, if the household never marks it done (audit 2026-11-12)."""
+
+    def setUp(self):
+        self.household = make_user("free-home", UserProfile.ROLE_HOUSEHOLD)
+        self.worker = make_user("free-worker", UserProfile.ROLE_WORKER, skills=["House Cleaning"])
+
+    def free_from(self, schedule_type, start, end):
+        job = make_job(
+            self.household, status=JobPosting.STATUS_ASSIGNED, schedule_type=schedule_type,
+            job_start_date=start, job_end_date=end,
+        )
+        JobApplication.objects.create(job=job, worker=self.worker, status=JobApplication.STATUS_HIRED)
+        rows = client_for(self.worker).get(reverse("job-application-list")).data
+        rows = rows.get("results", rows)
+        return next(item for item in rows if item["job_id"] == job.id)["hold_free_from"]
+
+    def test_a_full_time_job_past_its_last_day_names_the_day_the_hold_ends(self):
+        end = days_from_today(-1)
+        self.assertEqual(self.free_from("Full-Time", days_from_today(-20), end), str(end + timedelta(days=4)))
+
+    def test_a_one_time_job_holds_only_its_own_days(self):
+        self.assertIsNone(self.free_from("One-Time", days_from_today(-2), days_from_today(-1)))
+
+    def test_a_full_time_job_still_running_has_no_free_from(self):
+        self.assertIsNone(self.free_from("Full-Time", days_from_today(-3), days_from_today(5)))

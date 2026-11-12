@@ -115,4 +115,18 @@ void main() {
     );
     expect(filerView.adminJobLabel, 'Deep Cleaning at Isabang');
   });
+
+  test('the filer sees the respondent by name and when it was updated', () {
+    final complaint = ComplaintReport.fromJson({
+      'id': 4,
+      'respondent_username': 'dashhome',
+      'respondent_name': 'Emman Aviles',
+      'status': 'under_review',
+      'created_at': '2026-11-12T09:15:00+08:00',
+      'updated_at': '2026-11-14T10:00:00+08:00',
+    });
+
+    expect(complaint.respondentName, 'Emman Aviles');
+    expect(complaint.updatedAt, '2026-11-14T10:00:00+08:00');
+  });
 }

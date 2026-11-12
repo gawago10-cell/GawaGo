@@ -669,8 +669,17 @@ void main() {
       await _openWorkerPage(tester, 'My Jobs');
       await tester.pumpAndSettle();
 
-      expect(find.text('In Progress · 1'), findsOneWidget);
-      expect(find.text('Completed · 1'), findsOneWidget);
+      expect(find.text('Current Jobs · 2'), findsOneWidget);
+      expect(find.text('Live-in Helper'), findsOneWidget);
+      expect(
+        find.text(
+          'The last day was Nov 9, 2026. Maria Household still needs to mark '
+          "this job done. If they haven't, you can take other jobs again from "
+          'Nov 13, 2026.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Completed · 1', skipOffstage: false), findsOneWidget);
       expect(find.text('Active House Cleaning'), findsOneWidget);
       expect(
         find.text(
@@ -679,6 +688,17 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Mark job as complete'), findsNothing);
+      // The finished section sits below the current jobs.
+      await tester.scrollUntilVisible(
+        find.text('Rating received: 4.5 / 5'),
+        300,
+        scrollable: find
+            .ancestor(
+              of: find.text('Active House Cleaning'),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       expect(find.text('Finished House Cleaning'), findsOneWidget);
       expect(find.text('Rating received: 4.5 / 5'), findsOneWidget);
     },
@@ -1152,6 +1172,29 @@ Future<http.Response> _myJobsResponses(http.Request request) async {
         'can_request_completion': true,
         'note': '',
         'applied_at': '2026-06-09T10:00:00+08:00',
+      },
+      {
+        // Hired, past its last day: still the worker's until the household
+        // marks it done.
+        'id': 3,
+        'job_id': 10,
+        'job_title': 'Live-in Helper',
+        'job_type': 'Cleaning',
+        'job_status': 'assigned',
+        'job_schedule_type': 'Full-Time',
+        'job_start_date': '2026-10-20',
+        'job_end_date': '2026-11-09',
+        'household_username': 'maria',
+        'household_name': 'Maria Household',
+        'location_label': 'Tayabas City',
+        'service_rate': '550.00',
+        'status': 'hired',
+        'status_stage': 'awaiting_mark_done',
+        'status_label': 'Waiting to be marked done',
+        'hold_free_from': '2026-11-13',
+        'can_request_completion': false,
+        'note': '',
+        'applied_at': '2026-10-01T10:00:00+08:00',
       },
       {
         'id': 2,

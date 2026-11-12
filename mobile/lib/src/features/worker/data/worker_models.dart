@@ -452,6 +452,7 @@ class GawaGoReview {
     this.punctuality,
     this.communication,
     this.professionalism,
+    this.isAutomatic = false,
   });
 
   final int id;
@@ -471,6 +472,9 @@ class GawaGoReview {
   final int? punctuality;
   final int? communication;
   final int? professionalism;
+
+  /// The automatic 3.5 given when the household didn't rate in time.
+  final bool isAutomatic;
 
   /// The supplied metrics as label/value pairs, for rendering a breakdown.
   List<(String, int)> get metricBreakdown => [
@@ -499,6 +503,7 @@ class GawaGoReview {
       punctuality: _optionalInteger(json['punctuality']),
       communication: _optionalInteger(json['communication']),
       professionalism: _optionalInteger(json['professionalism']),
+      isAutomatic: json['is_automatic'] == true,
     );
   }
 
@@ -569,6 +574,7 @@ class WorkerApplication {
     required this.note,
     required this.appliedAt,
     this.invited = false,
+    this.holdFreeFrom = '',
   });
 
   final int id;
@@ -619,6 +625,10 @@ class WorkerApplication {
   /// The household invited this worker rather than the worker applying.
   final bool invited;
 
+  /// Full-time job past its last day: when the worker is free of it even if
+  /// the household never marks it done ('' otherwise).
+  final String holdFreeFrom;
+
   factory WorkerApplication.fromJson(Map<String, dynamic> json) {
     return WorkerApplication(
       id: _integer(json['id']),
@@ -657,6 +667,7 @@ class WorkerApplication {
       note: _text(json['note']),
       appliedAt: _text(json['applied_at']),
       invited: json['invited'] == true,
+      holdFreeFrom: _text(json['hold_free_from']),
     );
   }
 }

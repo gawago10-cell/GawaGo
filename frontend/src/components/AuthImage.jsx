@@ -14,7 +14,7 @@ function toApiPath(url) {
  * evidence). A plain <img src> can't send the bearer token, so the bytes are
  * fetched with it and shown from a blob: URL. Clicking opens the full image.
  */
-export default function AuthImage({ src, alt, className = "" }) {
+export default function AuthImage({ src, alt, className = "", unavailableLabel = "" }) {
   const [objectUrl, setObjectUrl] = useState("");
   const [failed, setFailed] = useState(false);
 
@@ -42,6 +42,11 @@ export default function AuthImage({ src, alt, className = "" }) {
   }, [src]);
 
   if (failed) {
+    // With a label the reason is written out; a bare "!" in an empty tile
+    // read as nothing at all (My Complaints audit, 2026-11-12).
+    if (unavailableLabel) {
+      return <span className="auth-image-unavailable">{unavailableLabel}</span>;
+    }
     return <span className={`auth-image-placeholder ${className}`.trim()} title="Image unavailable">!</span>;
   }
   if (!objectUrl) {

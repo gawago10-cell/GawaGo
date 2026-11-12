@@ -3836,8 +3836,10 @@ export default function AppViews({
                   </p>
                 </div>
 
+                {/* "Current", not "In progress": a job past its last day is
+                    still here, waiting to be marked done. */}
                 <p className="household-process-section-label">
-                  In progress &middot; {workerInProgressJobs.length}
+                  Current jobs &middot; {workerInProgressJobs.length}
                 </p>
                 {workerInProgressJobs.length === 0 ? (
                   <div className="profile-card p-4 text-center text-muted">
@@ -3877,11 +3879,33 @@ export default function AppViews({
                             endDate={job.jobEndDate}
                             workingDays={job.estimatedWorkingDays}
                           />
-                          {/* The household marks a job done (AGENTS.md I.A). */}
+                          {/* The household marks a job done (AGENTS.md I.A). Past the
+                              last day the card says so, and for a full-time job when
+                              the worker is free of it anyway. */}
                           <div className="household-process-note">
-                            {job.householdName || job.householdUsername || "The household"} will mark this job as
-                            done when the work is finished.
+                            {job.applicationStatusStage === "awaiting_mark_done" ? (
+                              <>
+                                The last day was {formatJobDate(job.jobEndDate || job.jobStartDate)}.{" "}
+                                {job.householdName || job.householdUsername || "The household"} still needs to mark this
+                                job done.
+                                {job.applicationHoldFreeFrom
+                                  ? ` If they haven't, you can take other jobs again from ${formatJobDate(job.applicationHoldFreeFrom)}.`
+                                  : ""}
+                              </>
+                            ) : (
+                              <>
+                                {job.householdName || job.householdUsername || "The household"} will mark this job as
+                                done when the work is finished.
+                              </>
+                            )}
                           </div>
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary btn-sm household-process-view-job"
+                            onClick={() => openWorkerJobDetail(job.id, "my-jobs")}
+                          >
+                            View job
+                          </button>
                           {job.canBackOut && (
                             <button
                               type="button"
@@ -3917,7 +3941,8 @@ export default function AppViews({
                               <h3>{job.jobTitle || job.serviceType}</h3>
                               <span className="household-process-status-line review">
                                 <i aria-hidden="true" />
-                                {job.completedAt ? `Completed ${formatDateTime(job.completedAt)}` : "Completed"}
+                                {/* The date alone keeps it on one line beside the dot. */}
+                                {job.completedAt ? `Completed ${formatJobDate(String(job.completedAt).slice(0, 10))}` : "Completed"}
                               </span>
                             </div>
                           </div>
@@ -3927,13 +3952,17 @@ export default function AppViews({
                             </div>
                             <div>
                               <span>{job.householdName || job.householdUsername || "Household"}</span>
-                              <small>{formatRate(job.offeredRate, job.rateType)}</small>
+                              <small>{formatLocation(job.barangay, job.streetAddress)}</small>
                             </div>
                           </div>
+                          {/* Same order as a current job: who and where, then the rate. */}
+                          <p className="household-process-meta">{formatRate(job.offeredRate, job.rateType)}</p>
                           <p className="household-process-meta">
-                            {review
-                              ? `Rating received: ${Number(review.overallRating ?? review.rating).toFixed(1)} / 5`
-                              : "No rating yet"}
+                            {!review
+                              ? "No rating yet"
+                              : review.isAutomatic
+                                ? `Automatic rating: ${Number(review.overallRating ?? review.rating).toFixed(1)} / 5 (the household didn't rate in time)`
+                                : `Rating received: ${Number(review.overallRating ?? review.rating).toFixed(1)} / 5`}
                           </p>
                           <JobScheduleBox
                             startDate={job.jobStartDate}
@@ -3941,6 +3970,13 @@ export default function AppViews({
                             workingDays={job.estimatedWorkingDays}
                             finished
                           />
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary btn-sm household-process-view-job"
+                            onClick={() => openWorkerJobDetail(job.id, "my-jobs")}
+                          >
+                            View job
+                          </button>
                           {hasRatedHouseholdForJob(job.id) ? (
                             <div className="household-process-note">You rated this household.</div>
                           ) : (

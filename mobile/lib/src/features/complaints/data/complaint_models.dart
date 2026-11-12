@@ -15,6 +15,8 @@ class ComplaintReport {
     required this.status,
     required this.resolution,
     required this.createdAt,
+    this.respondentName = '',
+    this.updatedAt = '',
     this.evidenceUrls = const [],
     this.respondentIsBlocked = false,
     this.respondentBlockedUntil,
@@ -47,6 +49,10 @@ class ComplaintReport {
   final String status;
   final String resolution;
   final String createdAt;
+  final String updatedAt;
+
+  /// The respondent's name, as the rest of the app shows people.
+  final String respondentName;
 
   /// Admin-only account context (`ComplaintAdminSerializer`'s
   /// complainant_detail/respondent_detail) -- null on the household/worker
@@ -88,6 +94,8 @@ class ComplaintReport {
       status: _text(json['status'], 'submitted'),
       resolution: _text(json['resolution']),
       createdAt: _text(json['created_at']),
+      updatedAt: _text(json['updated_at']),
+      respondentName: _text(json['respondent_name']),
       evidenceUrls: (json['evidence'] as List<dynamic>? ?? const [])
           .map((item) => _text((item as Map<String, dynamic>)['image_url']))
           .where((url) => url.isNotEmpty)

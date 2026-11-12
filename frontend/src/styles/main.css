@@ -16762,3 +16762,16 @@ a,
 @container ggstack (max-width: 780px) {
   .gg-stack-table:not(.gg-stack-wide) .worker-application-invited { display: none; }
 }
+
+/* My Jobs and My Complaints (audit 2026-11-12). */
+.household-process-view-job { align-self: flex-start; }
+.auth-image-unavailable {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 8px;
+  border: 1px dashed var(--gg-line-strong, rgba(31, 42, 25, 0.16));
+  color: var(--gg-ink-muted, #565e4e);
+  font-size: 0.82rem;
+}
