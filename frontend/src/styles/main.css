@@ -14107,7 +14107,7 @@ a,
   font-weight: 700 !important;
 }
 
-.worker-dashboard .badge:is(.text-bg-secondary, .text-bg-light, .bg-secondary, .bg-light) {
+.worker-dashboard .badge:is(.text-bg-secondary, .text-bg-light, .bg-secondary, .bg-light, .worker-skill-neutral) {
   border-color: var(--gg-line-strong) !important;
   background: rgba(31, 42, 25, 0.08) !important;
   color: var(--gg-ink-muted) !important;
@@ -15554,7 +15554,6 @@ a,
 /* Text contrast: each of these sat below 4.5:1. */
 .household-feedback-eyebrow,
 .worker-dashboard .household-process-section-label,
-.worker-dashboard .badge.worker-skill-neutral,
 .worker-location-picker-head span,
 .register-page .register-section-label,
 .register-page .register-card .input-group-text,

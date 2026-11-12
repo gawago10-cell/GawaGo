@@ -439,7 +439,8 @@ class _WorkerDashboard extends StatelessWidget {
                   ),
                   _WebsiteMetric(
                     label: 'Skill Matches',
-                    value: '${_matchingJobCount(openJobs, profile.skills)}',
+                    value:
+                        '${_matchingJobCount(openJobs.where((job) => job.canApply).toList(), profile.skills)}',
                   ),
                   _WebsiteMetric(label: 'Your Rating', value: ratingValue),
                   _WebsiteMetric(
@@ -704,11 +705,14 @@ class _JobMarketOverviewState extends State<_JobMarketOverview> {
   String _search = '';
   bool _expanded = false;
 
+  // Jobs the worker can apply to, so the categories add up to the Open Jobs
+  // tile (and match the web).
   int _openCount(String skill) => widget.jobs
       .where(
         (job) =>
-            _normalizeSkill(job.jobType) == _normalizeSkill(skill) ||
-            _normalizeSkill(job.requiredSkill) == _normalizeSkill(skill),
+            job.canApply &&
+            (_normalizeSkill(job.jobType) == _normalizeSkill(skill) ||
+                _normalizeSkill(job.requiredSkill) == _normalizeSkill(skill)),
       )
       .length;
 
@@ -725,11 +729,16 @@ class _JobMarketOverviewState extends State<_JobMarketOverview> {
     };
     bool isPriority(String skill) =>
         workerSkills.contains(_normalizeSkill(skill)) || counts[skill]! > 0;
-    // Categories with open jobs or in the worker's skills come first; the
+    bool matches(String skill) => workerSkills.contains(_normalizeSkill(skill));
+    // Categories with open jobs or in the worker's skills come first, the
+    // worker's own skills ahead of the rest, each group by open jobs; the
     // rest fold behind "Show more" so the dashboard isn't a long scroll of
     // empty categories. A search shows every result.
     final priority = visibleSkills.where(isPriority).toList()
-      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+      ..sort((a, b) {
+        if (matches(a) != matches(b)) return matches(a) ? -1 : 1;
+        return counts[b]!.compareTo(counts[a]!);
+      });
     final rest = visibleSkills.where((skill) => !isPriority(skill)).toList();
     final canFold = query.isEmpty && priority.isNotEmpty && rest.isNotEmpty;
     final shownSkills = canFold && !_expanded

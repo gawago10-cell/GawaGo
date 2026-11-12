@@ -697,11 +697,13 @@ export default function AppViews({
       ),
     ].sort((first, second) => first.localeCompare(second));
     return [...defaultServiceTypes, ...customServiceTypes].map((serviceType) => {
-      const categoryJobs = workerVisibleJobs.filter((job) => job.serviceType === serviceType);
+      // Jobs, not worker slots, and only the ones the worker can apply to,
+      // so the categories add up to the Open Jobs tile (and match the app).
+      const openJobs = workerVisibleJobs.filter((job) => job.serviceType === serviceType && job.canApply).length;
       const matchesWorkerSkills = (currentWorker?.skills || []).includes(serviceType);
       return {
         serviceType,
-        openJobs: categoryJobs.reduce((total, job) => total + getWorkersNeeded(job), 0),
+        openJobs,
         matchesWorkerSkills,
       };
     });
@@ -713,14 +715,18 @@ export default function AppViews({
     }
     return workerMarketCategories.filter((category) => category.serviceType.toLowerCase().includes(searchTerm));
   }, [workerMarketCategories, workerMarketSearch]);
-  // Categories with open jobs or in the worker's skills come first. On a
+  // Categories with open jobs or in the worker's skills come first, the
+  // worker's own skills ahead of the rest, each group by open jobs. On a
   // phone the rest fold behind a "Show more" button (see main.css) so the
   // dashboard isn't a long scroll of empty categories; a search shows all.
   const workerMarketList = useMemo(() => {
     const isPriority = (category) => category.matchesWorkerSkills || category.openJobs > 0;
     const priority = filteredWorkerMarketCategories
       .filter(isPriority)
-      .sort((first, second) => second.openJobs - first.openJobs);
+      .sort(
+        (first, second) =>
+          Number(second.matchesWorkerSkills) - Number(first.matchesWorkerSkills) || second.openJobs - first.openJobs,
+      );
     const rest = filteredWorkerMarketCategories.filter((category) => !isPriority(category));
     const foldRest = !workerMarketSearch.trim() && priority.length > 0;
     return {
@@ -2116,7 +2122,7 @@ export default function AppViews({
                   </div>
                   <div className="metric-card">
                     <p className="metric-label mb-1">Skill Matches</p>
-                    <p className="metric-value mb-0">{workerMatchedJobs.length}</p>
+                    <p className="metric-value mb-0">{workerMatchedJobs.filter((job) => job.canApply).length}</p>
                   </div>
                   <div className="metric-card">
                     <p className="metric-label mb-1">Your Rating</p>
