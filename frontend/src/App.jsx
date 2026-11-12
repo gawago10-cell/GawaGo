@@ -1235,6 +1235,8 @@ function App() {
     handleAdminApproveVerification,
     handleAdminRejectVerification,
     isSubmittingJob,
+    householdJobShowErrors,
+    householdJobSubmitError,
     isActionPending,
   } = useGawaGoActions({
     setPendingSignupEmail,
@@ -1747,6 +1749,8 @@ function App() {
       handleHouseholdJobChange={handleHouseholdJobChange}
       handleHouseholdJobSubmit={handleHouseholdJobSubmit}
       isSubmittingJob={isSubmittingJob}
+      householdJobShowErrors={householdJobShowErrors}
+      householdJobSubmitError={householdJobSubmitError}
       isActionPending={isActionPending}
       portfolioSaving={portfolioSaving}
       handleSetSkillProficiency={handleSetSkillProficiency}

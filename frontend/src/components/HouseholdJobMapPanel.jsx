@@ -15,6 +15,7 @@ export default function HouseholdJobMapPanel({
   loadLeafletAssets,
   placeHouseholdJobPin,
   setHouseholdJobMapMode,
+  pinError = "",
 }) {
   const mapContainerRef = useRef(null);
   const placeHouseholdJobPinRef = useRef(placeHouseholdJobPin);
@@ -218,6 +219,12 @@ export default function HouseholdJobMapPanel({
           </p>
         </div>
         {warning && <p className="small mb-2 household-job-map-warning">{warning}</p>}
+        {/* After an attempt to post without a confirmed pin. */}
+        {pinError && (
+          <div className="invalid-feedback d-block household-job-pin-error" data-field-error role="alert">
+            {pinError}
+          </div>
+        )}
         <p className="small text-muted mt-2 mb-0">
           Street names come from OpenRouteService; the map is OpenStreetMap.
         </p>

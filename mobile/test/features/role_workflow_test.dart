@@ -483,6 +483,282 @@ void main() {
     },
   );
 
+  testWidgets('household My Jobs estimates the spend, skips the automatic '
+      'rating, and says who a cancelled job had hired', (tester) async {
+    // Household My Jobs audit (2026-11-13).
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'household-token', role: 'household'),
+    );
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        final path = request.url.path;
+        if (path.endsWith('/reviews/')) {
+          return _json([
+            {
+              'id': 1,
+              'author_username': 'juan',
+              'target_username': 'maria',
+              'job_id': 41,
+              'rating': '5.0',
+              'is_automatic': false,
+            },
+            {
+              'id': 2,
+              'author_username': 'juan',
+              'target_username': 'maria',
+              'job_id': 42,
+              'rating': '3.5',
+              'is_automatic': true,
+            },
+          ]);
+        }
+        if (path.endsWith('/jobs/')) {
+          Map<String, dynamic> job(
+            int id,
+            String title,
+            String status, {
+            Object? value,
+            String reason = '',
+            String rateLabel = 'Per Day',
+          }) => {
+            'id': id,
+            'household_username': 'juan',
+            'title': title,
+            'job_type': 'Cleaning',
+            'required_skill': 'Cleaning',
+            'location_label': 'Calumpang',
+            'latitude': 13.95,
+            'longitude': 121.59,
+            'service_rate': '700.00',
+            'rate_type_label': rateLabel,
+            'workers_needed': 1,
+            'hired_count': 1,
+            'status': status,
+            'estimated_value': value,
+            'cancel_reason': reason,
+            'can_review': false,
+            'applications': [
+              {
+                'id': id * 10,
+                'worker_username': 'maria',
+                'worker_name': 'Maria Santos',
+                'status': status == 'cancelled' ? 'hired' : 'completed',
+              },
+            ],
+            'images': [],
+          };
+          return _json([
+            job(41, 'Deep clean', 'completed', value: '7000.00'),
+            job(42, 'Ironing', 'completed', rateLabel: 'Per Hour'),
+            job(43, 'Garden', 'cancelled', reason: 'We moved house.'),
+          ]);
+        }
+        return _householdDashboardResponses(request);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    await _openDashboardPage(tester, 'My Jobs');
+    await tester.pumpAndSettle();
+
+    expect(find.text('PHP 7000.00'), findsOneWidget);
+    expect(
+      find.text('Estimated Spend (1 hourly job not counted)'),
+      findsOneWidget,
+    );
+    expect(find.text('5.0'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Cancelled after hiring Maria Santos'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Your reason: “We moved house.”'), findsOneWidget);
+  });
+
+  testWidgets('household profile asks for the password to change the email '
+      'and shows +63', (tester) async {
+    // Household My Profile audit (2026-11-13).
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'household-token', role: 'household'),
+    );
+    final patches = <Map<String, dynamic>>[];
+    GawaGoApi.setClient(
+      MockClient((request) => _householdProfileResponses(request, patches)),
+    );
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    await _openDashboardPage(tester, 'My Profile');
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    expect(
+      find.textContaining('+63 9248273643', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.text('Save Changes'), findsOneWidget);
+    expect(
+      find.text('Current password (needed to change your email)'),
+      findsNothing,
+    );
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'juan@example.com'),
+      'juan.new@example.com',
+    );
+    await tester.pump();
+    final passwordLabel = find.text(
+      'Current password (needed to change your email)',
+    );
+    expect(passwordLabel, findsOneWidget);
+
+    // Without the password nothing is sent.
+    await tester.ensureVisible(find.text('Save Changes'));
+    await tester.tap(find.text('Save Changes'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(patches, isEmpty);
+    expect(
+      find.text('Enter your current password to change your email.'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.descendant(
+        of: find.byKey(const ValueKey('household-email-password')),
+        matching: find.byType(TextField),
+      ),
+      'Secret123',
+    );
+    await tester.tap(find.text('Save Changes'));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(patches, hasLength(1));
+    expect(patches.single['email'], 'juan.new@example.com');
+    expect(patches.single['current_password'], 'Secret123');
+    expect(patches.single['phone'], '9248273643');
+  });
+
+  testWidgets('household reviews: only ones written, named by worker and '
+      'job, View All shows all, and an automatic 3.5 can be replaced', (
+    tester,
+  ) async {
+    // Household Feedback & Reviews audit (2026-11-13).
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'household-token', role: 'household'),
+    );
+    final patches = <Map<String, dynamic>>[];
+    Map<String, dynamic> review(
+      int id,
+      String job,
+      double rating, {
+      bool automatic = false,
+    }) => {
+      'id': id,
+      'author_username': 'juan',
+      'author_name': 'Juan Cruz',
+      'target_username': 'maria',
+      'target_name': 'Maria Santos',
+      'job': id,
+      'job_title': job,
+      'rating': '$rating',
+      'feedback': 'Thanks',
+      'is_automatic': automatic,
+      'created_at': '2026-11-0${id}T09:00:00+08:00',
+    };
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        final path = request.url.path;
+        if (path.endsWith('/reviews/')) {
+          if (request.url.queryParameters.containsKey('author_username')) {
+            return _json([
+              review(3, 'Window washing', 4.0),
+              review(2, 'Laundry', 3.5, automatic: true),
+              review(1, 'Deep clean', 5.0),
+            ]);
+          }
+          return _json([]);
+        }
+        if (path.endsWith('/jobs/')) {
+          return _json([
+            {
+              'id': 2,
+              'household_username': 'juan',
+              'title': 'Laundry',
+              'job_type': 'Laundry',
+              'required_skill': 'Laundry',
+              'location_label': 'Calumpang',
+              'latitude': 13.95,
+              'longitude': 121.59,
+              'service_rate': '500.00',
+              'workers_needed': 1,
+              'hired_count': 1,
+              'status': 'completed',
+              'can_review': true,
+              'applications': [
+                {
+                  'id': 20,
+                  'worker_username': 'maria',
+                  'worker_name': 'Maria Santos',
+                  'status': 'completed',
+                },
+              ],
+              'images': [],
+            },
+          ]);
+        }
+        return _householdProfileResponses(request, patches);
+      }),
+    );
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+
+    // My Jobs: the automatic 3.5 no longer hides Rate Worker.
+    await _openDashboardPage(tester, 'My Jobs');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('given because the job wasn'), findsOneWidget);
+    expect(find.text('Rate Worker'), findsOneWidget);
+
+    await _openDashboardPage(tester, 'My Profile');
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    await tester.tap(find.text('Feedback & Reviews'));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    // The latest written review, named by the worker and the job.
+    expect(find.text('Maria Santos'), findsOneWidget);
+    expect(find.text('For Window washing'), findsOneWidget);
+    expect(find.text('Juan Cruz'), findsNothing);
+    expect(find.text('Nov 3, 2026'), findsOneWidget);
+
+    await tester.tap(find.text('View All').last);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('For Window washing'), findsWidgets);
+    expect(find.text('For Deep clean'), findsOneWidget);
+    // The automatic one isn't listed as written.
+    expect(find.text('For Laundry'), findsNothing);
+  });
+
   testWidgets('household My Jobs shows the finished job history', (
     tester,
   ) async {
@@ -500,7 +776,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Jobs Completed'), findsOneWidget);
-    expect(find.text('Total Spent'), findsOneWidget);
+    expect(find.text('Estimated Spend'), findsOneWidget);
     expect(find.text('Avg Rating Given'), findsOneWidget);
     expect(find.textContaining('All Jobs'), findsOneWidget);
     expect(find.textContaining('Completed'), findsWidgets);
@@ -728,6 +1004,36 @@ void main() {
 
 Future<void> _openWorkerPage(WidgetTester tester, String label) async {
   await _openDashboardPage(tester, label);
+}
+
+Future<http.Response> _householdProfileResponses(
+  http.Request request,
+  List<Map<String, dynamic>> patches,
+) async {
+  final path = request.url.path;
+  if (path.endsWith('/accounts/me/')) {
+    if (request.method == 'PATCH') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      patches.add(body);
+      return _json({'detail': 'Profile updated.', 'access': 'fresh-token'});
+    }
+    return _json({
+      'user': {
+        'username': 'juan',
+        'email': 'juan@example.com',
+        'first_name': 'Juan',
+        'last_name': 'Cruz',
+      },
+      'profile': {
+        'phone': '9248273643',
+        'location_label': 'Isabang, Tayabas',
+        'latitude': '13.9623',
+        'longitude': '121.5633',
+        'verification_status': 'verified',
+      },
+    });
+  }
+  return _householdDashboardResponses(request);
 }
 
 Future<void> _openDashboardPage(WidgetTester tester, String label) async {

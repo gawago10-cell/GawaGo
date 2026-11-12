@@ -9,7 +9,7 @@ from apps.accounts.serializers import validate_tayabas_coordinates
 from apps.common.fields import RoundedCoordinateField
 from apps.common.sanitize import sanitize_text
 from apps.common.skills import is_other_placeholder
-from apps.jobs.models import JobApplication, JobImage, JobPosting
+from apps.jobs.models import JobApplication, JobImage, JobPosting, JobStatusEvent
 from apps.jobs.privacy import (
     approximate_coordinate,
     distance_label,
@@ -499,6 +499,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
     can_request_completion = serializers.SerializerMethodField()
     can_mark_done = serializers.SerializerMethodField()
     mark_done_note = serializers.SerializerMethodField()
+    estimated_value = serializers.SerializerMethodField()
+    cancel_reason = serializers.SerializerMethodField()
     can_cancel = serializers.SerializerMethodField()
     cancel_needs_reason = serializers.SerializerMethodField()
     can_review = serializers.SerializerMethodField()
@@ -615,6 +617,8 @@ class JobPostingSerializer(serializers.ModelSerializer):
             "can_request_completion",
             "can_mark_done",
             "mark_done_note",
+            "estimated_value",
+            "cancel_reason",
             "can_cancel",
             "cancel_needs_reason",
             "can_review",
@@ -935,6 +939,37 @@ class JobPostingSerializer(serializers.ModelSerializer):
         if not profile or profile.verification_status != "verified":
             return "Your household account must be verified before you can complete a job."
         return job_not_started_message(obj)
+
+    def _seen_by_owner(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated and (user.id == obj.household_id or user.is_staff))
+
+    def get_estimated_value(self, obj):
+        """What a completed job came to at its agreed rate, for the household's
+        "Estimated spend": a day rate times its working days times the
+        workers, a fixed rate times the workers; None for an hourly job (the
+        hours aren't recorded) or a job not completed. My Jobs used to add up
+        the bare rates, so a five-day PHP 700-a-day job counted as PHP 700."""
+        if obj.status != JobPosting.STATUS_COMPLETED or not self._seen_by_owner(obj):
+            return None
+        from apps.reports.services import estimated_job_value
+
+        workers = sum(1 for app in obj.applications.all() if app.status == JobApplication.STATUS_COMPLETED)
+        value = estimated_job_value(obj, workers)
+        return None if value is None else f"{value:.2f}"
+
+    def get_cancel_reason(self, obj):
+        """The reason the household gave when it cancelled, for its own
+        history; "" when none was asked for or it predates keeping it."""
+        if obj.status != JobPosting.STATUS_CANCELLED or not self._seen_by_owner(obj):
+            return ""
+        event = (
+            obj.status_events.filter(entity=JobStatusEvent.ENTITY_JOB, to_status=JobPosting.STATUS_CANCELLED)
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        return event.note if event else ""
 
     def get_can_cancel(self, obj):
         """The household can call its job off until it is done, hired worker

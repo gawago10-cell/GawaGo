@@ -37,6 +37,8 @@ import {
   isSameWorker,
   notificationDayGroup,
 } from "../utils/formatters";
+import { householdJobFormErrors, MAX_WORKERS_NEEDED } from "../utils/jobFormValidation";
+import { isConfirmedJobPin } from "../hooks/useHouseholdJobLocation";
 import { deleteBackendNotification, fetchRecommendedJobs } from "../services/backendDataService";
 import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_WORKER_SKILLS, OTHER_SKILL } from "../constants/appConstants";
 import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
@@ -105,6 +107,8 @@ export default function AppViews({
   handleHouseholdJobChange,
   handleHouseholdJobSubmit,
   isSubmittingJob,
+  householdJobShowErrors = false,
+  householdJobSubmitError = "",
   isActionPending,
   portfolioSaving = false,
   handleSetSkillProficiency = () => {},
@@ -351,6 +355,9 @@ export default function AppViews({
   const [brokenWorkerPhoto, setBrokenWorkerPhoto] = useState("");
   const showWorkerPhoto = Boolean(workerMiniPhoto) && workerMiniPhoto !== brokenWorkerPhoto;
   const workerVerificationLabel = getVerificationStageLabel(currentWorker);
+  const householdEmailChanged =
+    String(householdProfileForm?.email || "").trim().toLowerCase() !==
+    String(currentHousehold?.email || "").trim().toLowerCase();
   const workerEmailChanged =
     String(workerProfileForm.email || "").trim().toLowerCase() !==
     String(currentWorker?.email || "").trim().toLowerCase();
@@ -358,6 +365,8 @@ export default function AppViews({
   const [myJobsFilter, setMyJobsFilter] = useState("all");
   const [pendingHireWorkerId, setPendingHireWorkerId] = useState(null);
   const [householdProfileEditing, setHouseholdProfileEditing] = useState(false);
+  // What the last save said, shown beside the button: { ok, message }.
+  const [householdProfileNotice, setHouseholdProfileNotice] = useState(null);
   const [selectedWorkerRouteDistanceKm, setSelectedWorkerRouteDistanceKm] = useState(null);
   const [workerHireRequestPreview, setWorkerHireRequestPreview] = useState(null);
   const [workerRateHouseholdJob, setWorkerRateHouseholdJob] = useState(null);
@@ -370,6 +379,22 @@ export default function AppViews({
   const verificationNavLabel = getVerificationNavLabel(verificationAccount);
   // Local date (not UTC) so late-evening users in PH aren't blocked from today.
   const todayIsoDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  // Post a Job: each field's problem, shown once "Post Job" was pressed.
+  const householdJobErrors = householdJobShowErrors
+    ? householdJobFormErrors(householdJobForm, {
+        pinConfirmed: isConfirmedJobPin(householdJobLocationPreview),
+        today: todayIsoDate,
+      })
+    : {};
+  // Shown at once: the start date can move after the end date was picked.
+  const householdJobEndBeforeStart = Boolean(
+    householdJobForm?.jobEndDate &&
+      householdJobForm?.jobStartDate &&
+      householdJobForm.jobEndDate < householdJobForm.jobStartDate,
+  );
+  // An unverified household learned it couldn't post only after filling in
+  // the whole form and pressing Post Job.
+  const householdCanPostJobs = currentHousehold?.verification === "Verified";
   const pendingVerificationSubmission =
     verificationAccount?.verificationSubmission &&
     ["Pending", "Under Review"].includes(verificationAccount.verificationSubmission.status);
@@ -594,6 +619,19 @@ export default function AppViews({
       : null;
   const householdWorkerFeedback = currentHousehold?.receivedFeedback || [];
   const householdSubmittedReviews = currentHousehold?.givenFeedback || [];
+  // What the household actually wrote, newest first. The automatic 3.5 for
+  // a job it didn't rate in time was listed as a review it "submitted"; it
+  // shows under "Waiting for your rating" instead, where it can be replaced.
+  const householdWrittenReviews = useMemo(
+    () =>
+      householdSubmittedReviews
+        .filter((review) => !review.isAutomatic)
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
+    [householdSubmittedReviews],
+  );
+  // "Nov 12, 2026", as the other pages write dates. The timestamp is already
+  // in Philippine time, so its date part is the local day.
+  const reviewDay = (value) => (value ? formatJobDate(String(value).slice(0, 10)) : "");
   const workerHouseholdReviews = currentWorker?.receivedReviews || [];
   const workerHouseholdFeedback = workerHouseholdReviews.filter((review) => review.feedback || review.comment);
   const workerHouseholdRatings = workerHouseholdReviews.filter((review) => reviewScore(review) != null);
@@ -1070,6 +1108,46 @@ export default function AppViews({
       return nextIds;
     });
   };
+  // A household notice opens what it's about; clicking it did nothing, and
+  // its menu only had Delete (household notifications audit, 2026-11-13).
+  const openHouseholdNotification = (notification) => {
+    setHouseholdNotificationMenuId(null);
+    if (notification.id) {
+      markNotificationRead(notification.id);
+    }
+    const type = notification.notificationType;
+    if (type === "verification") {
+      openHouseholdGetVerified();
+    } else if (type === "review") {
+      // Feedback from a worker: it lives under My Profile.
+      openHouseholdProfile();
+      setHouseholdProfileTab("feedback");
+    } else if (notification.jobId) {
+      // Applications, hires, reminders: the job's card is on the Dashboard.
+      openHouseholdDashboard();
+    }
+  };
+  // Newest first, under "Today", "Yesterday" and "Earlier".
+  const householdNotificationGroups = (() => {
+    const now = new Date();
+    const time = (item) => {
+      const parsed = new Date(item.date || item.createdAt || "").getTime();
+      return Number.isNaN(parsed) ? -Infinity : parsed;
+    };
+    const groups = [];
+    [...filteredHouseholdNotifications]
+      .sort((a, b) => time(b) - time(a))
+      .forEach((item) => {
+        const label = notificationDayGroup(item.date || item.createdAt, now);
+        const last = groups[groups.length - 1];
+        if (last && last.label === label) {
+          last.items.push(item);
+        } else {
+          groups.push({ label, items: [item] });
+        }
+      });
+    return groups;
+  })();
   const deleteHouseholdNotification = async (notification) => {
     setHouseholdNotificationMenuId(null);
     if (!(await confirmDialog({ title: "Delete this notification?", confirmLabel: "Delete", tone: "danger" }))) {
@@ -1237,7 +1315,7 @@ export default function AppViews({
     });
   }, [householdFeedbackDateFilter, householdWorkerFeedback]);
   const filteredHouseholdSubmittedReviews = useMemo(() => {
-    return householdSubmittedReviews.filter((review) => {
+    return householdWrittenReviews.filter((review) => {
       if (householdReviewDateFilter) {
         const reviewDate = new Date(review.createdAt || review.date || "");
         if (Number.isNaN(reviewDate.getTime()) || localDateKey(reviewDate) !== householdReviewDateFilter) {
@@ -1251,7 +1329,7 @@ export default function AppViews({
       }
       return true;
     });
-  }, [householdReviewDateFilter, householdReviewRatingFilter, householdSubmittedReviews]);
+  }, [householdReviewDateFilter, householdReviewRatingFilter, householdWrittenReviews]);
   const filteredWorkerHouseholdFeedback = useMemo(() => {
     if (!workerFeedbackDateFilter) {
       return workerHouseholdReviews;
@@ -1471,12 +1549,27 @@ export default function AppViews({
     () => historyHouseholdJobs.filter((job) => job.status === "Cancelled"),
     [historyHouseholdJobs],
   );
+  // An estimate at the agreed rates (the backend's: rate x working days x
+  // workers); it used to add the bare rates, so a five-day PHP 700-a-day job
+  // counted as PHP 700. Hourly jobs have no estimate: their hours aren't kept.
   const householdTotalSpent = useMemo(
-    () => historyCompletedJobs.reduce((sum, job) => sum + (Number(job.offeredRate) || 0), 0),
+    () =>
+      historyCompletedJobs.reduce(
+        (sum, job) => sum + (job.estimatedValue == null ? 0 : Number(job.estimatedValue) || 0),
+        0,
+      ),
     [historyCompletedJobs],
   );
+  const householdHourlyJobsLeftOut = historyCompletedJobs.filter(
+    (job) => job.estimatedValue == null && /hour/i.test(job.rateType || ""),
+  ).length;
+  // Only ratings the household gave: the automatic 3.5 for a job it didn't
+  // rate in time was counted as its own.
   const householdRatingsGiven = useMemo(
-    () => householdSubmittedReviews.filter((review) => reviewScore(review) != null).map((review) => reviewScore(review)),
+    () =>
+      householdSubmittedReviews
+        .filter((review) => !review.isAutomatic && reviewScore(review) != null)
+        .map((review) => reviewScore(review)),
     [householdSubmittedReviews],
   );
   const householdAvgRatingGiven = householdRatingsGiven.length
@@ -1627,10 +1720,27 @@ export default function AppViews({
   const handleHouseholdProfileEditSubmit = (event) => {
     if (!householdProfileEditing) {
       event.preventDefault();
+      setHouseholdProfileNotice(null);
       setHouseholdProfileEditing(true);
       return;
     }
-    handleHouseholdProfileSave(event);
+    // Editing ends only once the server took it: a refused save used to
+    // close the form with the unsaved values still showing.
+    setHouseholdProfileNotice(null);
+    Promise.resolve(handleHouseholdProfileSave(event)).then((result) => {
+      if (result === false) return; // a save already in flight
+      if (result?.ok) {
+        setHouseholdProfileEditing(false);
+        // The password was for this change only.
+        handleHouseholdProfileChange({ target: { name: "currentPassword", value: "" } });
+      }
+      setHouseholdProfileNotice(result || null);
+    });
+  };
+  // Back out of editing: the saved details come back.
+  const cancelHouseholdProfileEdit = () => {
+    openHouseholdProfile();
+    setHouseholdProfileNotice(null);
     setHouseholdProfileEditing(false);
   };
 
@@ -5466,11 +5576,34 @@ export default function AppViews({
                       </button>
                     </div>
                   )}
-                  <form className="p-3 p-md-4 household-job-form-shell" onSubmit={handleHouseholdJobSubmit}>
+                  {!householdCanPostJobs && (
+                    <div className="household-post-blocked" role="alert">
+                      <p>
+                        <strong>
+                          {currentHousehold?.verificationStage === "pending_review"
+                            ? "Your verification is being reviewed."
+                            : "Verify your household account first."}
+                        </strong>{" "}
+                        {currentHousehold?.verificationStage === "pending_review"
+                          ? "You can post a job once the admin team approves it."
+                          : "Only verified households can post jobs, so workers know the job is real."}
+                      </p>
+                      <button type="button" className="btn btn-sm btn-success" onClick={openHouseholdGetVerified}>
+                        {currentHousehold?.verificationStage === "pending_review" ? "See verification" : "Get verified"}
+                      </button>
+                    </div>
+                  )}
+                  <form className="p-3 p-md-4 household-job-form-shell" noValidate onSubmit={handleHouseholdJobSubmit}>
                     <div className="row g-3 household-job-fields">
+                      <p className="col-12 household-job-required-note small text-muted">
+                        Fields marked <span className="required-mark" aria-hidden="true">*</span> are required.
+                      </p>
                       <div className="col-12">
-                        <label className="form-label fw-semibold">Job Title</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-title">
+                          Job Title <span className="form-optional">Optional</span>
+                        </label>
                         <input
+                          id="household-job-title"
                           type="text"
                           name="jobTitle"
                           className="form-control"
@@ -5480,12 +5613,16 @@ export default function AppViews({
                         />
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Service Type</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-service">
+                          Service Type <RequiredMark filled={hasAnswer(householdJobForm.serviceType)} />
+                        </label>
                         <select
+                          id="household-job-service"
                           name="serviceType"
-                          className="form-select"
+                          className={`form-select ${householdJobErrors.serviceType ? "is-invalid" : ""}`}
                           value={householdJobForm.serviceType}
                           onChange={handleHouseholdJobChange}
+                          aria-required="true"
                         >
                           <option value="">---Select Service---</option>
                           {SKILLS.map((skill) => (
@@ -5494,22 +5631,28 @@ export default function AppViews({
                             </option>
                           ))}
                         </select>
+                        {householdJobErrors.serviceType && (
+                          <div className="invalid-feedback d-block">{householdJobErrors.serviceType}</div>
+                        )}
                         {householdJobForm.serviceType === "Other" && (
                           <div className="mt-2">
                             <label className="form-label fw-semibold" htmlFor="customServiceType">
-                              Specify Service Type
+                              Specify Service Type <RequiredMark filled={hasAnswer(householdJobForm.customServiceType)} />
                             </label>
                             <input
                               id="customServiceType"
                               type="text"
                               name="customServiceType"
-                              className="form-control"
+                              className={`form-control ${householdJobErrors.customServiceType ? "is-invalid" : ""}`}
                               placeholder="e.g. Pet Grooming, Massage, etc."
                               maxLength={100}
                               required
                               value={householdJobForm.customServiceType || ""}
                               onChange={handleHouseholdJobChange}
                             />
+                            {householdJobErrors.customServiceType && (
+                              <div className="invalid-feedback d-block">{householdJobErrors.customServiceType}</div>
+                            )}
                             <div className="form-text text-end">
                               {(householdJobForm.customServiceType || "").length}/100
                             </div>
@@ -5517,8 +5660,11 @@ export default function AppViews({
                         )}
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Schedule Type</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-schedule">
+                          Schedule Type
+                        </label>
                         <select
+                          id="household-job-schedule"
                           name="scheduleType"
                           className="form-select"
                           value={householdJobForm.scheduleType}
@@ -5530,8 +5676,11 @@ export default function AppViews({
                         </select>
                       </div>
                       <div className="col-12">
-                        <label className="form-label fw-semibold">Job Description</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-description">
+                          Job Description <span className="form-optional">Optional</span>
+                        </label>
                         <textarea
+                          id="household-job-description"
                           name="description"
                           className="form-control"
                           rows="3"
@@ -5541,8 +5690,11 @@ export default function AppViews({
                         />
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Barangay</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-barangay">
+                          Barangay
+                        </label>
                         <select
+                          id="household-job-barangay"
                           name="barangay"
                           className="form-select"
                           value={householdJobForm.barangay}
@@ -5553,8 +5705,11 @@ export default function AppViews({
                         </select>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label fw-semibold">Street / House No.</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-street">
+                          Street / House No.
+                        </label>
                         <input
+                          id="household-job-street"
                           type="text"
                           name="streetAddress"
                           className="form-control"
@@ -5562,48 +5717,62 @@ export default function AppViews({
                           onChange={handleHouseholdJobChange}
                         />
                       </div>
-                      <div className="col-6">
-                        <label className="form-label fw-semibold">Workers Needed</label>
+                      <div className="col-md-4">
+                        <label className="form-label fw-semibold" htmlFor="household-job-workers">
+                          Workers Needed <RequiredMark filled={hasAnswer(householdJobForm.workersNeeded)} />
+                        </label>
                         <input
+                          id="household-job-workers"
                           type="number"
                           min="1"
-                          max="50"
+                          max={MAX_WORKERS_NEEDED}
                           step="1"
                           name="workersNeeded"
-                          className="form-control"
+                          className={`form-control ${householdJobErrors.workersNeeded ? "is-invalid" : ""}`}
                           value={householdJobForm.workersNeeded}
                           onChange={handleHouseholdJobChange}
+                          aria-required="true"
                         />
+                        {householdJobErrors.workersNeeded && (
+                          <div className="invalid-feedback d-block">{householdJobErrors.workersNeeded}</div>
+                        )}
                       </div>
-                      <div className="col-6">
-                        <label className="form-label fw-semibold">Offered Rate</label>
+                      {/* The rate and what it is per, side by side; Rate
+                          Type used to sit a row below, under Workers Needed. */}
+                      <div className="col-md-4 col-6">
+                        <label className="form-label fw-semibold" htmlFor="household-job-rate">
+                          Offered Rate <RequiredMark filled={hasAnswer(householdJobForm.offeredRate)} />
+                        </label>
                         <input
+                          id="household-job-rate"
                           type="number"
-                          min="0"
+                          min="1"
                           step="0.01"
                           name="offeredRate"
-                          placeholder="e.g. 600.00"
+                          placeholder="e.g. 600"
                           className={`form-control ${
-                            householdJobForm.offeredRate !== "" && Number(householdJobForm.offeredRate) < 1 ? "is-invalid" : ""
+                            householdJobErrors.offeredRate ||
+                            (householdJobForm.offeredRate !== "" && Number(householdJobForm.offeredRate) < 1)
+                              ? "is-invalid"
+                              : ""
                           }`}
                           value={householdJobForm.offeredRate}
                           onChange={handleHouseholdJobChange}
+                          aria-required="true"
                         />
-                        {householdJobForm.offeredRate !== "" && Number(householdJobForm.offeredRate) < 1 && (
-                          <div className="invalid-feedback d-block">Enter a rate of at least PHP 1.00.</div>
+                        {(householdJobErrors.offeredRate ||
+                          (householdJobForm.offeredRate !== "" && Number(householdJobForm.offeredRate) < 1)) && (
+                          <div className="invalid-feedback d-block">
+                            {householdJobErrors.offeredRate || "Enter a rate of at least PHP 1.00."}
+                          </div>
                         )}
-                        <RateGuideHint
-                          skill={
-                            householdJobForm.serviceType === "Other"
-                              ? householdJobForm.customServiceType
-                              : householdJobForm.serviceType
-                          }
-                          rateType={householdJobForm.rateType}
-                        />
                       </div>
-                      <div className="col-md-6">
-                        <label className="form-label fw-semibold">Rate Type</label>
+                      <div className="col-md-4 col-6">
+                        <label className="form-label fw-semibold" htmlFor="household-job-rate-type">
+                          Rate Type
+                        </label>
                         <select
+                          id="household-job-rate-type"
                           name="rateType"
                           className="form-select"
                           value={householdJobForm.rateType}
@@ -5614,28 +5783,52 @@ export default function AppViews({
                           <option>Fixed Rate</option>
                         </select>
                       </div>
-                      <div className="col-6">
-                        <label className="form-label fw-semibold">Job Start Date</label>
-                        <input
-                          type="date"
-                          min={todayIsoDate}
-                          name="jobStartDate"
-                          className="form-control"
-                          required
-                          value={householdJobForm.jobStartDate || ""}
-                          onChange={handleHouseholdJobChange}
+                      <div className="col-12">
+                        <RateGuideHint
+                          skill={
+                            householdJobForm.serviceType === "Other"
+                              ? householdJobForm.customServiceType
+                              : householdJobForm.serviceType
+                          }
+                          rateType={householdJobForm.rateType}
                         />
                       </div>
                       <div className="col-6">
-                        <label className="form-label fw-semibold">Job End Date</label>
+                        <label className="form-label fw-semibold" htmlFor="household-job-start">
+                          Job Start Date <RequiredMark filled={hasAnswer(householdJobForm.jobStartDate)} />
+                        </label>
                         <input
+                          id="household-job-start"
                           type="date"
                           min={todayIsoDate}
+                          name="jobStartDate"
+                          className={`form-control ${householdJobErrors.jobStartDate ? "is-invalid" : ""}`}
+                          aria-required="true"
+                          value={householdJobForm.jobStartDate || ""}
+                          onChange={handleHouseholdJobChange}
+                        />
+                        {householdJobErrors.jobStartDate && (
+                          <div className="invalid-feedback d-block">{householdJobErrors.jobStartDate}</div>
+                        )}
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label fw-semibold" htmlFor="household-job-end">
+                          Job End Date <span className="form-optional">Optional</span>
+                        </label>
+                        {/* Can't be before the start: the calendar only kept
+                            out past days, so an earlier end could be picked. */}
+                        <input
+                          id="household-job-end"
+                          type="date"
+                          min={householdJobForm.jobStartDate || todayIsoDate}
                           name="jobEndDate"
-                          className="form-control"
+                          className={`form-control ${householdJobEndBeforeStart || householdJobErrors.jobEndDate ? "is-invalid" : ""}`}
                           value={householdJobForm.jobEndDate || ""}
                           onChange={handleHouseholdJobChange}
                         />
+                        {(householdJobEndBeforeStart || householdJobErrors.jobEndDate) && (
+                          <div className="invalid-feedback d-block">The end date can't be before the start date.</div>
+                        )}
                       </div>
                       <p className="col-12 small text-muted mb-0" id="household-job-days-hint">
                         {describeJobSpan(householdJobForm.jobStartDate, householdJobForm.jobEndDate)} Matching looks for
@@ -5652,13 +5845,31 @@ export default function AppViews({
                       loadLeafletAssets={loadLeafletAssets}
                       placeHouseholdJobPin={placeHouseholdJobPin}
                       setHouseholdJobMapMode={setHouseholdJobMapMode}
+                      pinError={householdJobErrors.pin || ""}
                     />
                     <div className="household-reference-images">
-                      <label className="form-label fw-semibold">Reference Images</label>
+                      <label className="form-label fw-semibold">
+                        Reference Images <span className="form-optional">Optional</span>
+                      </label>
                       <JobImageUpload maxImages={5} maxFileSize={5 * 1024 * 1024} onImagesChange={householdJobImages.onChange} />
                     </div>
+                    <div className="household-post-actions-area">
+                    {householdJobSubmitError && (
+                      <div className="alert alert-danger household-job-submit-error" role="alert">
+                        {householdJobSubmitError}
+                      </div>
+                    )}
+                    {householdJobShowErrors && Object.keys(householdJobErrors).length > 0 && (
+                      <p className="household-job-error-summary" role="alert">
+                        Fix the fields marked in red, then press Post Job again.
+                      </p>
+                    )}
                     <div className="household-post-actions">
-                      <button type="submit" className="btn btn-primary" disabled={isSubmittingJob || postingBlocked}>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={isSubmittingJob || postingBlocked || !householdCanPostJobs}
+                      >
                         {isSubmittingJob ? "Posting..." : "Post Job"}
                       </button>
                       <button
@@ -5669,6 +5880,7 @@ export default function AppViews({
                       >
                         Cancel
                       </button>
+                    </div>
                     </div>
                   </form>
                 </div>
@@ -5777,14 +5989,25 @@ export default function AppViews({
                       <div className="profile-summary-list">
                         <p><strong>Account Type:</strong> Household</p>
                         <p><strong>Barangay:</strong> {householdProfileForm.barangay || "Not set"}</p>
-                        <p><strong>Phone Number:</strong> {householdProfileForm.phone || "Not set"}</p>
+                        <p>
+                          <strong>Phone Number:</strong>{" "}
+                          {householdProfileForm.phone ? `+63 ${householdProfileForm.phone}` : "Not set"}
+                        </p>
                         <p><strong>Email:</strong> {householdProfileForm.email || "Not set"}</p>
                       </div>
                     </div>
                   </section>
                   <section className="profile-edit-card" aria-labelledby="household-edit-profile-title">
                     <header className="profile-card-header" id="household-edit-profile-title">Edit Profile Information</header>
-                      <form className="profile-edit-form" onSubmit={handleHouseholdProfileEditSubmit}>
+                      <form
+                        className={`profile-edit-form ${householdProfileEditing ? "is-editing" : "is-locked"}`}
+                        onSubmit={handleHouseholdProfileEditSubmit}
+                      >
+                        {!householdProfileEditing && (
+                          <p className="household-profile-locked-note">
+                            Press Edit Profile to change these details.
+                          </p>
+                        )}
                         <div className="profile-form-field profile-form-field-full">
                           <label className="form-label fw-semibold" htmlFor="household-profile-photo">Profile Photo</label>
                           <input
@@ -5855,16 +6078,44 @@ export default function AppViews({
                           </div>
                           <div className="profile-form-field">
                             <label className="form-label fw-semibold" htmlFor="household-phone">Phone Number</label>
-                            <input
-                              id="household-phone"
-                              type="text"
-                              name="phone"
-                              className="form-control"
-                              value={householdProfileForm.phone}
-                              disabled={!householdProfileEditing}
-                              onChange={handleHouseholdProfileChange}
-                            />
+                            {/* The ten digits after +63, as at sign-up and on the
+                                worker profile; it showed "9248273643". */}
+                            <div className="input-group">
+                              <span className="input-group-text">+63</span>
+                              <input
+                                id="household-phone"
+                                type="tel"
+                                name="phone"
+                                className="form-control"
+                                placeholder="9XXXXXXXXX"
+                                inputMode="numeric"
+                                maxLength={10}
+                                value={householdProfileForm.phone}
+                                disabled={!householdProfileEditing}
+                                onChange={handleHouseholdProfileChange}
+                              />
+                            </div>
                           </div>
+                          {householdProfileEditing && householdEmailChanged && (
+                            <div className="profile-form-field">
+                              <label className="form-label fw-semibold" htmlFor="household-email-password">
+                                Current password
+                              </label>
+                              <input
+                                id="household-email-password"
+                                type="password"
+                                name="currentPassword"
+                                className="form-control"
+                                autoComplete="current-password"
+                                aria-describedby="household-email-password-hint"
+                                value={householdProfileForm.currentPassword || ""}
+                                onChange={handleHouseholdProfileChange}
+                              />
+                              <div id="household-email-password-hint" className="form-text">
+                                Needed to change your email.
+                              </div>
+                            </div>
+                          )}
                           <div className="profile-form-field">
                             <label className="form-label fw-semibold" htmlFor="household-barangay">Barangay</label>
                             <select
@@ -5892,9 +6143,35 @@ export default function AppViews({
                             />
                           </div>
                         </div>
+                        {householdProfileNotice && (
+                          <p
+                            className={`household-profile-notice ${householdProfileNotice.ok ? "is-ok" : "is-error"}`}
+                            role={householdProfileNotice.ok ? "status" : "alert"}
+                          >
+                            {householdProfileNotice.message}
+                          </p>
+                        )}
                         <div className="profile-form-actions">
-                          <button className="btn btn-primary profile-save-button" type="submit">
-                            {householdProfileEditing ? "Save Changes" : "Edit Profile"}
+                          {householdProfileEditing && (
+                            <button
+                              type="button"
+                              className="btn btn-outline-secondary"
+                              onClick={cancelHouseholdProfileEdit}
+                              disabled={isActionPending("household-profile-save")}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-primary profile-save-button"
+                            type="submit"
+                            disabled={isActionPending("household-profile-save")}
+                          >
+                            {isActionPending("household-profile-save")
+                              ? "Saving..."
+                              : householdProfileEditing
+                                ? "Save Changes"
+                                : "Edit Profile"}
                           </button>
                         </div>
                       </form>
@@ -5909,6 +6186,46 @@ export default function AppViews({
                   aria-labelledby="household-profile-tab-feedback"
                 >
                   <h2 className="household-profile-feedback-title" id="household-profile-feedback-title">Feedback & Rating</h2>
+                  {/* Finished jobs whose worker the household hasn't rated,
+                      including those an automatic 3.5 stands in for: that
+                      placeholder can still be replaced with a real rating. */}
+                  {pendingHouseholdReviewJobs.length > 0 && (
+                    <article className="profile-feedback-card household-rating-waiting">
+                      <header className="profile-card-header feedback-header">
+                        <span>Waiting for your rating</span>
+                      </header>
+                      <div className="p-3 d-grid gap-2">
+                        {pendingHouseholdReviewJobs.map((job) => {
+                          const worker = getWorkerToReviewForJob(job);
+                          const workerName = worker
+                            ? getDisplayName(worker.firstName, worker.lastName, worker.username)
+                            : "Your worker";
+                          const standIn = getHouseholdReviewForJobWorker(job, worker);
+                          return (
+                            <div className="review-item household-rating-waiting-item" key={job.id}>
+                              <div>
+                                <p className="mb-1 fw-semibold">{workerName}</p>
+                                <p className="mb-1 small text-muted">{job.jobTitle || job.serviceType}</p>
+                                <p className="mb-0 small text-muted">
+                                  {standIn?.isAutomatic
+                                    ? "An automatic 3.5 stands in because the job wasn’t rated in time. Your rating replaces it."
+                                    : "Not rated yet."}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn btn-success btn-sm"
+                                disabled={!worker}
+                                onClick={() => openDashboardRateModal(job, worker)}
+                              >
+                                Rate now
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </article>
+                  )}
                   <div className="profile-feedback-grid">
                     <article className="profile-feedback-card">
                       <header className="profile-card-header feedback-header">
@@ -5929,9 +6246,7 @@ export default function AppViews({
                                 <div>
                                   <p className="mb-1 fw-semibold">{review.authorName || "Masked Worker"}</p>
                                   <p className="mb-1 small text-muted">{review.feedback || review.comment || "No comment provided."}</p>
-                                  <p className="mb-0 small text-muted">
-                                    {formatDateTime(review.createdAt || review.date)}
-                                  </p>
+                                  <p className="mb-0 small text-muted">{reviewDay(review.createdAt || review.date)}</p>
                                 </div>
                                 <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "Feedback"}</strong>
                               </div>
@@ -5956,16 +6271,17 @@ export default function AppViews({
                         </button>
                       </header>
                       <div className="p-3 d-grid gap-2">
-                        {(currentHousehold?.givenFeedback || []).slice(0, 2).length > 0 ? (
-                          (currentHousehold?.givenFeedback || []).slice(0, 2).map((review) => (
+                        {householdWrittenReviews.slice(0, 2).length > 0 ? (
+                          householdWrittenReviews.slice(0, 2).map((review) => (
                             <div className="review-item" key={review.id || `${review.targetName}-${review.createdAt}`}>
                               <div className="d-flex justify-content-between gap-2">
                                 <div>
                                   <p className="mb-1 fw-semibold">{review.targetName || review.target || "Worker"}</p>
+                                  {/* Which job: a worker hired twice had two
+                                      reviews that couldn't be told apart. */}
+                                  {review.jobTitle && <p className="mb-1 small fw-semibold">For {review.jobTitle}</p>}
                                   <p className="mb-1 small text-muted">{review.feedback || review.comment || "No comment provided."}</p>
-                                  <p className="mb-0 small text-muted">
-                                    {formatDateTime(review.createdAt || review.date)}
-                                  </p>
+                                  <p className="mb-0 small text-muted">{reviewDay(review.createdAt || review.date)}</p>
                                 </div>
                                 <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "Feedback"}</strong>
                               </div>
@@ -6094,7 +6410,7 @@ export default function AppViews({
                                 {reviewScore(review) != null && <strong>{reviewScore(review).toFixed(1)}/5</strong>}
                               </div>
                               <p>{review.feedback || review.comment || "No comment provided."}</p>
-                              <small>{formatDateTime(review.createdAt || review.date)}</small>
+                              <small>{reviewDay(review.createdAt || review.date)}</small>
                               <details className="household-feedback-more">
                                 <summary>View more</summary>
                                 <p>
@@ -6238,8 +6554,9 @@ export default function AppViews({
                                   <h2>{targetName}</h2>
                                   <strong>{reviewScore(review) != null ? `${reviewScore(review).toFixed(1)}/5` : "No rating"}</strong>
                                 </div>
+                                {review.jobTitle && <p className="household-review-job">For {review.jobTitle}</p>}
                                 <p>{review.feedback || review.comment || "No comment provided."}</p>
-                                <small>{formatDateTime(review.createdAt || review.date)}</small>
+                                <small>{reviewDay(review.createdAt || review.date)}</small>
                                 <details className="household-feedback-more">
                                   <summary>View more</summary>
                                   <p>
@@ -6618,7 +6935,12 @@ export default function AppViews({
                     </div>
                     <div>
                       <strong>{formatCurrency(householdTotalSpent)}</strong>
-                      <span>Total Spent</span>
+                      <span>Estimated Spend</span>
+                      <small className="household-history-stat-note">
+                        {householdHourlyJobsLeftOut > 0
+                          ? `At the agreed rates; ${householdHourlyJobsLeftOut} hourly job${householdHourlyJobsLeftOut === 1 ? "" : "s"} not counted`
+                          : "At the agreed rates"}
+                      </small>
                     </div>
                   </div>
                   <div className="household-history-stat rating">
@@ -6699,8 +7021,31 @@ export default function AppViews({
                               <div className="household-history-cancelled-note">
                                 <span className="household-history-x">&times;</span>
                                 <div>
-                                  <strong>No worker was hired</strong>
-                                  <p>Job was cancelled before a worker was assigned.</p>
+                                  {/* Every cancelled job said nobody was hired,
+                                      even one called off after hiring. */}
+                                  {(() => {
+                                    const bookedNames = (job.applications || [])
+                                      .filter((application) => ["Hired", "Completed"].includes(application.status))
+                                      .map((application) => application.workerName || application.workerUsername || "A worker");
+                                    return bookedNames.length > 0 ? (
+                                      <>
+                                        <strong>Cancelled after hiring {bookedNames.join(", ")}</strong>
+                                        <p>
+                                          {job.cancelReason
+                                            ? `Your reason: “${job.cancelReason}”`
+                                            : "No reason was recorded."}
+                                        </p>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <strong>No worker was hired</strong>
+                                        <p>
+                                          Job was cancelled before a worker was hired.
+                                          {job.cancelReason ? ` Your reason: “${job.cancelReason}”` : ""}
+                                        </p>
+                                      </>
+                                    );
+                                  })()}
                                   {(job.applications || []).length > 0 && (
                                     <button
                                       type="button"
@@ -6750,7 +7095,9 @@ export default function AppViews({
                                   </div>
                                   {review ? (
                                     <div className="household-history-review">
-                                      <p className="household-history-review-label">Your Rating</p>
+                                      <p className="household-history-review-label">
+                                        {review.isAutomatic ? "Automatic rating" : "Your Rating"}
+                                      </p>
                                       <div className="household-history-stars">
                                         {[1, 2, 3, 4, 5].map((starValue) => (
                                           <svg
@@ -6767,6 +7114,23 @@ export default function AppViews({
                                         ))}
                                         <strong>{(reviewScore(review) || 0).toFixed(1)}/5</strong>
                                       </div>
+                                      {review.isAutomatic && (
+                                        <p className="household-history-review-note">
+                                          Given automatically because the job wasn&rsquo;t rated in time.
+                                        </p>
+                                      )}
+                                      {/* The automatic 3.5 hid the Rate button,
+                                          though a real rating still replaces it. */}
+                                      {review.isAutomatic && job.canReview && (
+                                        <button
+                                          type="button"
+                                          className="household-history-rate-btn mt-2"
+                                          disabled={!worker}
+                                          onClick={() => openDashboardRateModal(job, worker)}
+                                        >
+                                          Rate now
+                                        </button>
+                                      )}
                                       {review.feedback && (
                                         <p className="household-history-quote">&ldquo;{review.feedback}&rdquo;</p>
                                       )}
@@ -7229,6 +7593,7 @@ export default function AppViews({
                       <button
                         className="btn btn-outline-secondary household-notifications-read-button"
                         type="button"
+                        disabled={householdUnreadCount === 0}
                         onClick={() => markAllNotificationsRead(householdNotificationsWithReadState)}
                       >
                         Mark all as read
@@ -7237,13 +7602,30 @@ export default function AppViews({
 
                     <div className="household-notifications-list">
                       {filteredHouseholdNotifications.length > 0 ? (
-                        filteredHouseholdNotifications.map((item) => (
+                        householdNotificationGroups.map((group) => (
+                          <React.Fragment key={group.label}>
+                            <h2 className="household-notifications-group">{group.label}</h2>
+                        {group.items.map((item) => (
                           <article
-                            className={`notification-card household-notification-item ${item.unread ? "unread" : ""}`}
+                            className={`notification-card household-notification-item is-clickable ${item.unread ? "unread" : ""}`}
                             key={item.id}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${item.title}${item.unread ? ", unread" : ""}: open`}
+                            onClick={() => openHouseholdNotification(item)}
+                            onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openHouseholdNotification(item);
+                              }
+                            }}
 	                          >
 	                            <div className="household-notification-copy">
-	                              <p className="small text-muted mb-1">{formatDateTime(item.date)}</p>
+	                              <p className="small text-muted mb-1">
+                                {item.unread && <span className="worker-notification-new">New</span>}
+                                {formatNotificationTime(item.date || item.createdAt, { timeOnly: group.label !== "Earlier" })}
+                              </p>
 	                              <h2 className="h6 mb-1">{item.title}</h2>
 	                              <p className="mb-0">{item.message}</p>
 	                            </div>
@@ -7270,6 +7652,18 @@ export default function AppViews({
                                 </button>
                                 {householdNotificationMenuId === item.id && (
                                   <div className="household-notification-menu" role="menu">
+                                    {item.unread && (
+                                      <button
+                                        role="menuitem"
+                                        type="button"
+                                        onClick={() => {
+                                          setHouseholdNotificationMenuId(null);
+                                          markNotificationRead(item.id);
+                                        }}
+                                      >
+                                        Mark as read
+                                      </button>
+                                    )}
                                     <button
                                       className="danger"
                                       role="menuitem"
@@ -7282,6 +7676,8 @@ export default function AppViews({
                                 )}
                               </div>
 	                          </article>
+                        ))}
+                          </React.Fragment>
                         ))
                       ) : (
                         <article className="notification-card household-notification-item household-notification-empty">

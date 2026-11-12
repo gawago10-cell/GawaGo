@@ -367,7 +367,13 @@ class JobViewSet(viewsets.ModelViewSet):
             if should_complete:
                 complete_job(job, actor=actor, previous_status=previous_status)
             elif status_changed:
-                record_job_status_event(job, previous_status, job.status, actor=actor)
+                record_job_status_event(
+                    job,
+                    previous_status,
+                    job.status,
+                    actor=actor,
+                    note=cancel_reason if job.status == JobPosting.STATUS_CANCELLED else "",
+                )
         if status_changed and job.status == JobPosting.STATUS_CANCELLED:
             self._notify_cancellation(job, actor=actor, reason=cancel_reason)
             # Nobody stays "pending" on a job that no longer exists, the same

@@ -195,7 +195,9 @@ def rate_guide(skill, rate_type):
     rate_type = rate_type if rate_type in dict(JobPosting.RATE_TYPE_CHOICES) else JobPosting.RATE_PER_DAY
     row = (
         JobPosting.objects.exclude(status=JobPosting.STATUS_CANCELLED)
-        .filter(required_skill__iexact=(skill or "").strip(), rate_type=rate_type, service_rate__gt=0)
+        # Posts from before the PHP 1 minimum (PHP 0.11) made the guide read
+        # "about PHP 0 / day" (Post a Job audit, 2026-11-13).
+        .filter(required_skill__iexact=(skill or "").strip(), rate_type=rate_type, service_rate__gte=1)
         .aggregate(average=Avg("service_rate"), posts=Count("id"))
     )
     posts = row["posts"] or 0
@@ -411,6 +413,8 @@ def get_user_display_name(user) -> str:
 def record_job_status_event(job, from_status, to_status, actor=None, note=""):
     if from_status == to_status:
         return None
+    if from_status in UNDERWAY_JOB_STATUSES and to_status not in UNDERWAY_JOB_STATUSES:
+        clear_mark_done_reminders(job)
     return JobStatusEvent.objects.create(
         job=job,
         entity=JobStatusEvent.ENTITY_JOB,
@@ -966,6 +970,18 @@ def release_suspended_account(user):
 # --- Reminding the household to mark a job done ----------------------------
 
 MARK_DONE_REMINDER_TITLE = "Mark the job as done"
+
+
+def clear_mark_done_reminders(job) -> int:
+    """The job is no longer in progress (marked done, cancelled, or reopened
+    with nobody hired), so "Mark the job as done" is answered. It used to stay
+    an unread to-do for good (household notifications audit, 2026-11-13)."""
+    return Notification.objects.filter(
+        notification_type=Notification.TYPE_COMPLETION,
+        related_job_id=job.id,
+        title=MARK_DONE_REMINDER_TITLE,
+        requires_action=True,
+    ).update(requires_action=False, is_read=True)
 MARK_DONE_REMINDER_COOLDOWN_SECONDS = 300
 MARK_DONE_REMINDER_LOCK_KEY = "jobs:mark_done_reminders_lock"
 
@@ -989,11 +1005,14 @@ def send_due_mark_done_reminders(today=None) -> int:
         days = job_days(job)
         if not days or days[1] >= today:
             continue
+        # Only a reminder still waiting counts: a job reopened and hired
+        # again that runs past its new last day is reminded again.
         already_reminded = Notification.objects.filter(
             recipient_id=job.household_id,
             notification_type=Notification.TYPE_COMPLETION,
             related_job_id=job.id,
             title=MARK_DONE_REMINDER_TITLE,
+            requires_action=True,
         ).exists()
         if already_reminded:
             continue

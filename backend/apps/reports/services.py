@@ -158,8 +158,21 @@ def build_household_report(user: User, period):
         hires_per_worker[application.worker] += 1
     repeat_hires = sum(1 for count in hires_per_worker.values() if count > 1)
 
-    total_spend = sum(_float(job.service_rate) for job in completed)
-    reviews_given = Review.objects.filter(author=user, **_within(period))
+    # The same estimate as the admin report and My Jobs: summing the bare
+    # rates made a five-day PHP 700-a-day job count as PHP 700. Hourly jobs
+    # are left out, since the hours worked aren't recorded.
+    workers_per_job = {
+        row["job_id"]: row["workers"]
+        for row in JobApplication.objects.filter(
+            job_id__in=[job.id for job in completed], status=JobApplication.STATUS_COMPLETED
+        )
+        .values("job_id")
+        .annotate(workers=Count("id"))
+    }
+    completed_values = [estimated_job_value(job, workers_per_job.get(job.id, 0)) for job in completed]
+    total_spend = sum(_float(value) for value in completed_values if value is not None)
+    # The automatic 3.5 a household didn't give isn't a rating it gave.
+    reviews_given = Review.objects.filter(author=user, is_system_generated=False, **_within(period))
     average_given = reviews_given.aggregate(value=Avg("rating"))["value"]
 
     by_service = OrderedDict()
@@ -180,7 +193,9 @@ def build_household_report(user: User, period):
         "repeatHires": repeat_hires,
         "completionRate": _percent(len(completed), len(jobs)),
         "totalSpend": round(total_spend, 2),
-        "averageJobRate": round(total_spend / len(completed), 2) if completed else 0.0,
+        "averageJobRate": (
+            round(sum(_float(job.service_rate) for job in completed) / len(completed), 2) if completed else 0.0
+        ),
         "reviewsGiven": reviews_given.count(),
         "averageRatingGiven": round(_float(average_given), 2) if average_given is not None else None,
     }

@@ -463,6 +463,11 @@ export function normalizeBackendJob(job) {
     canCancel: job.can_cancel ?? job.canCancel ?? null,
     cancelNeedsReason: Boolean(job.cancel_needs_reason ?? job.cancelNeedsReason ?? false),
     markDoneNote: job.mark_done_note ?? job.markDoneNote ?? "",
+    // A completed job's cost at its agreed rate (the backend's estimate:
+    // rate x working days x workers); null for hourly or unfinished jobs.
+    estimatedValue: job.estimated_value ?? job.estimatedValue ?? null,
+    // The reason the household gave when it cancelled ("" if none).
+    cancelReason: job.cancel_reason || job.cancelReason || "",
     canReview: Boolean(job.can_review ?? job.canReview ?? false),
     applications,
     images,

@@ -14568,6 +14568,37 @@ a,
   font-weight: 600;
 }
 
+/* Household Notifications: the same read/unread difference (household
+   notifications audit, 2026-11-13). */
+.worker-dashboard.household-notifications-page .household-notification-item:not(.unread) {
+  border-left-color: transparent !important;
+  background: var(--gg-card-muted) !important;
+  box-shadow: none !important;
+}
+
+.worker-dashboard.household-notifications-page .household-notification-item.is-clickable {
+  cursor: pointer;
+}
+
+.worker-dashboard.household-notifications-page .household-notification-item.is-clickable:focus-visible {
+  outline: 3px solid rgba(76, 175, 116, 0.45);
+  outline-offset: 2px;
+}
+
+.worker-dashboard.household-notifications-page .household-notifications-group {
+  margin: 10px 0 0 !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gg-ink-faint, #8b9480) !important;
+}
+
+.household-notifications-read-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .worker-dashboard .household-notifications-panel .household-notifications-filter {
   border: 0 !important;
   background: transparent !important;
@@ -15525,7 +15556,9 @@ a,
 .login-section .register-card .form-control.is-invalid,
 .login-section .register-card .form-select.is-invalid,
 .household-job-form-shell .form-control.is-invalid,
-.household-job-form-shell .form-control.is-invalid:focus {
+.household-job-form-shell .form-control.is-invalid:focus,
+.household-job-form-shell .form-select.is-invalid,
+.household-job-form-shell .form-select.is-invalid:focus {
   border-color: #c44747 !important;
   background-image: none;
   box-shadow: 0 0 0 0.18rem rgba(196, 71, 71, 0.22) !important;
@@ -16442,6 +16475,134 @@ a,
   white-space: nowrap;
   display: inline-block;
   vertical-align: middle;
+}
+
+/* Household Feedback & Reviews audit, 2026-11-13. */
+.household-rating-waiting {
+  margin-bottom: 18px;
+}
+
+.household-rating-waiting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.household-rating-waiting-item > div {
+  min-width: 0;
+}
+
+.household-review-job {
+  margin: 0 0 4px;
+  font-weight: 600;
+  font-size: 0.86rem;
+}
+
+/* Household My Profile audit, 2026-11-13. */
+/* Locked fields read as plain text until Edit Profile is pressed; they
+   looked exactly like boxes waiting to be typed in. */
+.household-profile-page .profile-edit-form.is-locked .form-control:disabled,
+.household-profile-page .profile-edit-form.is-locked .form-select:disabled,
+.household-profile-page .profile-edit-form.is-locked .input-group-text {
+  background-color: transparent !important;
+  border-color: rgba(31, 42, 25, 0.12) !important;
+  border-style: dashed !important;
+  box-shadow: none !important;
+  opacity: 1;
+  cursor: default;
+}
+
+.household-profile-page .profile-edit-form.is-locked .form-select:disabled {
+  background-image: none !important;
+}
+
+.household-profile-page .profile-summary-body .profile-avatar {
+  /* The initial sat at the top of the circle on wider screens: the box was
+     a block with a 48px line height, and the centring rule was phone-only. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.household-profile-locked-note {
+  margin: 0 0 12px;
+  color: var(--gg-ink-faint, #8b9480);
+  font-size: 0.85rem;
+}
+
+.household-profile-notice {
+  margin: 12px 0 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.household-profile-notice.is-ok {
+  color: var(--gg-leaf-deep, #5c7a34);
+}
+
+.household-profile-notice.is-error {
+  color: #9b2f22;
+}
+
+.household-profile-page .profile-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Household My Jobs audit, 2026-11-13. */
+.household-history-stat-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--gg-ink-faint, #8b9480);
+  font-size: 0.74rem;
+}
+
+.household-history-review-note {
+  margin: 4px 0 0;
+  color: var(--gg-ink-faint, #8b9480);
+  font-size: 0.78rem;
+}
+
+/* Post a Job audit, 2026-11-13. */
+.household-job-required-note {
+  margin: 0 0 4px;
+}
+
+/* The same red asterisk as sign-up. */
+.household-job-form-shell .required-mark {
+  color: #c44747;
+  font-weight: 800;
+  margin-left: 2px;
+}
+
+.form-optional {
+  margin-left: 6px;
+  color: var(--gg-ink-faint, #8b9480);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.household-job-pin-error {
+  margin: 0 0 8px;
+}
+
+.household-post-job-page .household-post-actions-area,
+.household-post-actions-area {
+  grid-area: actions;
+}
+
+.household-job-error-summary {
+  margin: 12px 0 0;
+  color: #9b2f22;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.household-job-submit-error {
+  margin: 12px 0 0;
 }
 
 /* Household dashboard audit, 2026-11-13. */

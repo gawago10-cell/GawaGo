@@ -154,3 +154,27 @@ class NobodyHiredReopensTests(TestCase):
         self.assertTrue(
             JobStatusEvent.objects.filter(job=stuck, from_status="assigned", to_status="open").exists()
         )
+
+
+class RateGuideIgnoresOldSubPesoRatesTests(TestCase):
+    """Post a Job audit (2026-11-13): two PHP 0.11 posts from before the
+    PHP 1 minimum made the hint read "about PHP 0 / day"."""
+
+    def test_rates_under_one_peso_are_left_out(self):
+        household = make_user("rg-home", UserProfile.ROLE_HOUSEHOLD)
+        for rate in ("0.11", "0.11", "500.00", "700.00"):
+            make_job(household, required_skill="Gardening", service_rate=rate)
+
+        guide = client_for(household).get(reverse("job-rate-guide"), {"skill": "Gardening", "rate_type": "per_day"}).data
+
+        self.assertEqual(guide["posts"], 2)
+        self.assertEqual(guide["label"], "Gardening usually posts at about PHP 600 / day.")
+
+    def test_only_old_sub_peso_rates_give_no_hint(self):
+        household = make_user("rg2-home", UserProfile.ROLE_HOUSEHOLD)
+        for _ in range(3):
+            make_job(household, required_skill="Gardening", service_rate="0.11")
+
+        guide = client_for(household).get(reverse("job-rate-guide"), {"skill": "Gardening", "rate_type": "per_day"}).data
+
+        self.assertEqual(guide["label"], "")

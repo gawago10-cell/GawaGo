@@ -65,7 +65,10 @@ void main() {
     expect(posts, hasLength(1));
     expect(posts.single.url.path, endsWith('/jobs/applications/21/withdraw/'));
     expect(jsonDecode(posts.single.body), {'reason': 'I got sick.'});
-    expect(find.textContaining('You backed out of Garden Trimming'), findsOneWidget);
+    expect(
+      find.textContaining('You backed out of Garden Trimming'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a worker withdraws a pending application after confirming', (
@@ -203,6 +206,71 @@ void main() {
     }
     expect(find.text('Rate your worker first.'), findsNothing);
     expect(posts, isEmpty);
+  });
+
+  testWidgets('Post Job names each missing field under it, not in a snackbar', (
+    tester,
+  ) async {
+    // Post a Job audit (2026-11-13).
+    await SessionStorage.save(
+      const AuthSession(accessToken: 'household-token', role: 'household'),
+    );
+    final posts = <http.Request>[];
+    GawaGoApi.setClient(
+      MockClient((request) async {
+        if (request.method == 'POST') posts.add(request);
+        if (request.url.path.endsWith('/jobs/posting-status/')) {
+          return _json({'can_post': true});
+        }
+        return _householdResponses(request);
+      }),
+    );
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(home: HouseholdHomeScreen(onLogout: () {})),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Post a Job').last);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    expect(find.text('Fields marked * are required.'), findsOneWidget);
+    // Nothing is flagged until Post Job is pressed.
+    expect(find.text('Choose a service type.'), findsNothing);
+
+    final postButton = find.widgetWithText(FilledButton, 'Post Job');
+    await tester.ensureVisible(postButton);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(postButton);
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    expect(find.text('Choose a service type.'), findsOneWidget);
+    expect(find.text("Enter the rate you'll pay."), findsOneWidget);
+    expect(find.text('Choose the day the job starts.'), findsOneWidget);
+    expect(
+      find.text('Fix the fields marked in red, then press Post Job again.'),
+      findsOneWidget,
+    );
+    expect(find.byType(SnackBar), findsNothing);
+    expect(posts, isEmpty);
+
+    // The rate's message changes as it's typed, and clears once it's fine.
+    final rateField = find.widgetWithText(TextField, 'e.g. 600');
+    await tester.enterText(rateField, '0.11');
+    await tester.pump();
+    expect(find.text('Enter a rate of at least PHP 1.00.'), findsOneWidget);
+    await tester.enterText(rateField, '650');
+    await tester.pump();
+    expect(find.text('Enter a rate of at least PHP 1.00.'), findsNothing);
+    expect(find.text("Enter the rate you'll pay."), findsNothing);
   });
 }
 

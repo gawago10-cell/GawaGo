@@ -73,7 +73,11 @@ class _ReviewHistoryState extends State<ReviewHistory> {
         }
         if (!snapshot.hasData) return const AppLoadingState();
         final received = _filtered(snapshot.data![0]);
-        final given = _filtered(snapshot.data![1]);
+        // Only reviews actually written: a household's automatic 3.5 for a
+        // job it didn't rate in time isn't one (workers never have these).
+        final given = _filtered(
+          snapshot.data![1].where((review) => !review.isAutomatic).toList(),
+        );
         return RefreshIndicator(
           onRefresh: () async => _reload(),
           child: ListView(

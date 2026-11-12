@@ -1580,9 +1580,58 @@ class _PostJobState extends State<_PostJob> {
   // backend refuses the post until then (2026-11-02).
   PostingStatus? _postingStatus;
 
+  /// Set when Post Job was pressed with something missing: from then on
+  /// each field shows its own problem, updating as it's fixed. It used to be
+  /// one snackbar: "Complete all required job, schedule, rate, and map
+  /// fields." (Post a Job audit, 2026-11-13).
+  bool _showErrors = false;
+
+  void _refreshErrors() {
+    if (_showErrors && mounted) setState(() {});
+  }
+
+  /// The same rules as the website (frontend/src/utils/jobFormValidation.js);
+  /// the title and street are optional there too.
+  Map<String, String> get _errors {
+    final errors = <String, String>{};
+    final skill = _skill;
+    if (skill == null) {
+      errors['serviceType'] = 'Choose a service type.';
+    } else if (isOtherSkillChoice(skill) && _serviceType == null) {
+      errors['customService'] = 'Name the service.';
+    }
+    if (_barangay == null) errors['barangay'] = 'Choose the barangay.';
+    final slots = int.tryParse(_slots.text.trim());
+    if (slots == null || slots < 1 || slots > 50) {
+      errors['slots'] = 'Enter how many workers you need, from 1 to 50.';
+    }
+    final rate = _rate.text.trim();
+    if (rate.isEmpty) {
+      errors['rate'] = "Enter the rate you'll pay.";
+    } else if ((double.tryParse(rate) ?? 0) < 1) {
+      errors['rate'] = 'Enter a rate of at least PHP 1.00.';
+    }
+    if (_startDate == null) {
+      errors['startDate'] = 'Choose the day the job starts.';
+    }
+    if (_startDate != null &&
+        _endDate != null &&
+        _endDate!.isBefore(_startDate!)) {
+      errors['endDate'] = "The end date can't be before the start date.";
+    }
+    if (_pin == null) {
+      errors['pin'] =
+          'Pin the job site: use your current location, or tap the map.';
+    }
+    return errors;
+  }
+
   @override
   void initState() {
     super.initState();
+    for (final controller in [_rate, _slots, _customService]) {
+      controller.addListener(_refreshErrors);
+    }
     widget.repository.getPostingStatus().then(
       (status) {
         if (mounted) setState(() => _postingStatus = status);
@@ -1602,6 +1651,9 @@ class _PostJobState extends State<_PostJob> {
 
   @override
   void dispose() {
+    for (final controller in [_rate, _slots, _customService]) {
+      controller.removeListener(_refreshErrors);
+    }
     _title.dispose();
     _description.dispose();
     _location.dispose();
@@ -1615,6 +1667,7 @@ class _PostJobState extends State<_PostJob> {
   /// the household's own address, so they stay for the next posting.
   void _resetJobFields() {
     setState(() {
+      _showErrors = false;
       _title.clear();
       _description.clear();
       _rate.clear();
@@ -1702,42 +1755,22 @@ class _PostJobState extends State<_PostJob> {
 
   Future<void> _submit() async {
     if (_posting) return;
-    if (_skill != null && isOtherSkillChoice(_skill!) && _serviceType == null) {
-      _message('Type the service you need instead of "Other".');
+    if (_errors.isNotEmpty) {
+      setState(() => _showErrors = true);
       return;
     }
-    final serviceType = _serviceType;
-    if (_title.text.trim().isEmpty ||
-        serviceType == null ||
-        _barangay == null ||
-        _startDate == null ||
-        _location.text.trim().isEmpty ||
-        _pin == null ||
-        _rate.text.trim().isEmpty) {
-      _message('Complete all required job, schedule, rate, and map fields.');
-      return;
-    }
-    if ((double.tryParse(_rate.text.trim()) ?? 0) < 1) {
-      _message('Enter an offered rate of at least PHP 1.00.');
-      return;
-    }
-    if (_startDate != null &&
-        _endDate != null &&
-        _endDate!.isBefore(_startDate!)) {
-      _message('Job end date must be on or after the job start date.');
-      return;
-    }
-    final slots = int.tryParse(_slots.text.trim());
-    if (_slots.text.trim().isNotEmpty &&
-        (slots == null || slots < 1 || slots > 50)) {
-      _message('Workers needed must be a number between 1 and 50.');
-      return;
-    }
+    final serviceType = _serviceType!;
     setState(() => _posting = true);
     try {
-      final locationLabel = '${_barangay!}, ${_location.text.trim()}';
+      // The title and street are optional, as on the website: a job with no
+      // title is named after its service.
+      final street = _location.text.trim();
+      final locationLabel = street.isEmpty
+          ? _barangay!
+          : '${_barangay!}, $street';
+      final title = _title.text.trim();
       final created = await widget.repository.createJob({
-        'title': _title.text.trim(),
+        'title': title.isEmpty ? serviceType : title,
         'job_type': serviceType,
         'required_skill': serviceType,
         'schedule_type': _scheduleType,
@@ -1899,7 +1932,11 @@ class _PostJobState extends State<_PostJob> {
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= 720;
+                      final errors = _showErrors
+                          ? _errors
+                          : const <String, String>{};
                       final fields = _PostJobFields(
+                        errors: errors,
                         title: _title,
                         description: _description,
                         street: _location,
@@ -1951,12 +1988,29 @@ class _PostJobState extends State<_PostJob> {
                           if (value != null) setState(() => _endDate = value);
                         },
                       );
-                      final map = _PostJobMapPanel(
-                        pin: _pin,
-                        profilePin: profilePin,
-                        focus: barangayCenter(_barangay),
-                        onSetPin: _setPin,
-                        onLocate: _locate,
+                      final map = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _PostJobMapPanel(
+                            pin: _pin,
+                            profilePin: profilePin,
+                            focus: barangayCenter(_barangay),
+                            onSetPin: _setPin,
+                            onLocate: _locate,
+                          ),
+                          if (errors['pin'] != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(
+                                errors['pin']!,
+                                key: const Key('post-job-pin-error'),
+                                style: const TextStyle(
+                                  color: GawaGoColors.danger,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ),
+                        ],
                       );
                       if (!wide) {
                         return Column(
@@ -1981,6 +2035,18 @@ class _PostJobState extends State<_PostJob> {
                         setState(() => _imagePaths.removeAt(index)),
                   ),
                   const SizedBox(height: 28),
+                  if (_showErrors && _errors.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Fix the fields marked in red, then press Post Job again.',
+                        key: Key('post-job-error-summary'),
+                        style: TextStyle(
+                          color: GawaGoColors.danger,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   Wrap(
                     spacing: 12,
                     runSpacing: 10,
@@ -2097,6 +2163,7 @@ class _PostJobShell extends StatelessWidget {
 
 class _PostJobFields extends StatelessWidget {
   const _PostJobFields({
+    this.errors = const {},
     required this.title,
     required this.description,
     required this.street,
@@ -2138,18 +2205,46 @@ class _PostJobFields extends StatelessWidget {
   final VoidCallback onPickStartDate;
   final VoidCallback onPickEndDate;
 
+  /// Each field's problem once Post Job was pressed; empty before that.
+  final Map<String, String> errors;
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: 'Fields marked '),
+                  TextSpan(
+                    text: '*',
+                    style: TextStyle(
+                      color: GawaGoColors.danger,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  TextSpan(text: ' are required.'),
+                ],
+              ),
+              style: TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
+            ),
+          ),
+        ),
         _PostJobInput(
           label: 'Job Title',
+          optional: true,
           controller: title,
           hint: 'e.g. House Cleaning - 3 Bedroom',
         ),
         _PostJobTwoColumn(
           left: _PostJobDropdown(
             label: 'Service Type',
+            required: true,
+            error: errors['serviceType'],
             value: serviceType,
             hint: '---Select Service---',
             items: gawagoSkills,
@@ -2166,11 +2261,14 @@ class _PostJobFields extends StatelessWidget {
           _PostJobInput(
             key: const ValueKey('post-job-custom-service'),
             label: 'Specify Service Type',
+            required: true,
+            error: errors['customService'],
             controller: customService,
             hint: 'e.g. Pet Grooming',
           ),
         _PostJobInput(
           label: 'Job Description',
+          optional: true,
           controller: description,
           hint: 'Describe the job in detail...',
           lines: 4,
@@ -2178,6 +2276,8 @@ class _PostJobFields extends StatelessWidget {
         _PostJobTwoColumn(
           left: _PostJobDropdown(
             label: 'Barangay',
+            required: true,
+            error: errors['barangay'],
             value: barangay,
             hint: '---Select Barangay---',
             items: gawagoBarangays,
@@ -2185,32 +2285,39 @@ class _PostJobFields extends StatelessWidget {
           ),
           right: _PostJobInput(
             label: 'Street / House No.',
+            optional: true,
             controller: street,
             hint: 'QZ, Philippines',
           ),
         ),
+        // The rate and what it's per, side by side; Rate Type used to sit
+        // alone on the row below.
         _PostJobTwoColumn(
           left: _PostJobInput(
-            label: 'Workers Needed',
-            controller: slots,
-            keyboardType: TextInputType.number,
-          ),
-          right: _PostJobInput(
             label: 'Offered Rate',
+            required: true,
+            error: errors['rate'],
             controller: rate,
-            hint: 'e.g. 600.00',
+            hint: 'e.g. 600',
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          right: _PostJobDropdown(
+            label: 'Rate Type',
+            value: rateType,
+            items: const ['Per Day', 'Per Hour', 'Fixed Rate'],
+            onChanged: onRateTypeChanged,
           ),
         ),
         Align(
           alignment: Alignment.centerLeft,
           child: SizedBox(
             width: 176,
-            child: _PostJobDropdown(
-              label: 'Rate Type',
-              value: rateType,
-              items: const ['Per Day', 'Per Hour', 'Fixed Rate'],
-              onChanged: onRateTypeChanged,
+            child: _PostJobInput(
+              label: 'Workers Needed',
+              required: true,
+              error: errors['slots'],
+              controller: slots,
+              keyboardType: TextInputType.number,
             ),
           ),
         ),
@@ -2223,12 +2330,16 @@ class _PostJobFields extends StatelessWidget {
         _PostJobTwoColumn(
           left: _PostJobPickerField(
             label: 'Job Start Date',
+            required: true,
+            error: errors['startDate'],
             value: startDateLabel,
             icon: Icons.calendar_today_outlined,
             onTap: onPickStartDate,
           ),
           right: _PostJobPickerField(
             label: 'Job End Date',
+            optional: true,
+            error: errors['endDate'],
             value: endDateLabel,
             icon: Icons.calendar_today_outlined,
             onTap: onPickEndDate,
@@ -2289,6 +2400,9 @@ class _PostJobInput extends StatelessWidget {
     this.hint,
     this.lines = 1,
     this.keyboardType,
+    this.required = false,
+    this.optional = false,
+    this.error,
   });
 
   final String label;
@@ -2296,11 +2410,20 @@ class _PostJobInput extends StatelessWidget {
   final String? hint;
   final int lines;
   final TextInputType? keyboardType;
+  final bool required;
+  final bool optional;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
+    final borderColor = error != null
+        ? GawaGoColors.danger
+        : GawaGoColors.border;
     return _PostJobLabeledField(
       label: label,
+      required: required,
+      optional: optional,
+      error: error,
       child: TextField(
         controller: controller,
         maxLines: lines,
@@ -2321,11 +2444,11 @@ class _PostJobInput extends StatelessWidget {
           fillColor: GawaGoColors.surfaceMuted,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: GawaGoColors.border),
+            borderSide: BorderSide(color: borderColor),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: GawaGoColors.border),
+            borderSide: BorderSide(color: borderColor),
           ),
         ),
       ),
@@ -2340,6 +2463,8 @@ class _PostJobDropdown extends StatelessWidget {
     required this.items,
     required this.onChanged,
     this.hint,
+    this.required = false,
+    this.error,
   });
 
   final String label;
@@ -2347,11 +2472,18 @@ class _PostJobDropdown extends StatelessWidget {
   final String? hint;
   final List<String> items;
   final ValueChanged<String?> onChanged;
+  final bool required;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
+    final borderColor = error != null
+        ? GawaGoColors.danger
+        : GawaGoColors.border;
     return _PostJobLabeledField(
       label: label,
+      required: required,
+      error: error,
       child: DropdownButtonFormField<String>(
         initialValue: value,
         isExpanded: true,
@@ -2364,11 +2496,11 @@ class _PostJobDropdown extends StatelessWidget {
           fillColor: GawaGoColors.surfaceMuted,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: GawaGoColors.border),
+            borderSide: BorderSide(color: borderColor),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: GawaGoColors.border),
+            borderSide: BorderSide(color: borderColor),
           ),
         ),
         hint: hint == null ? null : Text(hint!),
@@ -2387,17 +2519,26 @@ class _PostJobPickerField extends StatelessWidget {
     required this.value,
     required this.icon,
     required this.onTap,
+    this.required = false,
+    this.optional = false,
+    this.error,
   });
 
   final String label;
   final String value;
   final IconData icon;
   final VoidCallback onTap;
+  final bool required;
+  final bool optional;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     return _PostJobLabeledField(
       label: label,
+      required: required,
+      optional: optional,
+      error: error,
       child: Material(
         color: GawaGoColors.surfaceMuted,
         borderRadius: BorderRadius.circular(8),
@@ -2409,7 +2550,11 @@ class _PostJobPickerField extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 13),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: GawaGoColors.border),
+              border: Border.all(
+                color: error != null
+                    ? GawaGoColors.danger
+                    : GawaGoColors.border,
+              ),
             ),
             child: Row(
               children: [
@@ -2435,10 +2580,25 @@ class _PostJobPickerField extends StatelessWidget {
 }
 
 class _PostJobLabeledField extends StatelessWidget {
-  const _PostJobLabeledField({required this.label, required this.child});
+  const _PostJobLabeledField({
+    required this.label,
+    required this.child,
+    this.required = false,
+    this.optional = false,
+    this.error,
+  });
 
   final String label;
   final Widget child;
+
+  /// A red asterisk after the label, as on the website and at sign-up.
+  final bool required;
+
+  /// A muted "Optional" after the label.
+  final bool optional;
+
+  /// What's wrong with the field, in red under it.
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
@@ -2447,8 +2607,26 @@ class _PostJobLabeledField extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
+          Text.rich(
+            TextSpan(
+              text: label,
+              children: [
+                if (required)
+                  const TextSpan(
+                    text: ' *',
+                    style: TextStyle(color: GawaGoColors.danger),
+                  ),
+                if (optional)
+                  const TextSpan(
+                    text: '  Optional',
+                    style: TextStyle(
+                      color: GawaGoColors.textFaint,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
+            ),
             style: const TextStyle(
               color: GawaGoColors.ink,
               fontSize: 13,
@@ -2458,6 +2636,17 @@ class _PostJobLabeledField extends StatelessWidget {
           ),
           const SizedBox(height: 7),
           child,
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                error!,
+                style: const TextStyle(
+                  color: GawaGoColors.danger,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -2855,17 +3044,30 @@ class _MyJobsState extends State<_MyJobs> {
         final cancelledJobs = historyJobs
             .where((job) => _normalizedJobStatus(job.status) == 'cancelled')
             .toList();
+        // Only ratings the household gave: the automatic 3.5 for a job it
+        // didn't rate in time was counted as its own.
         final ratingsGiven = givenReviews
+            .where((review) => !review.isAutomatic)
             .map((review) => review.rating)
             .whereType<double>()
             .toList();
         final avgRatingGiven = ratingsGiven.isEmpty
             ? null
             : ratingsGiven.reduce((a, b) => a + b) / ratingsGiven.length;
+        // The backend's estimate (rate x working days x workers); adding the
+        // bare rates made a five-day PHP 700-a-day job count as PHP 700.
+        // Hourly jobs have none: their hours aren't recorded.
         final totalSpent = completedJobs.fold<double>(
           0,
-          (sum, job) => sum + job.serviceRate,
+          (sum, job) => sum + (job.estimatedValue ?? 0),
         );
+        final hourlyLeftOut = completedJobs
+            .where(
+              (job) =>
+                  job.estimatedValue == null &&
+                  job.rateTypeLabel.toLowerCase().contains('hour'),
+            )
+            .length;
         final visible = switch (_filter) {
           'completed' => completedJobs,
           'cancelled' => cancelledJobs,
@@ -2911,7 +3113,10 @@ class _MyJobsState extends State<_MyJobs> {
                 iconColor: GawaGoColors.cream,
                 background: GawaGoColors.leafDeep,
                 value: 'PHP ${totalSpent.toStringAsFixed(2)}',
-                label: 'Total Spent',
+                label: hourlyLeftOut > 0
+                    ? 'Estimated Spend ($hourlyLeftOut hourly '
+                          'job${hourlyLeftOut == 1 ? '' : 's'} not counted)'
+                    : 'Estimated Spend',
               ),
               const SizedBox(height: 10),
               _HistoryStatCard(
@@ -3195,6 +3400,15 @@ class _HistoryJobCard extends StatelessWidget {
     final isCancelled = _normalizedJobStatus(job.status) == 'cancelled';
     final assignedApp = _selectedWorker(job);
     final workerName = assignedApp?.workerName ?? '';
+    // Who was booked when the job was called off (hires stay on record).
+    final bookedNames = job.applications
+        .where(
+          (application) =>
+              application.status == 'hired' ||
+              application.status == 'completed',
+        )
+        .map((application) => application.workerName)
+        .toList();
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -3291,18 +3505,29 @@ class _HistoryJobCard extends StatelessWidget {
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    // Every cancelled job said nobody was hired, even one
+                    // called off after hiring (My Jobs audit, 2026-11-13).
                     children: [
-                      const Text(
-                        'No worker was hired',
-                        style: TextStyle(
+                      Text(
+                        bookedNames.isEmpty
+                            ? 'No worker was hired'
+                            : 'Cancelled after hiring ${bookedNames.join(', ')}',
+                        style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 13,
                           color: GawaGoColors.ink,
                         ),
                       ),
-                      const Text(
-                        'Job was cancelled before a worker was assigned.',
-                        style: TextStyle(
+                      Text(
+                        [
+                          if (bookedNames.isEmpty)
+                            'Job was cancelled before a worker was hired.',
+                          if (job.cancelReason.isNotEmpty)
+                            'Your reason: \u201c${job.cancelReason}\u201d'
+                          else if (bookedNames.isNotEmpty)
+                            'No reason was recorded.',
+                        ].join(' '),
+                        style: const TextStyle(
                           fontSize: 12,
                           color: GawaGoColors.textMuted,
                         ),
@@ -3410,6 +3635,13 @@ class _HistoryJobCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (review!.isAutomatic) ...[
+                const SizedBox(height: 4),
+                const Text(
+                  'Automatic rating: given because the job wasn\'t rated in time.',
+                  style: TextStyle(fontSize: 12, color: GawaGoColors.textMuted),
+                ),
+              ],
               if (review!.feedback.trim().isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
@@ -3421,7 +3653,8 @@ class _HistoryJobCard extends StatelessWidget {
                   ),
                 ),
               ],
-            ] else if (job.canReview)
+            ],
+            if (job.canReview && (review == null || review!.isAutomatic))
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -5089,8 +5322,34 @@ class _ProfileFormState extends State<_ProfileForm> {
   late final _first = TextEditingController(text: widget.profile.firstName);
   late final _last = TextEditingController(text: widget.profile.lastName);
   late final _email = TextEditingController(text: widget.profile.email);
-  late final _phone = TextEditingController(text: widget.profile.phone);
+  // The ten digits after +63, as at sign-up; the box shows the +63 itself.
+  late final _phone = TextEditingController(
+    text: sanitizePhilippinesPhone(widget.profile.phone),
+  );
   late final _username = TextEditingController(text: widget.profile.username);
+  // The backend asks for it before an email change, and this form had
+  // nowhere to type it, so changing the email always failed.
+  final _emailPassword = TextEditingController();
+  bool get _emailChanged =>
+      _email.text.trim().toLowerCase() !=
+      widget.profile.email.trim().toLowerCase();
+
+  @override
+  void dispose() {
+    for (final controller in [
+      _first,
+      _last,
+      _email,
+      _phone,
+      _username,
+      _street,
+      _emailPassword,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
   late final _street = TextEditingController(
     text: _streetFromLocation(widget.profile.locationLabel),
   );
@@ -5158,12 +5417,21 @@ class _ProfileFormState extends State<_ProfileForm> {
       ).showSnackBar(const SnackBar(content: Text('Select your barangay.')));
       return;
     }
+    if (_emailChanged && _emailPassword.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter your current password to change your email.'),
+        ),
+      );
+      return;
+    }
     setState(() => _saving = true);
     try {
       await widget.repository.updateProfile({
         'first_name': _first.text.trim(),
         'last_name': _last.text.trim(),
         'email': _email.text.trim(),
+        if (_emailChanged) 'current_password': _emailPassword.text,
         'phone': sanitizePhilippinesPhone(_phone.text),
         'location_label': [
           _barangay!,
@@ -5172,6 +5440,7 @@ class _ProfileFormState extends State<_ProfileForm> {
         'latitude': _coordinateForApi(pin.latitude),
         'longitude': _coordinateForApi(pin.longitude),
       }, profilePhotoPath: _photoPath);
+      _emailPassword.clear();
       widget.onSaved();
       if (mounted) {
         ScaffoldMessenger.of(
@@ -5192,7 +5461,13 @@ class _ProfileFormState extends State<_ProfileForm> {
   @override
   Widget build(BuildContext context) {
     final latestReceived = widget.receivedReviews.take(1).toList();
-    final latestGiven = widget.givenReviews.take(1).toList();
+    // Only what the household wrote: the automatic 3.5 for a job it didn't
+    // rate in time isn't a review it submitted (it can still replace it
+    // from My Jobs).
+    final writtenReviews = widget.givenReviews
+        .where((review) => !review.isAutomatic)
+        .toList();
+    final latestGiven = writtenReviews.take(1).toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
       children: [
@@ -5273,7 +5548,7 @@ class _ProfileFormState extends State<_ProfileForm> {
                   label: 'Phone Number',
                   value: widget.profile.phone.isEmpty
                       ? 'Not set'
-                      : widget.profile.phone,
+                      : '+63 ${sanitizePhilippinesPhone(widget.profile.phone)}',
                 ),
                 _ProfileInfoLine(
                   label: 'Email',
@@ -5318,8 +5593,27 @@ class _ProfileFormState extends State<_ProfileForm> {
                   controller: _username,
                   enabled: false,
                 ),
-                _ProfileTextField(label: 'Email', controller: _email),
-                _ProfileTextField(label: 'Phone Number', controller: _phone),
+                _ProfileTextField(
+                  label: 'Email',
+                  controller: _email,
+                  keyboardType: TextInputType.emailAddress,
+                  onChanged: (_) => setState(() {}),
+                ),
+                if (_emailChanged)
+                  _ProfileTextField(
+                    key: const ValueKey('household-email-password'),
+                    label: 'Current password (needed to change your email)',
+                    controller: _emailPassword,
+                    obscureText: true,
+                  ),
+                _ProfileTextField(
+                  label: 'Phone Number',
+                  controller: _phone,
+                  prefixText: '+63 ',
+                  hint: '9XXXXXXXXX',
+                  keyboardType: TextInputType.phone,
+                  maxLength: 10,
+                ),
                 _ProfileDropdownField(
                   label: 'Barangay',
                   value: _barangay,
@@ -5368,7 +5662,8 @@ class _ProfileFormState extends State<_ProfileForm> {
                         letterSpacing: 0,
                       ),
                     ),
-                    child: Text(_saving ? 'Saving...' : 'Edit Profile'),
+                    // The form is always open here; the button saves.
+                    child: Text(_saving ? 'Saving...' : 'Save Changes'),
                   ),
                 ),
               ],
@@ -5390,12 +5685,15 @@ class _ProfileFormState extends State<_ProfileForm> {
           _ReviewsPanel(
             title: 'Feedback from Workers',
             reviews: latestReceived,
+            allReviews: widget.receivedReviews,
             emptyMessage: 'No feedback from workers yet.',
           ),
           const SizedBox(height: 18),
           _ReviewsPanel(
             title: 'Reviews You Submitted',
             reviews: latestGiven,
+            allReviews: writtenReviews,
+            given: true,
             emptyMessage: 'No submitted reviews yet.',
           ),
         ],
@@ -5592,16 +5890,27 @@ class _FileChooserRow extends StatelessWidget {
 
 class _ProfileTextField extends StatelessWidget {
   const _ProfileTextField({
+    super.key,
     required this.label,
     required this.controller,
     this.hint,
     this.enabled = true,
+    this.obscureText = false,
+    this.prefixText,
+    this.keyboardType,
+    this.maxLength,
+    this.onChanged,
   });
 
   final String label;
   final TextEditingController controller;
   final String? hint;
   final bool enabled;
+  final bool obscureText;
+  final String? prefixText;
+  final TextInputType? keyboardType;
+  final int? maxLength;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -5610,6 +5919,10 @@ class _ProfileTextField extends StatelessWidget {
       child: TextField(
         controller: controller,
         enabled: enabled,
+        obscureText: obscureText,
+        keyboardType: keyboardType,
+        maxLength: maxLength,
+        onChanged: onChanged,
         style: const TextStyle(
           color: GawaGoColors.ink,
           fontSize: 14,
@@ -5617,6 +5930,8 @@ class _ProfileTextField extends StatelessWidget {
         ),
         decoration: InputDecoration(
           hintText: hint,
+          prefixText: prefixText,
+          counterText: '',
           filled: true,
           fillColor: GawaGoColors.surfaceMuted,
           contentPadding: const EdgeInsets.symmetric(
@@ -5719,12 +6034,22 @@ class _ReviewsPanel extends StatelessWidget {
   const _ReviewsPanel({
     required this.title,
     required this.reviews,
+    required this.allReviews,
     required this.emptyMessage,
+    this.given = false,
   });
 
   final String title;
+
+  /// The latest, shown on the page.
   final List<GawaGoReview> reviews;
+
+  /// Every one, for View All: it used to open the same single latest review.
+  final List<GawaGoReview> allReviews;
   final String emptyMessage;
+
+  /// Reviews the household wrote, named by the worker and the job.
+  final bool given;
 
   void _showAll(BuildContext context) {
     showModalBottomSheet<void>(
@@ -5749,10 +6074,12 @@ class _ReviewsPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            if (reviews.isEmpty)
+            if (allReviews.isEmpty)
               _DashedEmptyBox(message: emptyMessage)
             else
-              ...reviews.map(_ReviewPreviewCard.new),
+              ...allReviews.map(
+                (review) => _ReviewPreviewCard(review, given: given),
+              ),
           ],
         ),
       ),
@@ -5792,7 +6119,9 @@ class _ReviewsPanel extends StatelessWidget {
           if (reviews.isEmpty)
             _DashedEmptyBox(message: emptyMessage)
           else
-            ...reviews.map(_ReviewPreviewCard.new),
+            ...reviews.map(
+              (review) => _ReviewPreviewCard(review, given: given),
+            ),
         ],
       ),
     );
@@ -5800,15 +6129,19 @@ class _ReviewsPanel extends StatelessWidget {
 }
 
 class _ReviewPreviewCard extends StatelessWidget {
-  const _ReviewPreviewCard(this.review);
+  const _ReviewPreviewCard(this.review, {this.given = false});
 
   final GawaGoReview review;
 
+  /// A review the household wrote: named by the worker it's about. It used
+  /// to show the author -- the household's own name.
+  final bool given;
+
   @override
   Widget build(BuildContext context) {
-    final name = review.authorName.isNotEmpty
-        ? review.authorName
-        : review.targetName;
+    final name = given
+        ? review.targetName
+        : (review.authorName.isNotEmpty ? review.authorName : 'Masked Worker');
     final rating = review.rating == null
         ? 'No rating'
         : '${review.rating!.toStringAsFixed(1)}/5';
@@ -5851,6 +6184,20 @@ class _ReviewPreviewCard extends StatelessWidget {
               ),
             ],
           ),
+          // Which job: a worker hired twice had two reviews that couldn't be
+          // told apart. Worker feedback stays without one -- the job would
+          // say who wrote it.
+          if (given && review.jobTitle.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'For ${review.jobTitle}',
+              style: const TextStyle(
+                color: GawaGoColors.textMuted,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Text(
             review.feedback.isEmpty ? 'No written feedback.' : review.feedback,
@@ -5863,7 +6210,7 @@ class _ReviewPreviewCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            formatLocalDateTime(review.createdAt, fallback: review.displayDate),
+            formatJobDate(review.createdAt, fallback: review.displayDate),
             style: const TextStyle(
               color: GawaGoColors.ink,
               fontSize: 17,

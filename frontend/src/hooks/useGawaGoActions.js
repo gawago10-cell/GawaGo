@@ -12,6 +12,7 @@ import {
 import { resolveWorkerSkills, validateWorkerSkills } from "../utils/skillUtils";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
 import { isConfirmedJobPin } from "./useHouseholdJobLocation";
+import { householdJobFormErrors } from "../utils/jobFormValidation";
 import { askReason, confirmDialog } from "../components/AppDialogs";
 import { withdrawApplication } from "../services/backendDataService";
 
@@ -103,6 +104,10 @@ export function useGawaGoActions({
   // resetting a plain variable's guard.
   const isSubmittingJobRef = useRef(false);
   const [isSubmittingJob, setIsSubmittingJob] = useState(false);
+  // Post a Job: show each field's problem once "Post Job" has been pressed,
+  // and the server's answer above the buttons, instead of browser alerts.
+  const [householdJobShowErrors, setHouseholdJobShowErrors] = useState(false);
+  const [householdJobSubmitError, setHouseholdJobSubmitError] = useState("");
   // Same double-click guard for every other request-sending action: a second
   // click while the first request is in flight is ignored instead of sending
   // a duplicate that the server rejects with a contradictory message.
@@ -1153,13 +1158,15 @@ export function useGawaGoActions({
       }
     });
   }
+  // Resolves to { ok, message } so the page can keep the form open on a
+  // refused save and say what happened beside the button (it used to leave
+  // edit mode at once and answer in a browser alert).
   function handleHouseholdProfileSave(event) {
     event.preventDefault();
     if (!currentUser || currentUser.role !== "household") {
-      window.alert("No household account is currently logged in.");
-      return;
+      return Promise.resolve({ ok: false, message: "No household account is currently logged in." });
     }
-    runExclusive("household-profile-save", async () => {
+    return runExclusive("household-profile-save", async () => {
       let savedProfilePhoto = householdProfileForm.profilePhotoPreview || "";
       try {
         if (getAuthToken()) {
@@ -1169,6 +1176,9 @@ export function useGawaGoActions({
             email: householdProfileForm.email,
             phone: householdProfileForm.phone,
             location_label: formatLocation(householdProfileForm.barangay, householdProfileForm.streetAddress),
+            // Only an email change needs it; the backend asks then, and the
+            // household form had nowhere to type it, so it always failed.
+            ...(householdProfileForm.currentPassword ? { current_password: householdProfileForm.currentPassword } : {}),
           };
           const requestBody = householdProfileForm.profilePhotoFile ? new FormData() : profilePayload;
           if (requestBody instanceof FormData) {
@@ -1184,6 +1194,12 @@ export function useGawaGoActions({
           if (!response.ok) {
             throw new Error(getApiErrorMessage(data, "Unable to update household profile."));
           }
+          // An email change signs out other devices and hands this one a
+          // fresh token; the old one stopped working, so the household was
+          // signed out on its next action.
+          if (data?.access) {
+            setAuthToken(data.access);
+          }
           savedProfilePhoto =
             data?.profile?.profile_photo_url ||
             data?.profile?.profile_photo ||
@@ -1192,8 +1208,7 @@ export function useGawaGoActions({
             "";
         }
       } catch (error) {
-        window.alert(error.message || "Unable to save household profile photo.");
-        return;
+        return { ok: false, message: error.message || "Unable to update your profile." };
       }
     setRegisteredHouseholds((prev) =>
       prev.map((item) => {
@@ -1249,7 +1264,7 @@ export function useGawaGoActions({
         };
       }),
     );
-    window.alert("Household profile updated.");
+    return { ok: true, message: "Profile saved." };
     });
   }
   async function handleCancelJob(jobId) {
@@ -1632,37 +1647,34 @@ export function useGawaGoActions({
       window.alert("Please login as a household account first.");
       return;
     }
+    // The form says so up front and keeps Post Job disabled; this only
+    // covers a page that was open when the account's status changed.
     if (currentHousehold?.verification !== "Verified") {
-      window.alert("Your household account must be verified before you can post a job.");
-      setView("household-get-verified");
+      setHouseholdJobSubmitError("Your household account must be verified before you can post a job.");
       return;
     }
     const serviceType = householdJobForm.serviceType === "Other"
       ? (householdJobForm.customServiceType || "").trim()
       : householdJobForm.serviceType;
-    if (
-      !serviceType ||
-      !householdJobForm.jobStartDate ||
-      getWorkersNeeded(householdJobForm) < 1
-    ) {
-      window.alert("Please complete the service type, job start date, and number of workers needed.");
+    // Every field's problem at once, each under its own field. The job site
+    // is a pin the household confirmed (a device fix, or a spot pinned or
+    // dragged to): a geocoded address used to land jobs up to 13 km off.
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const formErrors = householdJobFormErrors(householdJobForm, {
+      pinConfirmed: isConfirmedJobPin(householdJobLocationPreview),
+      today,
+    });
+    if (Object.keys(formErrors).length > 0) {
+      setHouseholdJobShowErrors(true);
+      setHouseholdJobSubmitError("");
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector(".household-job-form-shell .is-invalid, .household-job-form-shell [data-field-error]")
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
       return;
     }
-    // A job pays something (spec II.B); the backend refuses less than PHP 1.
-    if (!(Number(householdJobForm.offeredRate) >= 1)) {
-      window.alert("Enter an offered rate of at least PHP 1.00.");
-      return;
-    }
-    // The job site is a pin the household confirmed (a device fix, or a
-    // spot pinned or dragged to on the map). Falling back to a geocoded
-    // address or the profile's point used to post jobs up to 13 km from the
-    // real site, with a 1 km default matching radius.
-    if (!isConfirmedJobPin(householdJobLocationPreview)) {
-      window.alert(
-        "Pin the job site before posting: use your current location, drag the pin on the map, or pin it manually.",
-      );
-      return;
-    }
+    setHouseholdJobSubmitError("");
     if (isSubmittingJobRef.current) {
       // Ignore a double-click/double-submit rather than posting the job
       // twice while the first POST is still in flight.
@@ -1731,10 +1743,11 @@ export function useGawaGoActions({
         shouldResetHouseholdJobForm = true;
       } catch (error) {
         await refreshJobsFromBackend();
-        window.alert(error.message || "Unable to post job. Please review the form and try again.");
+        setHouseholdJobSubmitError(error.message || "Unable to post job. Please review the form and try again.");
         return;
       } finally {
         if (shouldResetHouseholdJobForm) {
+          setHouseholdJobShowErrors(false);
           const savedLocation = getSavedHouseholdLocation(currentHousehold, currentUser);
           setHouseholdJobCoordinates(null);
           setHouseholdJobLocationPreview(null);
@@ -2004,6 +2017,8 @@ export function useGawaGoActions({
     handleAdminApproveVerification,
     handleAdminRejectVerification,
     isSubmittingJob,
+    householdJobShowErrors,
+    householdJobSubmitError,
     isActionPending,
   };
 }

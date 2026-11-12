@@ -131,6 +131,13 @@ export function useGawaGoFormHandlers({
         );
       return;
     }
+    if (name === "phone") {
+      setHouseholdProfileForm((prev) => ({
+        ...prev,
+        phone: sanitizePhilippinesPhone(value),
+      }));
+      return;
+    }
     setHouseholdProfileForm((prev) => ({
       ...prev,
       [name]: value,

@@ -109,6 +109,8 @@ class HouseholdJob {
     required this.canReview,
     this.canMarkDone = false,
     this.markDoneNote = '',
+    this.estimatedValue,
+    this.cancelReason = '',
     this.canCancel = false,
     this.cancelNeedsReason = false,
     this.expiredNote = '',
@@ -147,6 +149,13 @@ class HouseholdJob {
 
   /// Why "Mark as done" isn't available yet, e.g. the start date; "" if it is.
   final String markDoneNote;
+
+  /// A completed job's cost at its agreed rate (the backend's estimate:
+  /// rate x working days x workers); null for hourly or unfinished jobs.
+  final double? estimatedValue;
+
+  /// The reason the household gave when it cancelled; "" if none.
+  final String cancelReason;
 
   /// The household can still call this job off (backend `can_cancel`),
   /// hired worker or not (fourth scan, 2026-11-01).
@@ -189,6 +198,8 @@ class HouseholdJob {
       canReview: json['can_review'] == true,
       canMarkDone: json['can_mark_done'] == true,
       markDoneNote: _text(json['mark_done_note'] ?? ''),
+      estimatedValue: _number(json['estimated_value']),
+      cancelReason: _text(json['cancel_reason'] ?? ''),
       // An older backend sent no flag; only an open job could be cancelled.
       canCancel: json.containsKey('can_cancel')
           ? json['can_cancel'] == true
