@@ -36,7 +36,13 @@ class AdminHomeScreen extends StatefulWidget {
 
 class _AdminHomeScreenState extends State<AdminHomeScreen> {
   final _repository = const AdminRepository();
-  _AdminPage _page = _AdminPage.dashboard;
+
+  // Staff admins only verify IDs and credentials (the 2026-10-19 rule); the
+  // web gives them no dashboard or reports, and the app did (mobile admin
+  // audit, 2026-11-22). They start on the queue they work in.
+  late _AdminPage _page = widget.isSuperAdmin
+      ? _AdminPage.dashboard
+      : _AdminPage.verifications;
 
   Future<void> _logout() async {
     await GawaGoApi.logout();
@@ -47,12 +53,13 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final mainDestinations = [
-      GawaGoDrawerDestination(
-        icon: Icons.dashboard_outlined,
-        label: 'Dashboard',
-        selected: _page == _AdminPage.dashboard,
-        onTap: () => setState(() => _page = _AdminPage.dashboard),
-      ),
+      if (widget.isSuperAdmin)
+        GawaGoDrawerDestination(
+          icon: Icons.dashboard_outlined,
+          label: 'Dashboard',
+          selected: _page == _AdminPage.dashboard,
+          onTap: () => setState(() => _page = _AdminPage.dashboard),
+        ),
       GawaGoDrawerDestination(
         icon: Icons.verified_user_outlined,
         label: 'Verification Queue',
@@ -74,12 +81,13 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           selected: _page == _AdminPage.complaints,
           onTap: () => setState(() => _page = _AdminPage.complaints),
         ),
-      GawaGoDrawerDestination(
-        icon: Icons.assessment_outlined,
-        label: 'Reports',
-        selected: _page == _AdminPage.reports,
-        onTap: () => setState(() => _page = _AdminPage.reports),
-      ),
+      if (widget.isSuperAdmin)
+        GawaGoDrawerDestination(
+          icon: Icons.assessment_outlined,
+          label: 'Reports',
+          selected: _page == _AdminPage.reports,
+          onTap: () => setState(() => _page = _AdminPage.reports),
+        ),
     ];
 
     return Theme(
@@ -539,15 +547,19 @@ class _VerificationQueueState extends State<_VerificationQueue> {
         .toList();
   }
 
-  List<AdminVerificationRequest> _visible(
+  List<AdminVerificationRequest> _byStatus(
     List<AdminVerificationRequest> items,
+    String status,
   ) {
-    final byRole = _byRole(items, _roleFilter);
-    if (_filter == 'all') return byRole;
-    return byRole
-        .where((item) => item.status.trim().toLowerCase() == _filter)
+    if (status == 'all') return items;
+    return items
+        .where((item) => item.status.trim().toLowerCase() == status)
         .toList();
   }
+
+  List<AdminVerificationRequest> _visible(
+    List<AdminVerificationRequest> items,
+  ) => _byStatus(_byRole(items, _roleFilter), _filter);
 
   Future<void> _review(AdminVerificationRequest request) async {
     final result = await showModalBottomSheet<_VerificationDecision>(
@@ -624,8 +636,11 @@ class _VerificationQueueState extends State<_VerificationQueue> {
                         (tab) => Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
+                            // Counted within the status shown below, so the
+                            // number matches the list: "All 10" sat over two
+                            // pending requests (mobile admin audit, 2026-11-22).
                             label: Text(
-                              '${tab.value} ${_byRole(snapshot.data!, tab.key).length}',
+                              '${tab.value} ${_byRole(_byStatus(snapshot.data!, _filter), tab.key).length}',
                             ),
                             selected: _roleFilter == tab.key,
                             onSelected: (_) =>
@@ -645,7 +660,9 @@ class _VerificationQueueState extends State<_VerificationQueue> {
                         (filter) => Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
-                            label: Text(formatStatus(filter)),
+                            label: Text(
+                              '${formatStatus(filter)} ${_byStatus(_byRole(snapshot.data!, _roleFilter), filter).length}',
+                            ),
                             selected: _filter == filter,
                             onSelected: (_) => setState(() => _filter = filter),
                           ),
@@ -719,6 +736,11 @@ class _VerificationReviewSheet extends StatefulWidget {
 class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
   final _note = TextEditingController();
 
+  /// Said under the note box: a SnackBar landed behind this sheet, so a
+  /// reject with no note looked like it did nothing (mobile admin audit,
+  /// 2026-11-22).
+  String? _noteError;
+
   @override
   void dispose() {
     _note.dispose();
@@ -767,10 +789,9 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
 
   void _finish(String action) {
     if (action == 'reject' && _note.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Add a reason before rejecting this request.'),
-        ),
+      setState(
+        () => _noteError =
+            'Add a reason before rejecting; the applicant will see it.',
       );
       return;
     }
@@ -820,12 +841,15 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
               _Fact(label: 'Email', value: request.email),
               _Fact(label: 'Phone', value: request.phone),
               _Fact(label: 'Location', value: request.location),
-              _Fact(
-                label: 'Skills',
-                value: request.skills.isEmpty
-                    ? 'Not provided'
-                    : request.skills.join(', '),
-              ),
+              // Households list no skills; "Not provided" read as missing
+              // information (mobile admin audit, 2026-11-22).
+              if (request.accountRole.trim().toLowerCase() != 'household')
+                _Fact(
+                  label: 'Skills',
+                  value: request.skills.isEmpty
+                      ? 'Not provided'
+                      : request.skills.join(', '),
+                ),
               const Divider(height: 26),
               _Fact(
                 label: 'ID number',
@@ -859,15 +883,32 @@ class _VerificationReviewSheetState extends State<_VerificationReviewSheet> {
               ),
               if (request.reviewNote.isNotEmpty)
                 _Fact(label: 'Existing admin note', value: request.reviewNote),
-              if (request.status.trim().toLowerCase() == 'pending') ...[
+              if (request.status.trim().toLowerCase() == 'pending' &&
+                  request.hasDocumentAppCantOpen) ...[
+                // The app shows images only, so approving here would be
+                // approving a PDF nobody opened (mobile admin audit,
+                // 2026-11-22).
+                const SizedBox(height: 14),
+                const _WebOnlyNote(
+                  key: Key('verification-pdf-note'),
+                  text:
+                      'One of these documents is a PDF, which the app can\'t '
+                      'open. Review and decide this request on the GawaGo '
+                      'website.',
+                ),
+              ] else if (request.status.trim().toLowerCase() == 'pending') ...[
                 const SizedBox(height: 14),
                 TextField(
                   controller: _note,
                   minLines: 2,
                   maxLines: 4,
-                  decoration: const InputDecoration(
+                  onChanged: (_) {
+                    if (_noteError != null) setState(() => _noteError = null);
+                  },
+                  decoration: InputDecoration(
                     labelText: 'Review note',
-                    hintText: 'Required when rejecting a request',
+                    hintText: 'Required when rejecting; the applicant sees it',
+                    errorText: _noteError,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -968,10 +1009,38 @@ class _Fact extends StatelessWidget {
   }
 }
 
-String _displayDate(String value) {
-  final parsed = DateTime.tryParse(value);
-  if (parsed == null) return value.isEmpty ? 'Unknown date' : value;
-  return '${parsed.month}/${parsed.day}/${parsed.year}';
+/// "Nov 22, 2026" in local time, as the rest of the app writes dates. It
+/// was "11/22/2026" from the UTC date, a day early for late-night
+/// submissions (mobile admin audit, 2026-11-22).
+String _displayDate(String value) =>
+    formatJobDate(value, fallback: 'Unknown date');
+
+/// A notice that a decision has to be made on the website.
+class _WebOnlyNote extends StatelessWidget {
+  const _WebOnlyNote({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7E0),
+        border: Border.all(color: const Color(0xFFF0D58A)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 13,
+          height: 1.4,
+          color: Color(0xFF5C4300),
+        ),
+      ),
+    );
+  }
 }
 
 /// Tells the admin that a verification request touches a permanently

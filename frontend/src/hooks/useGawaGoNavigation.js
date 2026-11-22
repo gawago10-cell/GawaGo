@@ -172,6 +172,11 @@ export function useGawaGoNavigation({
     setView("admin-dashboard");
   }
 
+  function openAdminCredentials() {
+    setAdminSection("credentials");
+    setView("admin-dashboard");
+  }
+
   function openAdminAccount() {
     setAdminSection("account");
     setView("admin-dashboard");
@@ -382,6 +387,7 @@ export function useGawaGoNavigation({
     markNotificationRead,
     openAdminDashboard,
     openAdminWorkersHistory,
+    openAdminCredentials,
     openAdminAccount,
     openFilePreview,
     openForgotPassword,

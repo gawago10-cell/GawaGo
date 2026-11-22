@@ -3,6 +3,7 @@ import { DashboardSidebar, MobileDashboardTopbar, SidebarIcon } from "./Dashboar
 import { buildAdminNavItems } from "../utils/roles";
 import HomeView from "./HomeView";
 import ComplaintModal from "./ComplaintModal";
+import AdminCredentialsQueue from "./AdminCredentialsQueue";
 import SkillRatingForm from "./SkillRatingForm";
 import { CertificateThumb } from "./CertificatePreview";
 import HouseholdJobMapPanel from "./HouseholdJobMapPanel";
@@ -156,6 +157,7 @@ export default function AppViews({
   openAdminDashboard,
   openAdminWorkersHistory,
   openAdminAccount,
+  openAdminCredentials,
   openFilePreview,
   openForgotPassword,
   openHouseholdDashboard,
@@ -5375,13 +5377,25 @@ export default function AppViews({
             <div className="worker-layout">
               <DashboardSidebar
                 brand="Admin Panel"
-                items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory, openAdminAccount })}
+                items={buildAdminNavItems({
+                  adminSection,
+                  openAdminDashboard,
+                  openAdminCredentials,
+                  openAdminWorkersHistory,
+                  openAdminAccount,
+                })}
                 footerAction={{ label: "Log Out", onClick: handleLogout }}
               />
               <div className="worker-content">
                 <div className="worker-topbar">
                   <h1 className="h4 mb-0">
-                    {adminSection === "history" ? "Workers History" : adminSection === "account" ? "My Account" : "Verification Dashboard"}
+                    {adminSection === "history"
+                      ? "Workers History"
+                      : adminSection === "account"
+                        ? "My Account"
+                        : adminSection === "credentials"
+                          ? "Worker Credentials"
+                          : "Verification Dashboard"}
                   </h1>
                   <div className="worker-user-meta d-flex align-items-center gap-2">
                     <span className="badge text-bg-dark">Admin</span>
@@ -5395,7 +5409,11 @@ export default function AppViews({
                     </button>
                   </div>
                 </div>
-                {adminSection === "account" ? (
+                {adminSection === "credentials" ? (
+                  <div className="mt-3">
+                    <AdminCredentialsQueue />
+                  </div>
+                ) : adminSection === "account" ? (
                   <div className="mt-3" style={{ maxWidth: 520 }}>
                     <ChangePasswordCard className="card border-0 shadow-sm" headClassName="card-header fw-bold" />
                   </div>

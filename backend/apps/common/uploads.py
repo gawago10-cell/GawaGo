@@ -81,3 +81,17 @@ def validate_document_upload(upload, *, max_bytes=MAX_DOCUMENT_BYTES):
     if not _verify_image_bytes(upload):
         raise UploadRejected("That file isn't a readable image or PDF.")
     return upload
+
+
+def stored_file_type(field_file) -> str:
+    """"image", "pdf", "file" or "" (no file) for a stored upload. Files are
+    served through permission-checked views whose URLs carry no extension,
+    so clients need this to know whether they can show the file."""
+    if not field_file:
+        return ""
+    name = str(field_file.name or "").lower()
+    if name.endswith(".pdf"):
+        return "pdf"
+    if name.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif")):
+        return "image"
+    return "file"

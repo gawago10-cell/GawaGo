@@ -123,7 +123,7 @@ function ViewLoading() {
   );
 }
 
-const ADMIN_SECTIONS = ["verification", "history", "account"];
+const ADMIN_SECTIONS = ["verification", "credentials", "history", "account"];
 const SUPERADMIN_SECTIONS = [
   "dashboard",
   "verification",
@@ -1175,6 +1175,7 @@ function App() {
     markNotificationRead,
     openAdminDashboard,
     openAdminWorkersHistory,
+    openAdminCredentials,
     openAdminAccount,
     openFilePreview,
     openForgotPassword,
@@ -1853,6 +1854,7 @@ function App() {
       openAdminDashboard={openAdminDashboard}
       openAdminWorkersHistory={openAdminWorkersHistory}
       openAdminAccount={openAdminAccount}
+      openAdminCredentials={openAdminCredentials}
       openFilePreview={openFilePreview}
       openForgotPassword={openForgotPassword}
       openHouseholdDashboard={openHouseholdDashboard}

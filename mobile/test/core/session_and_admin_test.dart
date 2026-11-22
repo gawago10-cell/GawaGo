@@ -46,21 +46,23 @@ class _FakeAdminRepository extends AdminRepository {
   }
 }
 
-AdminCertificate _certificate({bool withFile = true}) =>
-    AdminCertificate.fromJson({
-      'id': 7,
-      'worker_username': 'nina',
-      'worker_name': 'Nina Worker',
-      'worker_location_label': 'Wakas',
-      'certificate_type_label': 'TESDA Certificate',
-      'certificate_name': 'NC II Housekeeping',
-      'issuer': 'TESDA',
-      'certificate_file_url': withFile
-          ? 'http://host/api/accounts/portfolio/certifications/7/file/'
-          : '',
-      'certificate_file_type': withFile ? 'pdf' : '',
-      'verification_status': 'pending',
-    });
+AdminCertificate _certificate({
+  bool withFile = true,
+  String fileType = 'image',
+}) => AdminCertificate.fromJson({
+  'id': 7,
+  'worker_username': 'nina',
+  'worker_name': 'Nina Worker',
+  'worker_location_label': 'Wakas',
+  'certificate_type_label': 'TESDA Certificate',
+  'certificate_name': 'NC II Housekeeping',
+  'issuer': 'TESDA',
+  'certificate_file_url': withFile
+      ? 'http://host/api/accounts/portfolio/certifications/7/file/'
+      : '',
+  'certificate_file_type': withFile ? fileType : '',
+  'verification_status': 'pending',
+});
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -249,9 +251,10 @@ void main() {
     Future<_FakeAdminRepository> pump(
       WidgetTester tester, {
       bool withFile = true,
+      String fileType = 'image',
     }) async {
       final repository = _FakeAdminRepository([
-        _certificate(withFile: withFile),
+        _certificate(withFile: withFile, fileType: fileType),
       ]);
       await tester.pumpWidget(
         MaterialApp(
@@ -266,12 +269,23 @@ void main() {
       final repository = await pump(tester);
 
       expect(find.text('NC II Housekeeping'), findsOneWidget);
-      expect(find.textContaining('PDF document'), findsOneWidget);
 
       await tester.tap(find.text('Approve'));
       await tester.pumpAndSettle();
 
       expect(repository.reviews, [(7, 'approved', '')]);
+    });
+
+    // The app can't open a PDF, so it doesn't decide one (mobile admin
+    // audit, 2026-11-22).
+    testWidgets('a PDF certificate is decided on the website', (tester) async {
+      final repository = await pump(tester, fileType: 'pdf');
+
+      expect(find.textContaining('PDF document'), findsOneWidget);
+      expect(find.byKey(const Key('certificate-pdf-note')), findsOneWidget);
+      expect(find.text('Approve'), findsNothing);
+      expect(find.widgetWithText(OutlinedButton, 'Reject'), findsNothing);
+      expect(repository.reviews, isEmpty);
     });
 
     testWidgets('cancelling the reject reason does not reject', (tester) async {

@@ -301,7 +301,32 @@ class _CertificateCard extends StatelessWidget {
                 // certificate is decided, an approval can be withdrawn, and a
                 // rejected one returns as Pending once the worker uploads a
                 // new copy (full audit, 2026-11-16).
-                if (certificate.status == 'pending')
+                if (certificate.status == 'pending' &&
+                    certificate.fileUrl.isNotEmpty &&
+                    certificate.fileType != 'image')
+                  // The app can't open a PDF, and approving one unseen gave
+                  // it a verified badge nobody checked (mobile admin audit,
+                  // 2026-11-22). The decision is made on the website.
+                  Container(
+                    key: const Key('certificate-pdf-note'),
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7E0),
+                      border: Border.all(color: const Color(0xFFF0D58A)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      "The app can't open this file. Review and decide this "
+                      'certificate on the GawaGo website.',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.4,
+                        color: Color(0xFF5C4300),
+                      ),
+                    ),
+                  )
+                else if (certificate.status == 'pending')
                   Row(
                     children: [
                       Expanded(

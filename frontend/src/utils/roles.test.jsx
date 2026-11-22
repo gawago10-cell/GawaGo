@@ -86,24 +86,32 @@ describe("admin sidebar", () => {
     const openAdminDashboard = handlers.openAdminDashboard || vi.fn();
     const openAdminWorkersHistory = handlers.openAdminWorkersHistory || vi.fn();
     const openAdminAccount = handlers.openAdminAccount || vi.fn();
+    const openAdminCredentials = handlers.openAdminCredentials || vi.fn();
     render(
       <DashboardSidebar
         brand="Admin Panel"
-        items={buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory, openAdminAccount })}
+        items={buildAdminNavItems({
+          adminSection,
+          openAdminDashboard,
+          openAdminCredentials,
+          openAdminWorkersHistory,
+          openAdminAccount,
+        })}
       />,
     );
-    return { openAdminDashboard, openAdminWorkersHistory, openAdminAccount };
+    return { openAdminDashboard, openAdminCredentials, openAdminWorkersHistory, openAdminAccount };
   }
 
   it("lists only admin pages -- no My Complaints", () => {
     renderAdminSidebar("verification");
     const labels = screen.getAllByRole("button").map((button) => button.textContent.trim());
-    expect(labels).toEqual(["Verification Queue", "Workers History", "My Account"]);
+    expect(labels).toEqual(["Verification Queue", "Worker Credentials", "Workers History", "My Account"]);
     expect(screen.queryByText("My Complaints")).toBeNull();
   });
 
   it.each([
     ["verification", "Verification Queue"],
+    ["credentials", "Worker Credentials"],
     ["history", "Workers History"],
     ["account", "My Account"],
   ])("highlights exactly one item in the %s section", (section, activeLabel) => {
@@ -117,6 +125,13 @@ describe("admin sidebar", () => {
     const { openAdminWorkersHistory, openAdminDashboard } = renderAdminSidebar("verification");
     fireEvent.click(screen.getByText("Workers History"));
     expect(openAdminWorkersHistory).toHaveBeenCalledTimes(1);
+    expect(openAdminDashboard).not.toHaveBeenCalled();
+  });
+
+  it("Worker Credentials opens the certificate review section", () => {
+    const { openAdminCredentials, openAdminDashboard } = renderAdminSidebar("verification");
+    fireEvent.click(screen.getByText("Worker Credentials"));
+    expect(openAdminCredentials).toHaveBeenCalledTimes(1);
     expect(openAdminDashboard).not.toHaveBeenCalled();
   });
 

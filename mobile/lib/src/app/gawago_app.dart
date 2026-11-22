@@ -2030,6 +2030,23 @@ class _LoginPanelState extends State<_LoginPanel> {
   final _passwordController = TextEditingController();
   bool _isSubmitting = false;
 
+  /// Why the last attempt failed, kept in the form beside the button. A
+  /// SnackBar vanished in four seconds, and a suspension reason or "account
+  /// deactivated" went with it; the web keeps it in the form too (mobile
+  /// admin audit, 2026-11-22).
+  String? _loginError;
+
+  @override
+  void initState() {
+    super.initState();
+    _usernameController.addListener(_clearLoginError);
+    _passwordController.addListener(_clearLoginError);
+  }
+
+  void _clearLoginError() {
+    if (_loginError != null && mounted) setState(() => _loginError = null);
+  }
+
   @override
   void dispose() {
     _usernameController.dispose();
@@ -2041,10 +2058,15 @@ class _LoginPanelState extends State<_LoginPanel> {
     if (_isSubmitting) return;
     if (_usernameController.text.trim().isEmpty ||
         _passwordController.text.isEmpty) {
-      _showMessage('Please enter your username/email and password.');
+      setState(
+        () => _loginError = 'Please enter your username/email and password.',
+      );
       return;
     }
-    setState(() => _isSubmitting = true);
+    setState(() {
+      _isSubmitting = true;
+      _loginError = null;
+    });
     try {
       await GawaGoApi.login(
         username: _usernameController.text,
@@ -2070,10 +2092,10 @@ class _LoginPanelState extends State<_LoginPanel> {
         }
         return;
       }
-      _showMessage(friendlyApiError(error));
+      setState(() => _loginError = friendlyApiError(error));
     } catch (error) {
       if (!mounted) return;
-      _showMessage(friendlyApiError(error));
+      setState(() => _loginError = friendlyApiError(error));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -2173,6 +2195,27 @@ class _LoginPanelState extends State<_LoginPanel> {
               ),
             ),
           ),
+          if (_loginError != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              key: const Key('login-error'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFDECEA),
+                border: Border.all(color: const Color(0xFFF0C4BE)),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: Text(
+                _loginError!,
+                style: const TextStyle(
+                  color: Color(0xFF8C1D18),
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,

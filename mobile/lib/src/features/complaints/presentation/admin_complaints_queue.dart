@@ -4,11 +4,26 @@ import 'package:flutter/material.dart';
 
 import '../../../core/errors/api_error.dart';
 import '../../../core/theme/gawago_colors.dart';
+import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../data/complaint_models.dart';
 import '../data/complaint_repository.dart';
 
 const _statusOptions = ['submitted', 'under_review', 'resolved', 'closed'];
+
+/// Where a complaint may go next; the same map as the backend's
+/// ALLOWED_COMPLAINT_TRANSITIONS. Every status used to be offered, and a
+/// backwards move or Submitted -> Resolved failed only after Save (mobile
+/// admin audit, 2026-11-22).
+const _nextStatuses = {
+  'submitted': ['under_review'],
+  'under_review': ['resolved', 'closed'],
+  'resolved': ['closed'],
+  'closed': <String>[],
+};
+
+bool _canMove(String from, String to) =>
+    (_nextStatuses[from] ?? const <String>[]).contains(to);
 
 /// Admin's incident-report queue. Distinct from the household/worker
 /// activity report: a work queue to review and resolve, not a summary --
@@ -237,7 +252,10 @@ class _PartyDetailCard extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             rating != null
-                ? '★ ${rating.toStringAsFixed(1)} (${detail.ratingCount} jobs)'
+                // It counts ratings received; "(1 jobs)" was wrong both ways
+                // (mobile admin audit, 2026-11-22).
+                ? '★ ${rating.toStringAsFixed(1)} (${detail.ratingCount} '
+                      '${detail.ratingCount == 1 ? 'rating' : 'ratings'})'
                 : 'No rating yet',
             style: const TextStyle(fontSize: 11, color: GawaGoColors.textMuted),
           ),
@@ -245,7 +263,7 @@ class _PartyDetailCard extends StatelessWidget {
             [
               if (detail.locationLabel.isNotEmpty) detail.locationLabel,
               if (detail.memberSince.isNotEmpty)
-                'Member since ${detail.memberSince}',
+                'Member since ${formatJobDate(detail.memberSince)}',
             ].join(' · '),
             style: const TextStyle(fontSize: 11, color: GawaGoColors.textMuted),
           ),
@@ -277,6 +295,12 @@ class _ReviewSheetState extends State<_ReviewSheet> {
   late final _resolution = TextEditingController(
     text: widget.complaint.resolution,
   );
+
+  /// Superadmin-only notes, apart from the resolution the filer reads; the
+  /// app had only the one box (mobile admin audit, 2026-11-22).
+  late final _staffNotes = TextEditingController(
+    text: widget.complaint.adminNotes,
+  );
   // Blocking updates the report in place, so the sheet renders from this
   // rather than the immutable widget.complaint it was opened with.
   late ComplaintReport _current = widget.complaint;
@@ -287,6 +311,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
   @override
   void dispose() {
     _resolution.dispose();
+    _staffNotes.dispose();
     super.dispose();
   }
 
@@ -301,56 +326,74 @@ class _ReviewSheetState extends State<_ReviewSheet> {
     final complaint = _current;
     if (complaint.respondentUsername.isEmpty) return;
 
-    final durationLabel = durationDays == null
-        ? 'permanently'
-        : 'for $durationDays days';
+    // Worded like the web dialog: a permanent block says so, and the button
+    // names the action. The reason is required here rather than refused by
+    // the server after the dialog closed (mobile admin audit, 2026-11-22).
+    final permanent = durationDays == null;
+    final username = complaint.respondentUsername;
+    final actionLabel = permanent
+        ? 'Block permanently'
+        : 'Suspend $durationDays days';
     String reason = '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         final controller = TextEditingController();
-        return AlertDialog(
-          title: Text(
-            'Suspend ${complaint.respondentUsername} $durationLabel?',
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  durationDays == null
-                      ? 'They will be signed out immediately and cannot log '
-                            'back in until restored.'
-                      : 'They will be signed out immediately and cannot log '
-                            'back in for $durationDays days.',
-                ),
-                if (durationDays == null) ...[
-                  const SizedBox(height: 12),
-                  _BanCredentialsBox(detail: complaint.respondentDetail),
-                ],
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  decoration: const InputDecoration(
-                    labelText: 'Reason (shown to the user)',
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(
+              permanent
+                  ? 'Block $username permanently?'
+                  : 'Suspend $username for $durationDays days?',
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    permanent
+                        ? 'They will be signed out immediately and cannot log '
+                              'back in until you restore them. They will be '
+                              'told the reason below.'
+                        : 'They will be signed out immediately and cannot log '
+                              'back in for $durationDays days. They will be '
+                              'told the reason below.',
                   ),
+                  if (permanent) ...[
+                    const SizedBox(height: 12),
+                    _BanCredentialsBox(detail: complaint.respondentDetail),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Reason (shown to the user)',
+                      helperText: 'Required',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: GawaGoColors.danger,
                 ),
-              ],
-            ),
+                onPressed: controller.text.trim().isEmpty
+                    ? null
+                    : () {
+                        reason = controller.text.trim();
+                        Navigator.of(dialogContext).pop(true);
+                      },
+                child: Text(actionLabel),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                reason = controller.text.trim();
-                Navigator.of(dialogContext).pop(true);
-              },
-              child: const Text('Confirm'),
-            ),
-          ],
         );
       },
     );
@@ -409,6 +452,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
         widget.complaint.id,
         status: markResolved ? 'resolved' : _status,
         resolution: _resolution.text.trim(),
+        adminNotes: _staffNotes.text.trim(),
       );
       if (mounted) Navigator.of(context).pop(updated);
     } catch (error) {
@@ -551,13 +595,22 @@ class _ReviewSheetState extends State<_ReviewSheet> {
               spacing: 8,
               children: [
                 for (final status in _statusOptions)
-                  ChoiceChip(
-                    label: Text(complaintStatusLabels[status] ?? status),
-                    selected: _status == status,
-                    onSelected: (_) => setState(() => _status = status),
-                  ),
+                  if (status == widget.complaint.status ||
+                      _canMove(widget.complaint.status, status))
+                    ChoiceChip(
+                      label: Text(complaintStatusLabels[status] ?? status),
+                      selected: _status == status,
+                      onSelected: (_) => setState(() => _status = status),
+                    ),
               ],
             ),
+            if (widget.complaint.status == 'submitted') ...[
+              const SizedBox(height: 6),
+              const Text(
+                'Mark the complaint Under Review before resolving or closing it.',
+                style: TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 16),
             TextField(
               controller: _resolution,
@@ -567,10 +620,21 @@ class _ReviewSheetState extends State<_ReviewSheet> {
                   setState(() => _resolutionError = null);
                 }
               },
+              // The filer reads this; the label didn't say so (mobile admin
+              // audit, 2026-11-22).
               decoration: InputDecoration(
-                labelText: 'Resolution notes',
-                hintText: 'What action was taken?',
+                labelText: 'Resolution — the complainant will see this',
+                hintText: 'What was decided, in words the complainant can read',
                 errorText: _resolutionError,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('complaint-staff-notes'),
+              controller: _staffNotes,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Staff notes — only superadmins see these',
               ),
             ),
             if (_error != null) ...[
@@ -592,7 +656,11 @@ class _ReviewSheetState extends State<_ReviewSheet> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: _saving ? null : () => _save(markResolved: true),
+                    onPressed:
+                        _saving ||
+                            !_canMove(widget.complaint.status, 'resolved')
+                        ? null
+                        : () => _save(markResolved: true),
                     child: const Text('Mark Resolved'),
                   ),
                 ),

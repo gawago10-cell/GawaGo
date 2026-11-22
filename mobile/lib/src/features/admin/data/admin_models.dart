@@ -174,6 +174,8 @@ class AdminVerificationRequest {
     this.primaryIdNumber = '',
     this.bannedIdMatch = '',
     this.bannedNameMatch = '',
+    this.primaryDocumentType = '',
+    this.secondaryDocumentType = '',
   });
 
   final int id;
@@ -193,6 +195,18 @@ class AdminVerificationRequest {
   /// rather than handed straight to Image.network.
   final String primaryDocumentPath;
   final String secondaryDocumentPath;
+
+  /// "image", "pdf" or "file" for each upload ('' when the server didn't
+  /// say). The app can only show images.
+  final String primaryDocumentType;
+  final String secondaryDocumentType;
+
+  /// A document the app can't open, so the decision belongs on the website
+  /// (mobile admin audit, 2026-11-22).
+  bool get hasDocumentAppCantOpen => [
+    primaryDocumentType,
+    secondaryDocumentType,
+  ].any((type) => type.isNotEmpty && type != 'image');
   final String notes;
   final String submittedAt;
   final String reviewNote;
@@ -229,6 +243,8 @@ class AdminVerificationRequest {
       submittedAt: _text(json['submitted_at']),
       reviewNote: _text(json['review_note']),
       primaryIdNumber: _text(json['primary_id_number']),
+      primaryDocumentType: _text(json['primary_id_file_type']),
+      secondaryDocumentType: _text(json['secondary_doc_file_type']),
       bannedIdMatch: _text(
         json['ban_check'] is Map ? json['ban_check']['id_number_match'] : null,
       ),

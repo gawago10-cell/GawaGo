@@ -12,6 +12,12 @@ import AdminUserHistorySection from "./AdminUserHistorySection";
 import AuthImage from "./AuthImage";
 import SuspendAccountDialog from "./SuspendAccountDialog";
 
+// "1 rating", "3 ratings".
+const ratingCountLabel = (count) => {
+  const value = Number(count) || 0;
+  return `${value} ${value === 1 ? "rating" : "ratings"}`;
+};
+
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
   { value: "submitted", label: "Submitted" },
@@ -119,7 +125,8 @@ function AccountCard({ tone, kicker, roleLabel, detail, username, onOpenProfile 
               {"★".repeat(Math.round(detail.averageRating || 0)).padEnd(5, "☆")}
             </span>
             <strong>{detail.averageRating != null ? detail.averageRating.toFixed(1) : "No rating"}</strong>
-            <span className="text-muted">({detail.ratingCount} jobs)</span>
+            {/* It counts ratings received, not jobs (mobile admin audit, 2026-11-22). */}
+            <span className="text-muted">({ratingCountLabel(detail.ratingCount)})</span>
           </p>
         )}
         <div className="admin-report-account-facts">
@@ -129,7 +136,7 @@ function AccountCard({ tone, kicker, roleLabel, detail, username, onOpenProfile 
           </div>
           <div>
             <span>Member Since</span>
-            <strong>{detail?.memberSince || "—"}</strong>
+            <strong>{detail?.memberSince ? formatJobDate(detail.memberSince) : "—"}</strong>
           </div>
           <div>
             <span>Phone</span>
@@ -695,7 +702,7 @@ export default function AdminComplaintsQueue({
                         (profileTarget.detail?.averageRating != null
                           ? profileTarget.detail.averageRating.toFixed(1)
                           : "No ratings yet")}{" "}
-                      ({profileFullRecord?.reviewsDone ?? profileTarget.detail?.ratingCount ?? 0} jobs)
+                      ({ratingCountLabel(profileFullRecord?.reviewsDone ?? profileTarget.detail?.ratingCount ?? 0)})
                     </strong>
                   </div>
                   <div>

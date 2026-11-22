@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../core/errors/api_error.dart';
 
 import '../../core/theme/gawago_colors.dart';
+import '../utils/display_formatters.dart';
 import '../../features/reports/data/report_models.dart';
 import '../../features/reports/data/report_repository.dart';
 import 'async_state.dart';
@@ -40,11 +41,22 @@ class _ReportViewState extends State<ReportView> {
 
   Future<void> _pickDate({required bool isStart}) async {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    // No future days, and From can't pass To (nor To come before From), as
+    // on the web; the server swapped them silently (mobile admin audit,
+    // 2026-11-22).
+    final first = isStart
+        ? DateTime(now.year - 5)
+        : (_start ?? DateTime(now.year - 5));
+    final last = isStart ? (_end ?? today) : today;
+    var initial = (isStart ? _start : _end) ?? last;
+    if (initial.isBefore(first)) initial = first;
+    if (initial.isAfter(last)) initial = last;
     final selected = await showDatePicker(
       context: context,
-      initialDate: (isStart ? _start : _end) ?? now,
-      firstDate: DateTime(now.year - 5),
-      lastDate: DateTime(now.year + 1),
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
     );
     if (selected == null) return;
     setState(() {
@@ -178,7 +190,8 @@ class _ReportHeader extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '${report.periodStart} to ${report.periodEnd}',
+            // "May 26, 2026 to Nov 22, 2026", not ISO dates.
+            formatJobPeriod(report.periodStart, report.periodEnd),
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
           ),
           const SizedBox(height: 6),
@@ -223,12 +236,13 @@ class _PeriodFilter extends StatelessWidget {
         OutlinedButton.icon(
           onPressed: onPickStart,
           icon: const Icon(Icons.calendar_today_outlined, size: 16),
-          label: Text(start == null ? 'From' : _isoDate(start!)),
+          // "Nov 23, 2026", not "2026-11-23" (mobile admin audit, 2026-11-22).
+          label: Text(start == null ? 'From' : formatJobDate(_isoDate(start!))),
         ),
         OutlinedButton.icon(
           onPressed: onPickEnd,
           icon: const Icon(Icons.event_outlined, size: 16),
-          label: Text(end == null ? 'To' : _isoDate(end!)),
+          label: Text(end == null ? 'To' : formatJobDate(_isoDate(end!))),
         ),
         if (onClear != null)
           TextButton(onPressed: onClear, child: const Text('Clear')),

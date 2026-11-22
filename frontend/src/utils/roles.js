@@ -105,21 +105,40 @@ export function resolveGuardedView(user, view) {
 }
 
 /** The staff-admin sidebar. Exactly one item is active per section. */
-export function buildAdminNavItems({ adminSection, openAdminDashboard, openAdminWorkersHistory, openAdminAccount }) {
+export function buildAdminNavItems({
+  adminSection,
+  openAdminDashboard,
+  openAdminCredentials,
+  openAdminWorkersHistory,
+  openAdminAccount,
+}) {
   const items = [
     {
       id: "verification",
       label: "Verification Queue",
-      active: adminSection !== "history" && adminSection !== "account",
+      active: !["history", "account", "credentials"].includes(adminSection),
       onClick: openAdminDashboard,
     },
+  ];
+  // Staff admins verify IDs and credentials (the 2026-10-19 rule). The API
+  // and the mobile app let them review certificates; the web menu had no way
+  // there (mobile admin audit, 2026-11-22).
+  if (openAdminCredentials) {
+    items.push({
+      id: "credentials",
+      label: "Worker Credentials",
+      active: adminSection === "credentials",
+      onClick: openAdminCredentials,
+    });
+  }
+  items.push(
     {
       id: "history",
       label: "Workers History",
       active: adminSection === "history",
       onClick: openAdminWorkersHistory,
     },
-  ];
+  );
   // Where an admin changes the temporary password they were given.
   if (openAdminAccount) {
     items.push({ id: "account", label: "My Account", active: adminSection === "account", onClick: openAdminAccount });

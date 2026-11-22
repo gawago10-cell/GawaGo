@@ -5,7 +5,7 @@ from apps.accounts.banned import banned_match, normalize_id_number
 from apps.accounts.models import BannedCredential
 from apps.common.models import AdminActionLog, VerificationRequest
 from apps.common.permissions import is_platform_admin
-from apps.common.uploads import UploadRejected, validate_document_upload
+from apps.common.uploads import UploadRejected, stored_file_type, validate_document_upload
 
 
 class AdminActionLogSerializer(serializers.ModelSerializer):
@@ -37,6 +37,10 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
     secondary_doc_preview = serializers.SerializerMethodField()
     ban_check = serializers.SerializerMethodField()
     reviewed_by = serializers.SerializerMethodField()
+    # "image" or "pdf": the mobile admin can only show images, so it holds a
+    # decision on a PDF for the website (mobile admin audit, 2026-11-22).
+    primary_id_file_type = serializers.SerializerMethodField()
+    secondary_doc_file_type = serializers.SerializerMethodField()
 
     class Meta:
         model = VerificationRequest
@@ -61,6 +65,8 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
             "secondary_doc_name",
             "primary_id_preview",
             "secondary_doc_preview",
+            "primary_id_file_type",
+            "secondary_doc_file_type",
             "notes",
             "status",
             "submitted_at",
@@ -143,6 +149,12 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         url = profile.profile_photo.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_primary_id_file_type(self, obj):
+        return stored_file_type(obj.primary_id_file)
+
+    def get_secondary_doc_file_type(self, obj):
+        return stored_file_type(obj.secondary_doc_file)
 
     def get_primary_id_preview(self, obj):
         return self.get_document_url(obj, "primary") if obj.primary_id_file else ""

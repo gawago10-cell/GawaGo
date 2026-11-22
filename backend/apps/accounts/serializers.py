@@ -19,6 +19,7 @@ from apps.common.uploads import (
     DOCUMENT_EXTENSIONS,
     MAX_DOCUMENT_BYTES as MAX_DOCUMENT_UPLOAD_BYTES,
     UploadRejected,
+    stored_file_type,
     validate_document_upload,
     validate_image_upload,
 )
@@ -688,14 +689,7 @@ class WorkerCertificationSerializer(serializers.ModelSerializer):
         """"image" or "pdf" (or "" with no file). The file URL is the
         permission-checked serving view, which has no extension, so clients
         can't tell from the URL whether to show a thumbnail."""
-        if not obj.certificate_file:
-            return ""
-        name = obj.certificate_file.name.lower()
-        if name.endswith(".pdf"):
-            return "pdf"
-        if name.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif")):
-            return "image"
-        return "file"
+        return stored_file_type(obj.certificate_file)
 
     def get_certificate_file_url(self, obj):
         if not obj.certificate_file:

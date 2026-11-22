@@ -1,3 +1,5 @@
+import '../../../shared/utils/display_formatters.dart';
+
 /// Mirrors the Complaint envelope from backend/apps/complaints/serializers.py.
 ///
 /// "Report an Issue" -- an incident filed against a specific job's other
@@ -24,9 +26,13 @@ class ComplaintReport {
     this.respondentDetail,
     this.jobName = '',
     this.jobLocation = '',
+    this.adminNotes = '',
   });
 
   final int id;
+
+  /// Superadmin-only staff notes; the filer never sees these.
+  final String adminNotes;
   final String complainantUsername;
   final String respondentUsername;
   final int? jobId;
@@ -75,11 +81,9 @@ class ComplaintReport {
     if (!respondentIsBlocked) return '';
     final until = respondentBlockedUntil;
     if (until == null) return 'Account blocked (permanent)';
-    final local = until.toLocal();
-    final date =
-        '${local.year}-${local.month.toString().padLeft(2, '0')}-'
-        '${local.day.toString().padLeft(2, '0')}';
-    return 'Suspended until $date';
+    // "Nov 25, 2026", as the app writes dates (mobile admin audit,
+    // 2026-11-22).
+    return 'Suspended until ${formatJobDate(until.toIso8601String())}';
   }
 
   factory ComplaintReport.fromJson(Map<String, dynamic> json) {
@@ -112,6 +116,7 @@ class ComplaintReport {
       ),
       jobName: _text(json['job_name']),
       jobLocation: _text(json['job_barangay']),
+      adminNotes: _text(json['admin_notes']),
     );
   }
 }
