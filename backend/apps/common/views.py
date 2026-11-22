@@ -149,6 +149,10 @@ class VerificationRequestListCreateView(APIView):
         )
 
 
+def reviewer_display_name(user):
+    return user.get_full_name().strip() or user.username
+
+
 class VerificationRequestReviewView(APIView):
     permission_classes = [IsPlatformAdmin]
 
@@ -184,7 +188,8 @@ class VerificationRequestReviewView(APIView):
         else:
             return Response({"detail": "Action must be 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
         request_record.reviewed_at = timezone.now()
-        request_record.save(update_fields=["status", "review_note", "reviewed_at"])
+        request_record.reviewed_by_name = reviewer_display_name(request.user)
+        request_record.save(update_fields=["status", "review_note", "reviewed_at", "reviewed_by_name"])
         profile, _ = UserProfile.objects.get_or_create(user=request_record.worker, defaults={"role": UserProfile.ROLE_WORKER})
         profile.verification_status = profile_status
         profile.save(update_fields=["verification_status"])
@@ -203,7 +208,6 @@ class VerificationRequestReviewView(APIView):
             detail=request_record.review_note,
         )
         request_data = VerificationRequestSerializer(request_record, context={"request": request}).data
-        request_data["reviewed_by"] = request.user.get_full_name().strip() or request.user.username or "System Admin"
         return Response(
             {
                 "verification_request": request_data,

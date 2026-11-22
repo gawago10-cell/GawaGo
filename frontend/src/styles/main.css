@@ -12922,6 +12922,14 @@ a,
   cursor: default;
 }
 
+.admin-credential-waiting {
+  flex: 1 1 auto;
+  align-self: center;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--gg-text-muted, #6b7568);
+}
+
 /* User Management */
 
 .admin-users-page {

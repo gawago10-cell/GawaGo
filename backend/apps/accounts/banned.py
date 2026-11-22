@@ -13,14 +13,13 @@ banned.
 import re
 
 from apps.accounts.models import BannedCredential
+from apps.common.support import support_sentence
 
-EMAIL_BLOCKED_MESSAGE = (
-    "This email can't be used to create a GawaGo account. If you think this is a mistake, contact support."
-)
-PHONE_BLOCKED_MESSAGE = (
-    "This phone number can't be used for a GawaGo account. If you think this is a mistake, contact support."
-)
-ID_BLOCKED_MESSAGE = "We couldn't verify this ID. Contact support if you think this is a mistake."
+# They named "support" although there was none; the contact line now comes
+# from the GAWAGO_SUPPORT_EMAIL setting and is left out when it is unset.
+EMAIL_BLOCKED_MESSAGE = "This email can't be used to create a GawaGo account." + support_sentence()
+PHONE_BLOCKED_MESSAGE = "This phone number can't be used for a GawaGo account." + support_sentence()
+ID_BLOCKED_MESSAGE = "We couldn't verify this ID." + support_sentence()
 
 
 def normalize_email(value) -> str:

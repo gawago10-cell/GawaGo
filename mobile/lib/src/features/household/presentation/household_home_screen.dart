@@ -711,6 +711,7 @@ class _DashboardState extends State<_Dashboard> {
                       onViewApplicants: () => _viewApplicants(job),
                       onMarkDone: () => _markDone(job),
                       onCancel: () => _cancelJob(job),
+                      onOpenDetails: () => _openJobDetail(job.id),
                     ),
                   ),
                 ),
@@ -806,6 +807,7 @@ class _InProcessJobCard extends StatelessWidget {
     required this.onViewApplicants,
     required this.onMarkDone,
     required this.onCancel,
+    required this.onOpenDetails,
   });
 
   final HouseholdJob job;
@@ -813,6 +815,11 @@ class _InProcessJobCard extends StatelessWidget {
   final VoidCallback onViewApplicants;
   final VoidCallback onMarkDone;
   final VoidCallback onCancel;
+
+  /// Job Details, where Edit Job is. It was only reachable through Browse
+  /// Workers > View Job Details; the web card has Edit Job on it (full
+  /// audit, 2026-11-16).
+  final VoidCallback onOpenDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -1198,18 +1205,41 @@ class _InProcessJobCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
-            Center(
-              child: TextButton(
-                onPressed: onCancel,
-                style: TextButton.styleFrom(
-                  foregroundColor: GawaGoColors.danger,
-                  padding: EdgeInsets.zero,
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 18,
+              children: [
+                TextButton.icon(
+                  key: const ValueKey('household-dashboard-edit-job'),
+                  onPressed: onOpenDetails,
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text(
+                    'Edit Job',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: GawaGoColors.leafDeep,
+                    padding: EdgeInsets.zero,
+                  ),
                 ),
-                child: const Text(
-                  'Cancel Job',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+                TextButton(
+                  onPressed: onCancel,
+                  style: TextButton.styleFrom(
+                    foregroundColor: GawaGoColors.danger,
+                    padding: EdgeInsets.zero,
+                  ),
+                  child: const Text(
+                    'Cancel Job',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.5,
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ],
@@ -4153,8 +4183,7 @@ class _JobDetailsSummaryCard extends StatelessWidget {
           if (job.jobStartDate != null || job.jobEndDate != null)
             _LargeDetailBox(
               label: 'Job Period',
-              value:
-                  '${formatJobDate(job.jobStartDate)} to ${formatJobDate(job.jobEndDate)}',
+              value: formatJobPeriod(job.jobStartDate, job.jobEndDate),
             ),
           if (job.estimatedWorkingDays != null)
             _LargeDetailBox(
@@ -6878,7 +6907,8 @@ class _NotificationsState extends State<_Notifications> {
                     : Icons.notifications_none,
                 title: item.title,
                 status: item.requiresAction ? 'Action Required' : null,
-                subtitle: '${item.message}\n${item.displayDate}',
+                subtitle:
+                    '${item.message}\n${notificationListTime(item.createdDate, fallback: item.displayDate)}',
                 emphasized: !item.isRead,
                 trailing: NotificationActionMenu(
                   showMarkRead: !item.isRead,

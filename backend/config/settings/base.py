@@ -351,6 +351,10 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@gawago.local")
+# Where suspended, blocked or refused members can write (apps.common.support).
+# Unset, the messages leave the contact line out instead of pointing at a
+# support channel that doesn't exist.
+SUPPORT_EMAIL = os.environ.get("GAWAGO_SUPPORT_EMAIL", "").strip()
 # Without this, Django's SMTP backend falls back to the OS socket default
 # (minutes, not seconds), so an unreachable mail host hangs whatever request
 # triggered the email -- e.g. complete_job sends one inline per hired worker.

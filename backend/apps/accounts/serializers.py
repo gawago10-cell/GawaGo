@@ -7,8 +7,10 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import serializers
 
+from apps.common.barangays import barangay_from_location_label
 from apps.common.fields import RoundedCoordinateField
 from apps.common.sanitize import sanitize_text
 from apps.common.skills import is_other_placeholder
@@ -367,6 +369,19 @@ class PublicUserProfileSerializer(UserProfileSerializer):
             }
         ]
 
+    def to_representation(self, instance):
+        """A household's own label is its home address. Any signed-in member
+        could list every household's street through accounts/profiles/, even
+        one that never posted a job (full audit, 2026-11-16), so other members
+        get the barangay only. The street a worker needs comes with the job
+        itself; the household still sees its own full label."""
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        viewer_id = getattr(getattr(request, "user", None), "id", None)
+        if instance.role == UserProfile.ROLE_HOUSEHOLD and viewer_id != instance.user_id:
+            data["location_label"] = barangay_from_location_label(instance.location_label)
+        return data
+
 
 class RegisterSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
@@ -650,6 +665,14 @@ class WorkerCertificationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"certificate_file": "Attach a photo or PDF of the certificate so an admin can check it."}
             )
+        # A certificate issued in the future, or expiring before it was
+        # issued, was accepted (full audit, 2026-11-16).
+        issue_date = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
+        expiry_date = attrs.get("expiry_date", getattr(self.instance, "expiry_date", None))
+        if issue_date and issue_date > timezone.localdate():
+            raise serializers.ValidationError({"issue_date": "The issue date can't be in the future."})
+        if issue_date and expiry_date and expiry_date < issue_date:
+            raise serializers.ValidationError({"expiry_date": "The expiry date can't be before the issue date."})
         return attrs
 
     def validate_certificate_name(self, value):

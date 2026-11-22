@@ -2103,14 +2103,14 @@ String _jobCardWhenLabel(WorkerJob job) {
 }
 
 String _jobPeriodLabel(WorkerJob job) {
-  final start = job.jobStartDate.isEmpty ? 'Not set' : job.jobStartDate;
-  final end = job.jobEndDate.isEmpty ? '' : ' to ${job.jobEndDate}';
+  // Raw ISO dates before (full audit, 2026-11-16).
+  final period = formatJobPeriod(job.jobStartDate, job.jobEndDate);
   final days = workingDaysText(
     job.jobStartDate,
     job.jobEndDate,
     job.estimatedWorkingDays,
   );
-  return '$start$end${days.isEmpty ? '' : ' ($days)'}';
+  return '$period${days.isEmpty ? '' : ' ($days)'}';
 }
 
 class _SkillMatchPill extends StatelessWidget {
@@ -5151,11 +5151,22 @@ class _CertificationDialogState extends State<_CertificationDialog> {
 
   Future<void> _pickDate({required bool expiry}) async {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    // An issue date can't be in the future, and an expiry can't come before
+    // the issue date (full audit, 2026-11-16).
+    final first = expiry && _issueDate != null
+        ? _issueDate!
+        : DateTime(now.year - 40);
+    final last = expiry ? DateTime(now.year + 40) : today;
+    final current = expiry ? _expiryDate : _issueDate;
+    var initial = current ?? today;
+    if (initial.isBefore(first)) initial = first;
+    if (initial.isAfter(last)) initial = last;
     final picked = await showDatePicker(
       context: context,
-      initialDate: now,
-      firstDate: DateTime(now.year - 40),
-      lastDate: DateTime(now.year + 40),
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -5174,6 +5185,14 @@ class _CertificationDialogState extends State<_CertificationDialog> {
     }
     if (_filePath == null) {
       setState(() => _error = 'Attach a photo or PDF of the certificate.');
+      return;
+    }
+    if (_issueDate != null &&
+        _expiryDate != null &&
+        _expiryDate!.isBefore(_issueDate!)) {
+      setState(
+        () => _error = "The expiry date can't be before the issue date.",
+      );
       return;
     }
     Navigator.pop(
@@ -6128,7 +6147,8 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
                     : Icons.notifications_none,
                 title: item.title,
                 status: item.requiresAction ? 'Action Required' : null,
-                subtitle: '${item.message}\n${item.displayDate}',
+                subtitle:
+                    '${item.message}\n${notificationListTime(item.createdDate, fallback: item.displayDate)}',
                 emphasized: !item.isRead,
                 trailing: NotificationActionMenu(
                   showMarkRead: !item.isRead,

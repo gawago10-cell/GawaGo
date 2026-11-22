@@ -33,6 +33,16 @@ def create_jwt_token(payload: dict, ttl_minutes: int = 60) -> str:
     return f"{header_b64}.{payload_b64}.{_b64url_encode(signature)}"
 
 
+def password_fingerprint(user) -> str:
+    """A short keyed digest of the account's password hash. Tokens carry it
+    as "pwv", so a password change or reset ends every token issued before
+    it, admins included (full audit, 2026-11-16). Keyed with SECRET_KEY so
+    the token never carries anything derived from the hash alone."""
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"), str(user.password or "").encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:20]
+
+
 def decode_jwt_token(token: str) -> dict:
     try:
         header_b64, payload_b64, signature_b64 = token.split(".")
@@ -90,6 +100,11 @@ class JWTAuthentication(authentication.BaseAuthentication):
             # Checked per-request rather than only at login so an admin block
             # takes effect immediately, even on a session already signed in.
             raise exceptions.AuthenticationFailed(profile.block_message)
+        fingerprint = payload.get("pwv")
+        if fingerprint is not None and not hmac.compare_digest(str(fingerprint), password_fingerprint(user)):
+            raise exceptions.AuthenticationFailed(
+                "Session expired due to a security change. Please log in again."
+            )
         credentials_updated_at = getattr(profile, "credentials_updated_at", None)
         if credentials_updated_at is not None:
             issued_at = payload.get("iat")

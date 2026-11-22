@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { MAX_WORKERS_NEEDED } from "../utils/jobFormValidation";
 
 const RADIUS_OPTIONS = [
   ["1km", "1 km"],
@@ -26,20 +27,48 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
     geographicBoundary: job.geographicBoundary || "1km",
   });
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const update = (name) => (event) => {
     setError("");
+    setFieldErrors((prev) => ({ ...prev, [name]: "" }));
     setForm((prev) => ({ ...prev, [name]: event.target.value }));
+  };
+
+  // A start date already in the past may stay as it is, but can't be picked.
+  const minStartDate = job.jobStartDate && job.jobStartDate < todayIsoDate ? job.jobStartDate : todayIsoDate;
+
+  // The app's own checks, under each field. The browser's built-in ones
+  // blocked Save with no message the app could show, and min="0" let a
+  // PHP 0.50 rate through, though a job pays at least PHP 1 (full audit,
+  // 2026-11-16). Same rules as Post a Job and the mobile Edit Job.
+  const validate = () => {
+    const errors = {};
+    if (String(form.offeredRate ?? "").trim() === "") {
+      errors.offeredRate = "Enter the rate you'll pay.";
+    } else if (!(Number(form.offeredRate) >= 1)) {
+      errors.offeredRate = "Enter a rate of at least PHP 1.00.";
+    }
+    const workers = Number(form.workersNeeded);
+    if (!Number.isInteger(workers) || workers < 1 || workers > MAX_WORKERS_NEEDED) {
+      errors.workersNeeded = `Enter how many workers you need, from 1 to ${MAX_WORKERS_NEEDED}.`;
+    }
+    if (!form.jobStartDate) {
+      errors.jobStartDate = "A job needs a start date.";
+    } else if (minStartDate && form.jobStartDate < minStartDate) {
+      errors.jobStartDate = "Choose today or a later date.";
+    }
+    if (form.jobEndDate && form.jobStartDate && form.jobEndDate < form.jobStartDate) {
+      errors.jobEndDate = "The end date can't be before the start date.";
+    }
+    return errors;
   };
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!form.jobStartDate) {
-      setError("A job needs a start date.");
-      return;
-    }
-    if (form.jobEndDate && form.jobEndDate < form.jobStartDate) {
-      setError("The end date can't be before the start date.");
+    const errors = validate();
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
       return;
     }
     setSaving(true);
@@ -52,8 +81,14 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
     }
   };
 
-  // A start date already in the past may stay as it is, but can't be picked.
-  const minStartDate = job.jobStartDate && job.jobStartDate < todayIsoDate ? job.jobStartDate : todayIsoDate;
+  const fieldError = (name) =>
+    fieldErrors[name] ? (
+      <div id={`edit-job-${name}-error`} className="invalid-feedback d-block">
+        {fieldErrors[name]}
+      </div>
+    ) : null;
+  const invalidProps = (name) =>
+    fieldErrors[name] ? { "aria-invalid": true, "aria-describedby": `edit-job-${name}-error` } : {};
 
   return (
     <div className="gg-modal-backdrop" role="presentation" onClick={saving ? undefined : onClose}>
@@ -64,6 +99,7 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
         aria-labelledby="edit-job-title"
         onClick={(event) => event.stopPropagation()}
         onSubmit={submit}
+        noValidate
       >
         <div className="gg-modal-head">
           <div>
@@ -92,12 +128,14 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
               <input
                 id="edit-job-rate"
                 type="number"
-                min="0"
+                min="1"
                 step="0.01"
-                className="form-control"
+                className={`form-control ${fieldErrors.offeredRate ? "is-invalid" : ""}`}
                 value={form.offeredRate}
                 onChange={update("offeredRate")}
+                {...invalidProps("offeredRate")}
               />
+              {fieldError("offeredRate")}
             </div>
             <div className="col-6">
               <label className="form-label fw-semibold" htmlFor="edit-job-rate-type">Rate type</label>
@@ -112,23 +150,27 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
               <input
                 id="edit-job-start"
                 type="date"
-                className="form-control"
+                className={`form-control ${fieldErrors.jobStartDate ? "is-invalid" : ""}`}
                 min={minStartDate}
                 required
                 value={form.jobStartDate}
                 onChange={update("jobStartDate")}
+                {...invalidProps("jobStartDate")}
               />
+              {fieldError("jobStartDate")}
             </div>
             <div className="col-6">
               <label className="form-label fw-semibold" htmlFor="edit-job-end">End date (optional)</label>
               <input
                 id="edit-job-end"
                 type="date"
-                className="form-control"
+                className={`form-control ${fieldErrors.jobEndDate ? "is-invalid" : ""}`}
                 min={form.jobStartDate || todayIsoDate}
                 value={form.jobEndDate}
                 onChange={update("jobEndDate")}
+                {...invalidProps("jobEndDate")}
               />
+              {fieldError("jobEndDate")}
             </div>
             <div className="col-6">
               <label className="form-label fw-semibold" htmlFor="edit-job-workers">Workers needed</label>
@@ -136,10 +178,13 @@ export default function EditJobDialog({ job, onSave, onClose, todayIsoDate }) {
                 id="edit-job-workers"
                 type="number"
                 min="1"
-                className="form-control"
+                max={MAX_WORKERS_NEEDED}
+                className={`form-control ${fieldErrors.workersNeeded ? "is-invalid" : ""}`}
                 value={form.workersNeeded}
                 onChange={update("workersNeeded")}
+                {...invalidProps("workersNeeded")}
               />
+              {fieldError("workersNeeded")}
             </div>
             <div className="col-12">
               <label className="form-label fw-semibold" htmlFor="edit-job-radius">Search radius</label>

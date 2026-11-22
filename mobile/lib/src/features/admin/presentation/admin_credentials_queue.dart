@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/errors/api_error.dart';
 import '../../../core/theme/gawago_colors.dart';
+import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/authenticated_image.dart';
@@ -42,18 +43,22 @@ class _AdminCredentialsQueueState extends State<AdminCredentialsQueue> {
     });
   }
 
-  Future<String?> _askRejectReason() => showReasonDialog(
+  Future<String?> _askRejectReason({bool revoking = false}) => showReasonDialog(
     context,
-    title: 'Reject this certificate?',
+    title: revoking
+        ? 'Withdraw the approval of this certificate?'
+        : 'Reject this certificate?',
     label: 'Reason (the worker will see this)',
-    actionLabel: 'Reject',
+    actionLabel: revoking ? 'Withdraw approval' : 'Reject',
   );
 
   Future<void> _decide(AdminCertificate certificate, String status) async {
     if (_savingId != null) return;
     var notes = '';
     if (status == 'rejected') {
-      final reason = await _askRejectReason();
+      final reason = await _askRejectReason(
+        revoking: certificate.status == 'approved',
+      );
       // Cancel means "don't reject", not "reject with no reason".
       if (reason == null || !mounted) return;
       notes = reason;
@@ -71,6 +76,8 @@ class _AdminCredentialsQueueState extends State<AdminCredentialsQueue> {
           content: Text(
             status == 'approved'
                 ? 'Certificate approved.'
+                : certificate.status == 'approved'
+                ? 'Approval withdrawn.'
                 : 'Certificate rejected.',
           ),
         ),
@@ -191,9 +198,11 @@ class _CertificateCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final details = [
       if (certificate.issuer.isNotEmpty) 'Issued by ${certificate.issuer}',
-      if (certificate.issueDate.isNotEmpty) 'Issued ${certificate.issueDate}',
+      // "Jan 10, 2025", as the web card writes it, not "2025-01-10".
+      if (certificate.issueDate.isNotEmpty)
+        'Issued ${formatJobDate(certificate.issueDate)}',
       if (certificate.expiryDate.isNotEmpty)
-        'Expires ${certificate.expiryDate}',
+        'Expires ${formatJobDate(certificate.expiryDate)}',
     ];
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -288,30 +297,46 @@ class _CertificateCard extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: saving || certificate.status == 'rejected'
-                            ? null
-                            : onReject,
-                        child: const Text('Reject'),
+                // Same rule as the web queue and the API: only a pending
+                // certificate is decided, an approval can be withdrawn, and a
+                // rejected one returns as Pending once the worker uploads a
+                // new copy (full audit, 2026-11-16).
+                if (certificate.status == 'pending')
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: saving ? null : onReject,
+                          child: const Text('Reject'),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed:
-                            saving ||
-                                certificate.status == 'approved' ||
-                                certificate.fileUrl.isEmpty
-                            ? null
-                            : onApprove,
-                        child: Text(saving ? 'Saving…' : 'Approve'),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: saving || certificate.fileUrl.isEmpty
+                              ? null
+                              : onApprove,
+                          child: Text(saving ? 'Saving…' : 'Approve'),
+                        ),
                       ),
+                    ],
+                  )
+                else if (certificate.status == 'approved')
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: saving ? null : onReject,
+                      child: Text(saving ? 'Saving…' : 'Withdraw approval'),
                     ),
-                  ],
-                ),
+                  )
+                else
+                  const Text(
+                    'Waiting for the worker to upload a new copy.',
+                    style: TextStyle(
+                      color: GawaGoColors.textMuted,
+                      fontSize: 12.5,
+                    ),
+                  ),
               ],
             ),
           ),

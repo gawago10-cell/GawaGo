@@ -749,11 +749,19 @@ class JobApplicationStatusView(APIView):
                 requires_action=True,
             )
         elif application.status == JobApplication.STATUS_REJECTED:
+            # A household taking back its own invitation isn't rejecting an
+            # application: the worker never applied (full audit, 2026-11-16).
+            withdrawn_invite = previous_status == JobApplication.STATUS_HIRE_REQUESTED
             create_notification(
                 recipient=application.worker,
                 notification_type=Notification.TYPE_REJECTION,
-                title="Application rejected",
-                message=f"Your application for {application.job.title} was rejected.",
+                title="Invitation withdrawn" if withdrawn_invite else "Application rejected",
+                message=(
+                    f"{get_user_display_name(application.job.household)} withdrew the invitation for "
+                    f"{application.job.title}. There's nothing you need to do."
+                    if withdrawn_invite
+                    else f"Your application for {application.job.title} was rejected."
+                ),
                 actor=application.job.household,
                 related_job_id=application.job_id,
                 related_application_id=application.id,

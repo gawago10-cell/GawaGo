@@ -70,6 +70,23 @@ export function formatJobDate(value) {
  * typed in: "5 days, Nov 10 to Nov 14, 2026." A job with no end date (or an
  * end before its start) is a one-day job, the same rule the backend's
  * job_days uses. */
+/**
+ * "Nov 16, 2026", or "Nov 16, 2026 to Nov 18, 2026" for a longer job. The
+ * worker's job page printed the raw "2026-11-16 to 2026-11-16" (full audit,
+ * 2026-11-16).
+ */
+export function formatJobPeriod(startValue, endValue) {
+  const start = formatJobDate(startValue);
+  const end = formatJobDate(endValue);
+  if (!start) {
+    return end || "Not set";
+  }
+  if (!end || String(endValue).trim() <= String(startValue).trim()) {
+    return start;
+  }
+  return `${start} to ${end}`;
+}
+
 export function describeJobSpan(startValue, endValue) {
   const start = String(startValue || "").trim();
   const end = String(endValue || "").trim();

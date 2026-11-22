@@ -225,7 +225,8 @@ void main() {
     expect(find.text('FULL-TIME'), findsOneWidget);
     expect(find.text('Job Period'), findsOneWidget);
     expect(
-      find.text('2026-06-12 TO 2026-06-15 (3 WORKING DAYS OUT OF 4)'),
+      // Readable dates, like the web (full audit, 2026-11-16).
+      find.text('JUN 12, 2026 TO JUN 15, 2026 (3 WORKING DAYS OUT OF 4)'),
       findsOneWidget,
     );
     expect(find.text('Working Days'), findsOneWidget);
@@ -310,7 +311,8 @@ void main() {
 
     expect(find.byTooltip('Filter notifications by date'), findsOneWidget);
     expect(find.byTooltip('Notification actions'), findsOneWidget);
-    expect(find.textContaining('Jun 9, 2026 10:01 AM'), findsOneWidget);
+    // Under "Earlier" the date and time, as the web writes them.
+    expect(find.textContaining('Jun 9, 2026 · 10:01 AM'), findsOneWidget);
     expect(find.text('EARLIER'), findsOneWidget);
 
     // One request for all of them, not one per notification.

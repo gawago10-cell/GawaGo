@@ -168,6 +168,7 @@ export default function AdminComplaintsQueue({
   // box labelled internal used to be sent as the resolution.
   const [staffNotesDraft, setStaffNotesDraft] = useState("");
   const [resolutionDraft, setResolutionDraft] = useState("");
+  const [resolutionError, setResolutionError] = useState("");
   const [suspendRequest, setSuspendRequest] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [profileTarget, setProfileTarget] = useState(null);
@@ -204,6 +205,7 @@ export default function AdminComplaintsQueue({
     setSelectedId(complaint.id);
     setStaffNotesDraft(complaint.adminNotes || "");
     setResolutionDraft(complaint.resolution || "");
+    setResolutionError("");
   }
 
   function openUserProfile(username, detail, roleHint) {
@@ -282,9 +284,11 @@ export default function AdminComplaintsQueue({
 
   // Resolving or closing answers the filer, so it needs a resolution they
   // can read; the backend refuses an empty one too.
+  // Said under the box itself, not only in a toast (full audit, 2026-11-16).
   function resolutionMissing() {
     if (resolutionDraft.trim()) return false;
-    window.alert("Write the resolution the complainant will see first.");
+    setResolutionError("Write the resolution the complainant will see first.");
+    document.getElementById("admin-report-resolution")?.focus();
     return true;
   }
 
@@ -567,12 +571,22 @@ export default function AdminComplaintsQueue({
                 </label>
                 <textarea
                   id="admin-report-resolution"
-                  className="form-control"
+                  className={`form-control${resolutionError ? " is-invalid" : ""}`}
                   rows={3}
                   value={resolutionDraft}
-                  onChange={(event) => setResolutionDraft(event.target.value)}
+                  onChange={(event) => {
+                    setResolutionDraft(event.target.value);
+                    setResolutionError("");
+                  }}
+                  aria-invalid={resolutionError ? true : undefined}
+                  aria-describedby={resolutionError ? "admin-report-resolution-error" : undefined}
                   placeholder="What was decided, in words the complainant can read..."
                 />
+                {resolutionError && (
+                  <div id="admin-report-resolution-error" className="invalid-feedback d-block">
+                    {resolutionError}
+                  </div>
+                )}
                 {selected.status === "submitted" && (
                   <p className="small text-muted mt-2 mb-0">
                     Mark the complaint Under Review before resolving or closing it.

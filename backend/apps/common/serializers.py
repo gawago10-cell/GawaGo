@@ -36,6 +36,7 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
     primary_id_preview = serializers.SerializerMethodField()
     secondary_doc_preview = serializers.SerializerMethodField()
     ban_check = serializers.SerializerMethodField()
+    reviewed_by = serializers.SerializerMethodField()
 
     class Meta:
         model = VerificationRequest
@@ -65,9 +66,22 @@ class VerificationRequestSerializer(serializers.ModelSerializer):
             "submitted_at",
             "reviewed_at",
             "review_note",
+            "reviewed_by",
             "ban_check",
         ]
-        read_only_fields = ["id", "status", "submitted_at", "reviewed_at", "review_note", "ban_check"]
+        read_only_fields = ["id", "status", "submitted_at", "reviewed_at", "review_note", "reviewed_by", "ban_check"]
+
+    def get_reviewed_by(self, obj):
+        """Admins only: who decided the request, for Workers History. The
+        applicant isn't told which admin reviewed them."""
+        request = self.context.get("request")
+        if not request or not is_platform_admin(getattr(request, "user", None)):
+            return None
+        if obj.reviewed_by_name:
+            return obj.reviewed_by_name
+        if obj.status != VerificationRequest.STATUS_PENDING and obj.banned_match_username:
+            return "Automatic ID check"
+        return ""
 
     def get_ban_check(self, obj):
         """For admins only: whether this request's ID number or the

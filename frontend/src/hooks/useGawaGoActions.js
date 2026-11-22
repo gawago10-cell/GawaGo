@@ -4,6 +4,7 @@ import { knownBarangay, normalizeBarangayName } from "../utils/locationUtils";
 import { dashboardViewForRole, getUserRole, isAdminRole, ROLES } from "../utils/roles";
 import {
   focusFirstInvalidField,
+  serverRegistrationErrors,
   validateRegistration,
   validateWorkerRegistration,
   WORKER_PIN_REQUIRED_MESSAGE,
@@ -13,6 +14,7 @@ import { resolveWorkerSkills, validateWorkerSkills } from "../utils/skillUtils";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
 import { isConfirmedJobPin } from "./useHouseholdJobLocation";
 import { householdJobFormErrors } from "../utils/jobFormValidation";
+import { serverProfileFieldErrors } from "../utils/profileValidation";
 import { askReason, confirmDialog } from "../components/AppDialogs";
 import { withdrawApplication } from "../services/backendDataService";
 
@@ -523,7 +525,14 @@ export function useGawaGoActions({
         );
         await refreshJobsFromBackend();
         await refreshNotificationsFromBackend();
-        window.alert(message);
+        // `message` is the worker's notice; the household was shown it as if
+        // it were their own confirmation (full audit, 2026-11-16).
+        const workerName = getDisplayName(worker.firstName, worker.lastName, worker.username);
+        window.alert(
+          existingApplication.status === "Hire Request"
+            ? `You withdrew your invitation to ${workerName}. They've been told.`
+            : `You declined ${workerName}'s application. They've been told you chose another applicant.`,
+        );
         setView("household-dashboard");
       } catch (error) {
         await refreshJobsFromBackend();
@@ -565,7 +574,7 @@ export function useGawaGoActions({
         // profile.role, which defaults to "worker" even for admin accounts.
         const resolvedRole = getUserRole({ role: data?.role, is_staff: data?.is_staff });
         if (!resolvedRole) {
-          const roleError = new Error("This account type isn't supported here. Please contact support.");
+          const roleError = new Error("This account type can't sign in here.");
           roleError.status = 403;
           throw roleError;
         }
@@ -628,8 +637,11 @@ export function useGawaGoActions({
     const usernameTaken = registeredWorkers.some(
       (item) => item.username.toLowerCase() === workerForm.username.trim().toLowerCase(),
     );
+    const workerFormElement = event.currentTarget;
     if (usernameTaken) {
-      window.alert("Username already exists for a worker account.");
+      const takenErrors = { username: "That username is already taken." };
+      setRegisterErrors(takenErrors);
+      focusFirstInvalidField(takenErrors, workerFormElement, WORKER_REGISTRATION_FIELD_ORDER);
       return;
     }
     runExclusive("register", async () => {
@@ -665,6 +677,12 @@ export function useGawaGoActions({
         });
         const data = await readResponseData(response);
         if (!response.ok) {
+          const fieldErrors = serverRegistrationErrors(data);
+          if (Object.keys(fieldErrors).length > 0) {
+            setRegisterErrors(fieldErrors);
+            focusFirstInvalidField(fieldErrors, workerFormElement, WORKER_REGISTRATION_FIELD_ORDER);
+            return;
+          }
           throw new Error(getApiErrorMessage(data, "Unable to create worker account."));
         }
         if (data?.verification_required) {
@@ -741,6 +759,7 @@ export function useGawaGoActions({
       focusFirstInvalidField(formErrors, event.currentTarget);
       return;
     }
+    const householdFormElement = event.currentTarget;
     runExclusive("register", async () => {
       try {
         // No map on this form: a street the geocoder places precisely, or
@@ -765,6 +784,12 @@ export function useGawaGoActions({
         });
         const data = await readResponseData(response);
         if (!response.ok) {
+          const fieldErrors = serverRegistrationErrors(data);
+          if (Object.keys(fieldErrors).length > 0) {
+            setRegisterErrors(fieldErrors);
+            focusFirstInvalidField(fieldErrors, householdFormElement);
+            return;
+          }
           throw new Error(getApiErrorMessage(data, "Unable to create household account."));
         }
         if (data?.verification_required) {
@@ -795,7 +820,9 @@ export function useGawaGoActions({
       }
     });
   }
-  function handleWorkerProfileSave(event) {
+  // onFieldErrors receives the server's field errors (phone, rates, email...)
+  // so My Profile can show them under the fields instead of in a toast.
+  function handleWorkerProfileSave(event, { onFieldErrors } = {}) {
     event.preventDefault();
     if (!currentUser || currentUser.role !== "worker") {
       window.alert("No worker account is currently logged in.");
@@ -880,6 +907,11 @@ export function useGawaGoActions({
           });
           const data = await readResponseData(response);
           if (!response.ok) {
+            const fieldErrors = serverProfileFieldErrors(data);
+            if (onFieldErrors && Object.keys(fieldErrors).length > 0) {
+              onFieldErrors(fieldErrors);
+              return false;
+            }
             throw new Error(getApiErrorMessage(data, "Unable to update worker profile."));
           }
           // An email change signs out other devices and hands this one a
@@ -1066,7 +1098,7 @@ export function useGawaGoActions({
             setCurrentUser((prev) => (prev ? { ...prev, profile: backendAccount.profile } : prev));
           }
           await refreshVerificationStateFromBackend();
-          window.alert(normalizedRequest.reviewNote || "We couldn't verify this ID. Contact support if you think this is a mistake.");
+          window.alert(normalizedRequest.reviewNote || "We couldn't verify this ID.");
           return;
         }
         const backendWorker =

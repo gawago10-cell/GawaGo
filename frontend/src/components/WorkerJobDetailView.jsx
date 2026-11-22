@@ -6,6 +6,7 @@ import LocationDistanceMap from "./LocationDistanceMap";
 import {
   formatDateTime,
   formatDistance,
+  formatJobPeriod,
   formatLocation,
   formatRate,
   getDisplayName,
@@ -252,10 +253,7 @@ export default function WorkerJobDetailView({
                           {(job.jobStartDate || job.jobEndDate) && (
                             <div>
                               <dt>Job Period</dt>
-                              <dd>
-                                {job.jobStartDate || "Not set"}
-                                {job.jobEndDate ? ` to ${job.jobEndDate}` : ""}
-                              </dd>
+                              <dd>{formatJobPeriod(job.jobStartDate, job.jobEndDate)}</dd>
                             </div>
                           )}
                           {job.estimatedWorkingDays ? (

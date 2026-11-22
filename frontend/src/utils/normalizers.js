@@ -248,6 +248,9 @@ export function normalizeProfileRecord(profile) {
     role: profile.role || profile.user_type || "worker",
     verificationSubmission: normalizeVerificationRequest(profile.verification_request),
     verificationRequestId: profile.verification_request?.id || null,
+    // Admins only (the server leaves it out for members): Workers History's
+    // "Reviewed By" (full audit, 2026-11-16).
+    verificationReviewedBy: profile.verification_request?.reviewed_by || "",
     memberSince: profile.date_joined || "",
     // Admin-only (see PublicUserProfileSerializer) -- undefined for a
     // non-staff caller, so isBlocked/isStaff read as falsy rather than

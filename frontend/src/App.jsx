@@ -123,6 +123,41 @@ function ViewLoading() {
   );
 }
 
+const ADMIN_SECTIONS = ["verification", "history", "account"];
+const SUPERADMIN_SECTIONS = [
+  "dashboard",
+  "verification",
+  "credentials",
+  "users",
+  "analytics",
+  "reports",
+  "complaints",
+  "adminmgmt",
+  "audit",
+];
+
+// A section id kept in sessionStorage (this tab only). Storage can be
+// unavailable (private mode, blocked site data), so every read and write is
+// guarded and the default is used instead.
+function useStoredSection(key, allowed, fallback) {
+  const [section, setSection] = useState(() => {
+    try {
+      const stored = window.sessionStorage.getItem(key);
+      return allowed.includes(stored) ? stored : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(key, section);
+    } catch {
+      // Not kept; a refresh opens the first section, as before.
+    }
+  }, [key, section]);
+  return [section, setSection];
+}
+
 function getToastVariant(message) {
   const normalized = String(message || "").toLowerCase();
   if (
@@ -246,8 +281,14 @@ function App() {
   );
   const [backendNotifications, setBackendNotifications] = useState([]);
   const [selectedVerificationRequestId, setSelectedVerificationRequestId] = useState(null);
-  const [adminSection, setAdminSection] = useState("verification");
-  const [superAdminSection, setSuperAdminSection] = useState("dashboard");
+  // The open admin section, kept for this tab so a refresh stays on it
+  // instead of jumping back to the first one (full audit, 2026-11-16).
+  const [adminSection, setAdminSection] = useStoredSection("gawago-admin-section", ADMIN_SECTIONS, "verification");
+  const [superAdminSection, setSuperAdminSection] = useStoredSection(
+    "gawago-superadmin-section",
+    SUPERADMIN_SECTIONS,
+    "dashboard",
+  );
   const [heatMapMetric, setHeatMapMetric] = useState("jobs");
   // Kept per tab so a reload of a job detail or matches screen shows the
   // same job: the URL hash only carries the view, and without this the page
@@ -1116,6 +1157,14 @@ function App() {
       setView(guardedView);
     }
   }, [guardedView]);
+  // Signed out: the next admin to sign in on this tab starts on the first
+  // section, not the one the last admin left open.
+  useEffect(() => {
+    if (!sessionRestoring && !currentUser) {
+      setAdminSection("verification");
+      setSuperAdminSection("dashboard");
+    }
+  }, [sessionRestoring, currentUser]);
   const {
     goBack,
     goHome,
@@ -1401,6 +1450,14 @@ function App() {
     }
     if (!certificationForm.name.trim()) {
       addToast("Please enter certification name", "warning");
+      return;
+    }
+    // Issued in the future was accepted (full audit, 2026-11-16). Local
+    // date, the same day the server's check uses.
+    const today = new Date();
+    const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    if (certificationForm.issueDate && certificationForm.issueDate > todayIso) {
+      addToast("The issue date can't be in the future", "warning");
       return;
     }
     if (
@@ -1765,6 +1822,7 @@ function App() {
       handleLoginSubmit={handleLoginSubmit}
       handleLogout={handleLogout}
       handleRejectApplication={handleRejectApplication}
+      handleWorkerHireDecision={handleWorkerHireDecision}
       handleVerificationChange={handleVerificationChange}
       handleVerificationSubmit={handleVerificationSubmit}
       handleWorkerChange={handleWorkerChange}

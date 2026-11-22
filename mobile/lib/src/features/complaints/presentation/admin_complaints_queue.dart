@@ -282,6 +282,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
   late ComplaintReport _current = widget.complaint;
   bool _saving = false;
   String? _error;
+  String? _resolutionError;
 
   @override
   void dispose() {
@@ -387,9 +388,21 @@ class _ReviewSheetState extends State<_ReviewSheet> {
   }
 
   Future<void> _save({bool markResolved = false}) async {
+    final nextStatus = markResolved ? 'resolved' : _status;
+    // Said under the box, before the request, like the web queue (full
+    // audit, 2026-11-16): resolving or closing answers the filer.
+    if ((nextStatus == 'resolved' || nextStatus == 'closed') &&
+        _resolution.text.trim().isEmpty) {
+      setState(
+        () => _resolutionError =
+            'Write the resolution the complainant will see first.',
+      );
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;
+      _resolutionError = null;
     });
     try {
       final updated = await widget.repository.updateAdmin(
@@ -549,9 +562,15 @@ class _ReviewSheetState extends State<_ReviewSheet> {
             TextField(
               controller: _resolution,
               maxLines: 4,
-              decoration: const InputDecoration(
+              onChanged: (_) {
+                if (_resolutionError != null) {
+                  setState(() => _resolutionError = null);
+                }
+              },
+              decoration: InputDecoration(
                 labelText: 'Resolution notes',
                 hintText: 'What action was taken?',
+                errorText: _resolutionError,
               ),
             ),
             if (_error != null) ...[

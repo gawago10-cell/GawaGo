@@ -2,6 +2,7 @@ import logging
 import mimetypes
 
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.contrib.auth.password_validation import validate_password
@@ -73,7 +74,8 @@ from apps.accounts.services import (
     validate_latest_reset_request,
 )
 from django.conf import settings
-from apps.common.authentication import create_jwt_token, decode_jwt_token, revoke_token
+from apps.common.support import support_sentence
+from apps.common.authentication import create_jwt_token, decode_jwt_token, password_fingerprint, revoke_token
 from apps.common.permissions import IsPlatformAdmin, IsPlatformSuperAdmin, is_platform_admin, is_platform_superadmin
 from apps.reviews.services import assign_due_default_worker_ratings_on_read
 
@@ -89,8 +91,15 @@ def refresh_credentials(user, profile):
     if profile is not None:
         profile.credentials_updated_at = timezone.now().replace(microsecond=0)
         profile.save(update_fields=["credentials_updated_at"])
+    return issue_access_token(user, get_account_role(user, profile))
+
+
+def issue_access_token(user, role):
+    """An access token tied to the account's current password: changing or
+    resetting it ends every older token, including an admin's, which has no
+    profile to carry credentials_updated_at (full audit, 2026-11-16)."""
     return create_jwt_token(
-        {"user_id": user.id, "username": user.username, "role": get_account_role(user, profile)}
+        {"user_id": user.id, "username": user.username, "role": role, "pwv": password_fingerprint(user)}
     )
 
 
@@ -310,10 +319,18 @@ class RegisterView(APIView):
                 {"detail": PHONE_BLOCKED_MESSAGE, "phone": [PHONE_BLOCKED_MESSAGE]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # The field keys let the sign-up forms show these under the field
+        # instead of only in a passing toast (full audit, 2026-11-16).
         if User.objects.filter(username__iexact=username).exists():
-            return Response({"detail": "Username already exists."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Username already exists.", "username": ["That username is already taken."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if User.objects.filter(email__iexact=email).exists():
-            return Response({"detail": "Email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Email already exists.", "email": ["An account already uses this email."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # These checks race: simultaneous signups both passed them, and the
         # database then either raised (a 500 for a duplicate username) or --
@@ -430,6 +447,19 @@ class LoginView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
+            if (
+                matched_user
+                and not matched_user.is_active
+                and matched_user.is_staff
+                and matched_user.check_password(password)
+            ):
+                # The right password for a deactivated admin: "Invalid
+                # username or password" sent them hunting for a typo (full
+                # audit, 2026-11-16).
+                return Response(
+                    {"detail": "This admin account has been deactivated. Ask the GawaGo owner to reactivate it."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             cache.set(failure_key, cache.get(failure_key, 0) + 1, LOGIN_LOCKOUT_SECONDS)
             return Response({"detail": "Invalid username or password."}, status=status.HTTP_400_BAD_REQUEST)
         cache.delete(failure_key)
@@ -437,10 +467,14 @@ class LoginView(APIView):
         if profile and profile.refresh_block_status():
             return Response({"detail": profile.block_message}, status=status.HTTP_403_FORBIDDEN)
         account_role = get_account_role(user, profile)
+        # Admin Management's "Last sign-in" read last_login, which token
+        # logins never set, so every admin showed "Never" (full audit,
+        # 2026-11-16).
+        update_last_login(None, user)
         return Response(
             {
                 "detail": "Login successful.",
-                "access": create_jwt_token({"user_id": user.id, "username": user.username, "role": account_role}),
+                "access": issue_access_token(user, account_role),
                 "username": user.username,
                 "email": user.email,
                 "display_name": user.get_full_name() or user.username,
@@ -533,12 +567,7 @@ class ChangePasswordView(APIView):
             title="Password changed",
             message="Your GawaGo password was changed. If this wasn't you, reset it from the login page right away.",
         )
-        detail = (
-            "Your password was updated. Your other devices have been signed out."
-            if profile is not None
-            else "Your password was updated."
-        )
-        return Response({"detail": detail, "access": access})
+        return Response({"detail": "Your password was updated. Your other devices have been signed out.", "access": access})
 
 
 class ForgotPasswordRequestView(APIView):
@@ -568,7 +597,7 @@ class ForgotPasswordRequestView(APIView):
             logger.exception("Password reset email to user %s could not be sent.", user.pk)
             reset_request.delete()
             return Response(
-                {"detail": "We couldn't send the reset code right now. Try again later or contact support."},
+                {"detail": "We couldn't send the reset code right now. Try again in a few minutes." + support_sentence("If it keeps failing, email")},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return sent
@@ -1248,6 +1277,20 @@ class CertificateVerificationAdminView(APIView):
         if verification_status not in [WorkerCertification.STATUS_APPROVED, WorkerCertification.STATUS_REJECTED]:
             return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
         notes = " ".join(str(request.data.get("verification_notes", "") or "").split())
+        # A decided certificate isn't decided again the same way, and a
+        # rejected one waits for the worker's new copy, which puts it back in
+        # Pending. An approval can still be withdrawn. The queue kept offering
+        # Approve and Reject on approved cards (full audit, 2026-11-16).
+        if cert.verification_status == verification_status:
+            return Response(
+                {"detail": f"This certificate is already {cert.verification_status}."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if cert.verification_status == WorkerCertification.STATUS_REJECTED:
+            return Response(
+                {"detail": "This certificate was rejected. It comes back for review when the worker uploads a new copy."},
+                status=status.HTTP_409_CONFLICT,
+            )
         if verification_status == WorkerCertification.STATUS_APPROVED and not cert.certificate_file:
             return Response(
                 {"detail": "There's no document to review. Reject it and ask the worker to attach the certificate."},

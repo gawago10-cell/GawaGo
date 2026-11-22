@@ -197,7 +197,7 @@ class _UnsupportedAccountScreenState extends State<UnsupportedAccountScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Please sign in again, or contact support if this keeps happening.',
+                  'Please sign in again.',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 20),

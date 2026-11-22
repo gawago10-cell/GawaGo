@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from apps.accounts.banned import sync_banned_credentials
 from apps.accounts.models import PasswordResetRequest, SignupVerificationRequest, UserProfile, WorkerSkill
+from apps.common.support import readable_date, support_sentence
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 
@@ -123,13 +124,14 @@ def apply_account_suspension(profile: UserProfile, *, blocked=True, reason="", d
         title = f"Account suspended for {duration_days} days" if blocked_until else "Account blocked"
         message = f"Your account has been {'suspended' if blocked_until else 'blocked'} by an administrator."
         if blocked_until:
-            message += f" It will be restored automatically on {timezone.localtime(blocked_until).strftime('%Y-%m-%d')}."
+            message += f" It will be restored automatically on {readable_date(blocked_until)}."
         # Say plainly that no reason was recorded rather than leaving the
         # notice looking truncated.
         if profile.blocked_reason:
             message += f" Reason: {profile.blocked_reason}"
         else:
-            message += " No reason was recorded; contact support for details."
+            message += " No reason was recorded."
+        message += support_sentence()
     else:
         title = "Account restored"
         message = "Your account has been restored. You can sign in again."

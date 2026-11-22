@@ -147,10 +147,15 @@ class UserProfile(models.Model):
         if reason and reason[-1] not in ".!?":
             reason += "."
         reason = f" Reason: {reason}" if reason else ""
+        # A readable date, and no "Contact support for assistance" unless a
+        # support address is set: there was none to contact (full audit,
+        # 2026-11-16).
+        from apps.common.support import readable_datetime, support_sentence
+
         if self.blocked_until:
-            until = timezone.localtime(self.blocked_until).strftime("%Y-%m-%d %H:%M")
-            return f"This account is suspended until {until}.{reason} Contact support for assistance."
-        return f"This account has been blocked.{reason} Contact support for assistance."
+            until = readable_datetime(self.blocked_until)
+            return f"This account is suspended until {until}.{reason} You can sign in again after that.{support_sentence()}"
+        return f"This account has been blocked.{reason}{support_sentence()}"
 
     @property
     def has_location(self) -> bool:

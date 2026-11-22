@@ -47,7 +47,11 @@ export default function SuspendAccountDialog({ username, durationDays, banCreden
         <div className="gg-modal-head">
           <div>
             <p className="gg-modal-kicker">{durationDays ? `Suspend ${durationDays} days` : "Block permanently"}</p>
-            <h2 id="suspend-account-title">Suspend {username} {durationLabel}?</h2>
+            {/* The permanent one asked "Suspend ... permanently?" under a
+                "Block permanently" button (full audit, 2026-11-16). */}
+            <h2 id="suspend-account-title">
+              {durationDays ? `Suspend ${username} ${durationLabel}?` : `Block ${username} permanently?`}
+            </h2>
           </div>
         </div>
         <div className="gg-modal-body">
@@ -100,7 +104,7 @@ export default function SuspendAccountDialog({ username, durationDays, banCreden
             Cancel
           </button>
           <button type="submit" className="btn btn-danger" disabled={saving}>
-            {saving ? "Suspending..." : durationDays ? `Suspend ${durationDays} days` : "Block permanently"}
+            {saving ? (durationDays ? "Suspending..." : "Blocking...") : durationDays ? `Suspend ${durationDays} days` : "Block permanently"}
           </button>
         </div>
       </form>

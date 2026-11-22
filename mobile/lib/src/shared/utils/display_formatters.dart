@@ -83,6 +83,22 @@ String notificationDayGroup(DateTime? date, {DateTime? now}) {
   return 'Earlier';
 }
 
+/// A notification's time in the list: "9:05 AM" under "Today" and
+/// "Yesterday" (the heading says which day), "Nov 1, 2026 · 9:05 AM" under
+/// "Earlier" -- the web's formatNotificationTime. The list repeated the full
+/// date under "Today" (full audit, 2026-11-16).
+String notificationListTime(
+  DateTime? date, {
+  String fallback = '',
+  DateTime? now,
+}) {
+  if (date == null) return fallback;
+  final local = date.toLocal();
+  final time = formatClockTime(local);
+  if (notificationDayGroup(local, now: now) != 'Earlier') return time;
+  return '${_month(local.month)} ${local.day}, ${local.year} · $time';
+}
+
 /// The divider above a day's chat messages: "Today", "Yesterday" or
 /// "Nov 1, 2026" (matches the web's formatChatDay).
 String chatDayLabel(DateTime? date, {DateTime? now}) {
@@ -107,6 +123,21 @@ String formatJobDate(String? value, {String fallback = 'Not set'}) {
   if (date == null) return normalized;
   final local = date.toLocal();
   return '${_month(local.month)} ${local.day}, ${local.year}';
+}
+
+/// "Nov 16, 2026", or "Nov 16, 2026 to Nov 18, 2026" for a longer job,
+/// like the web's formatJobPeriod. Job Details printed raw ISO dates, and a
+/// one-day job as "Nov 21, 2026 to Nov 21, 2026" (full audit, 2026-11-16).
+String formatJobPeriod(String? start, String? end) {
+  final startText = (start ?? '').trim();
+  final endText = (end ?? '').trim();
+  if (startText.isEmpty) {
+    return endText.isEmpty ? 'Not set' : formatJobDate(endText);
+  }
+  if (endText.isEmpty || endText.compareTo(startText) <= 0) {
+    return formatJobDate(startText);
+  }
+  return '${formatJobDate(startText)} to ${formatJobDate(endText)}';
 }
 
 /// The Post a Job hint under the dates, now that the days are no longer

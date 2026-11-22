@@ -81,3 +81,35 @@ export function focusFirstInvalidField(errors, formElement, fieldOrder = REQUIRE
     element.scrollIntoView?.({ block: "center", behavior: "smooth" });
   }
 }
+
+// The sign-up form field each server field's error belongs under.
+const SERVER_REGISTRATION_FIELDS = {
+  username: "username",
+  email: "email",
+  password: "password",
+  phone: "phone",
+  first_name: "firstName",
+  last_name: "lastName",
+  skills: "skills",
+};
+
+/**
+ * The server's field errors on a sign-up, keyed by form field, so "That
+ * username is already taken" or "This password is too common" shows under
+ * the field rather than only in a toast that disappears (full audit,
+ * 2026-11-16). Empty when the server named no field this form shows.
+ */
+export function serverRegistrationErrors(data) {
+  const errors = {};
+  if (!data || typeof data !== "object") {
+    return errors;
+  }
+  for (const [serverField, formField] of Object.entries(SERVER_REGISTRATION_FIELDS)) {
+    const value = data[serverField];
+    const message = Array.isArray(value) ? value.find(Boolean) : value;
+    if (message && !errors[formField]) {
+      errors[formField] = String(message);
+    }
+  }
+  return errors;
+}

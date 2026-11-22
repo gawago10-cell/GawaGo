@@ -73,6 +73,12 @@ class VerificationRequest(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     submitted_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    # Who decided it, as a name snapshot (like AdminActionLog.actor_username)
+    # so it still reads after that admin is gone. Workers History showed
+    # "Reviewed By: None" for every worker because nothing stored it (full
+    # audit, 2026-11-16). Blank for a request rejected on arrival by the
+    # banned-ID check, which no admin decided.
+    reviewed_by_name = models.CharField(max_length=255, blank=True, default="")
     review_note = models.TextField(blank=True, default="")
 
 

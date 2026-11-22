@@ -159,11 +159,12 @@ export default function AdminCredentialsQueue() {
     try {
       let notes = "";
       if (decision === "rejected") {
+        const revoking = card.status === "approved";
         const answer = await askReason({
-          title: `Reject "${card.title}"?`,
-          label: "Reason for rejecting (the worker will see this)",
-          placeholder: "e.g. The photo is too blurry to read.",
-          confirmLabel: "Reject certificate",
+          title: revoking ? `Withdraw the approval of "${card.title}"?` : `Reject "${card.title}"?`,
+          label: revoking ? "Reason (the worker will see this)" : "Reason for rejecting (the worker will see this)",
+          placeholder: revoking ? "e.g. TESDA has no record of this certificate." : "e.g. The photo is too blurry to read.",
+          confirmLabel: revoking ? "Withdraw approval" : "Reject certificate",
           tone: "danger",
           requiredMessage: "Please give a reason so the worker knows what to fix.",
         });
@@ -337,18 +338,33 @@ function CredentialCard({ card, saving, onApprove, onReject }) {
         ) : (
           <span className="admin-credential-btn ghost disabled">No document attached</span>
         )}
-        <button
-          type="button"
-          className="admin-credential-btn approve"
-          disabled={saving || !card.fileUrl}
-          title={card.fileUrl ? undefined : "There's no document to review"}
-          onClick={onApprove}
-        >
-          Approve
-        </button>
-        <button type="button" className="admin-credential-btn reject" disabled={saving} onClick={onReject}>
-          Reject
-        </button>
+        {/* Only a pending card is decided; an approval can be withdrawn, and a
+            rejected one returns as Pending once the worker uploads a new copy.
+            Every card offered Approve and Reject (full audit, 2026-11-16). */}
+        {card.status === "pending" && (
+          <>
+            <button
+              type="button"
+              className="admin-credential-btn approve"
+              disabled={saving || !card.fileUrl}
+              title={card.fileUrl ? undefined : "There's no document to review"}
+              onClick={onApprove}
+            >
+              Approve
+            </button>
+            <button type="button" className="admin-credential-btn reject" disabled={saving} onClick={onReject}>
+              Reject
+            </button>
+          </>
+        )}
+        {card.status === "approved" && (
+          <button type="button" className="admin-credential-btn reject" disabled={saving} onClick={onReject}>
+            Withdraw approval
+          </button>
+        )}
+        {card.status === "rejected" && (
+          <span className="admin-credential-waiting">Waiting for the worker to upload a new copy</span>
+        )}
       </div>
     </div>
   );

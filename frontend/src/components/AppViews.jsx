@@ -45,6 +45,7 @@ import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
 import { describeJobSpan, formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, formatWorkerRate, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
 import { getVerificationNavLabel, getVerificationStageLabel } from "../utils/normalizers";
 import { getReviewMetricAverage } from "../utils/reviewUtils";
+import { workerProfileFieldErrors } from "../utils/profileValidation";
 import { confirmDialog } from "./AppDialogs";
 import { usePostingStatus } from "../hooks/usePostingStatus";
 
@@ -124,6 +125,7 @@ export default function AppViews({
   recommendedWorkersLoading,
   handleLogout,
   handleRejectApplication,
+  handleWorkerHireDecision,
   handleVerificationChange,
   handleVerificationSubmit,
   handleWorkerChange,
@@ -349,6 +351,8 @@ export default function AppViews({
     }));
   };
   const [workerProfileEditing, setWorkerProfileEditing] = useState(false);
+  // My Profile's field errors, shown under each field (full audit, 2026-11-16).
+  const [workerProfileErrors, setWorkerProfileErrors] = useState({});
   const [workerPhotoModalOpen, setWorkerPhotoModalOpen] = useState(false);
   // A saved photo whose file is gone (uploads don't survive a redeploy on
   // the free host) showed a broken image; show the initial instead.
@@ -481,6 +485,13 @@ export default function AppViews({
         (job) => String(job.applicationId) === String(workerHireRequestPreview.applicationId),
       ) || workerHireRequestPreview
     : null;
+  // Still waiting for the worker's answer (not accepted, rejected or closed).
+  const workerHireRequestPreviewIsOpen = Boolean(
+    workerHireRequestPreviewJob?.applicationId &&
+      workerPendingHireRequests.some(
+        (job) => String(job.applicationId) === String(workerHireRequestPreviewJob.applicationId),
+      ),
+  );
   const hiringNotificationHasRequestCard = (notification) => {
     if (notification.actionType === "hire_request" && notification.requiresAction && notification.applicationId) {
       return true;
@@ -676,6 +687,7 @@ export default function AppViews({
   useEffect(() => {
     if (view !== "worker-profile" && workerProfileEditing) {
       setWorkerProfileEditing(false);
+      setWorkerProfileErrors({});
     }
   }, [view, workerProfileEditing]);
   useEffect(() => {
@@ -733,7 +745,19 @@ export default function AppViews({
       setWorkerProfileEditing(true);
       return;
     }
-    const result = handleWorkerProfileSave(event);
+    const fieldErrors = workerProfileFieldErrors(workerProfileForm);
+    setWorkerProfileErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) {
+      event.preventDefault();
+      focusWorkerProfileError(fieldErrors);
+      return false;
+    }
+    const result = handleWorkerProfileSave(event, {
+      onFieldErrors: (serverErrors) => {
+        setWorkerProfileErrors(serverErrors);
+        focusWorkerProfileError(serverErrors);
+      },
+    });
     // Only a save that went through ends editing; a refused one keeps the
     // form open with what the worker typed.
     Promise.resolve(result).then((saved) => {
@@ -741,6 +765,36 @@ export default function AppViews({
     });
     return result;
   };
+  const focusWorkerProfileError = (errors) => {
+    const first = ["firstName", "lastName", "email", "phone", "currentPassword", "bio", "hourlyRate", "dailyRate"].find(
+      (name) => errors[name],
+    );
+    if (!first || typeof document === "undefined") return;
+    window.setTimeout(() => {
+      const element = document.querySelector(`#worker-profile-panel-profile [name="${first}"]`);
+      element?.focus?.();
+      element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    }, 0);
+  };
+  const clearWorkerProfileError = (event) => {
+    const { name } = event.target;
+    if (workerProfileErrors[name] || (name === "hourlyRate" && workerProfileErrors.dailyRate)) {
+      setWorkerProfileErrors((prev) => ({ ...prev, [name]: "", ...(name === "hourlyRate" ? { dailyRate: "" } : {}) }));
+    }
+    handleWorkerProfileChange(event);
+  };
+  const workerProfileErrorProps = (name) =>
+    workerProfileErrors[name]
+      ? { "aria-invalid": true, "aria-describedby": `worker-profile-${name}-error` }
+      : {};
+  const workerProfileInputClass = (name, base = "form-control") =>
+    `${base}${workerProfileErrors[name] ? " is-invalid" : ""}`;
+  const renderWorkerProfileError = (name) =>
+    workerProfileErrors[name] ? (
+      <div id={`worker-profile-${name}-error`} className="invalid-feedback d-block">
+        {workerProfileErrors[name]}
+      </div>
+    ) : null;
   const workerMarketCategories = useMemo(() => {
     const defaultServiceTypes = SKILLS.filter((serviceType) => serviceType !== "Other");
     const knownServiceKeys = new Set(defaultServiceTypes.map((serviceType) => serviceType.trim().toLowerCase()));
@@ -3264,7 +3318,7 @@ export default function AppViews({
                       <div className="profile-card-head">
                         <span>Edit Profile Information</span>
                       </div>
-                      <form className="p-3" onSubmit={submitWorkerProfileForm}>
+                      <form className="p-3" onSubmit={submitWorkerProfileForm} noValidate>
                         <fieldset disabled={!workerProfileEditing} className="worker-profile-edit-fieldset">
                           <h3 className="h6 fw-bold mb-2">Profile Photo</h3>
                           <div className="mb-3">
@@ -3286,10 +3340,12 @@ export default function AppViews({
                               <input
                                 id="worker-profile-first-name"
                                 name="firstName"
-                                className="form-control"
+                                className={workerProfileInputClass("firstName")}
                                 value={workerProfileForm.firstName}
-                                onChange={handleWorkerProfileChange}
+                                onChange={clearWorkerProfileError}
+                                {...workerProfileErrorProps("firstName")}
                               />
+                              {renderWorkerProfileError("firstName")}
                             </div>
                             <div className="col-md-6">
                               <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-last-name">
@@ -3298,10 +3354,12 @@ export default function AppViews({
                               <input
                                 id="worker-profile-last-name"
                                 name="lastName"
-                                className="form-control"
+                                className={workerProfileInputClass("lastName")}
                                 value={workerProfileForm.lastName}
-                                onChange={handleWorkerProfileChange}
+                                onChange={clearWorkerProfileError}
+                                {...workerProfileErrorProps("lastName")}
                               />
+                              {renderWorkerProfileError("lastName")}
                             </div>
                             <div className="col-md-6">
                               <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-email">
@@ -3311,29 +3369,33 @@ export default function AppViews({
                                 id="worker-profile-email"
                                 type="email"
                                 name="email"
-                                className="form-control"
+                                className={workerProfileInputClass("email")}
                                 value={workerProfileForm.email}
-                                onChange={handleWorkerProfileChange}
+                                onChange={clearWorkerProfileError}
+                                {...workerProfileErrorProps("email")}
                               />
+                              {renderWorkerProfileError("email")}
                             </div>
                             <div className="col-md-6">
                               <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-phone">
                                 Phone Number
                               </label>
-                              <div className="input-group">
+                              <div className={`input-group${workerProfileErrors.phone ? " has-validation" : ""}`}>
                                 <span className="input-group-text">+63</span>
                                 <input
                                   id="worker-profile-phone"
                                   type="tel"
                                   name="phone"
-                                  className="form-control"
+                                  className={workerProfileInputClass("phone")}
                                   placeholder="9XXXXXXXXX"
                                   inputMode="numeric"
                                   maxLength={10}
                                   value={workerProfileForm.phone}
-                                  onChange={handleWorkerProfileChange}
+                                  onChange={clearWorkerProfileError}
+                                  {...workerProfileErrorProps("phone")}
                                 />
                               </div>
+                              {renderWorkerProfileError("phone")}
                             </div>
                             {/* The backend asks for the password before an
                                 email change, and the form never did, so the
@@ -3350,12 +3412,14 @@ export default function AppViews({
                                   id="worker-profile-email-password"
                                   type="password"
                                   name="currentPassword"
-                                  className="form-control"
+                                  className={workerProfileInputClass("currentPassword")}
                                   autoComplete="current-password"
                                   aria-describedby="worker-profile-email-password-hint"
                                   value={workerProfileForm.currentPassword || ""}
-                                  onChange={handleWorkerProfileChange}
+                                  onChange={clearWorkerProfileError}
+                                  aria-invalid={workerProfileErrors.currentPassword ? true : undefined}
                                 />
+                                {renderWorkerProfileError("currentPassword")}
                                 <div id="worker-profile-email-password-hint" className="form-text">
                                   Needed to change your email.
                                 </div>
@@ -3431,11 +3495,13 @@ export default function AppViews({
                                 min="0"
                                 step="0.01"
                                 name="hourlyRate"
-                                className="form-control"
+                                className={workerProfileInputClass("hourlyRate")}
                                 placeholder="Not disclosed"
                                 value={workerProfileForm.hourlyRate ?? ""}
-                                onChange={handleWorkerProfileChange}
+                                onChange={clearWorkerProfileError}
+                                {...workerProfileErrorProps("hourlyRate")}
                               />
+                              {renderWorkerProfileError("hourlyRate")}
                             </div>
                             <div className="col-md-6">
                               <label className="form-label small fw-semibold mb-1" htmlFor="worker-profile-daily-rate">
@@ -3447,11 +3513,13 @@ export default function AppViews({
                                 min="0"
                                 step="0.01"
                                 name="dailyRate"
-                                className="form-control"
+                                className={workerProfileInputClass("dailyRate")}
                                 placeholder="Not disclosed"
                                 value={workerProfileForm.dailyRate ?? ""}
-                                onChange={handleWorkerProfileChange}
+                                onChange={clearWorkerProfileError}
+                                {...workerProfileErrorProps("dailyRate")}
                               />
+                              {renderWorkerProfileError("dailyRate")}
                             </div>
                           </div>
                         </fieldset>
@@ -3736,7 +3804,7 @@ export default function AppViews({
                               className="form-control"
                               value={certificationForm.name}
                               onChange={(e) => setCertificationForm({ ...certificationForm, name: e.target.value })}
-                              placeholder="e.g., AWS Solutions Architect"
+                              placeholder="e.g., Housekeeping NC II"
                             />
                           </div>
                           <div className="mb-3">
@@ -3755,6 +3823,7 @@ export default function AppViews({
                               <input
                                 type="date"
                                 className="form-control"
+                                max={todayIsoDate}
                                 value={certificationForm.issueDate || ""}
                                 onChange={(e) => setCertificationForm({ ...certificationForm, issueDate: e.target.value })}
                               />
@@ -5256,6 +5325,43 @@ export default function AppViews({
                         >
                           View Details
                         </button>
+                        {/* Answer it here: the popup only offered Close and View
+                            Details, so accepting took an extra page (full audit,
+                            2026-11-16). Only while the request still waits. */}
+                        {workerHireRequestPreviewIsOpen && (
+                          <>
+                            <button
+                              className="btn btn-outline-danger btn-sm"
+                              type="button"
+                              onClick={async () => {
+                                const applicationId = workerHireRequestPreviewJob.applicationId;
+                                const confirmed = await confirmDialog({
+                                  title: "Reject this hire request?",
+                                  message: "The household is told you declined. This can't be undone.",
+                                  confirmLabel: "Reject request",
+                                  tone: "danger",
+                                });
+                                if (confirmed) {
+                                  setWorkerHireRequestPreview(null);
+                                  handleWorkerHireDecision(applicationId, "reject");
+                                }
+                              }}
+                            >
+                              Reject Request
+                            </button>
+                            <button
+                              className="btn btn-success btn-sm"
+                              type="button"
+                              onClick={() => {
+                                const applicationId = workerHireRequestPreviewJob.applicationId;
+                                setWorkerHireRequestPreview(null);
+                                handleWorkerHireDecision(applicationId, "accept");
+                              }}
+                            >
+                              Accept Request
+                            </button>
+                          </>
+                        )}
                       </div>
                     </section>
                   </div>
@@ -5491,7 +5597,7 @@ export default function AppViews({
                                   </span>
                                 </td>
                                 <td>{formatTimestamp(worker.verificationSubmission?.submittedAt, "None")}</td>
-                                <td>{worker.verificationReviewedBy || "None"}</td>
+                                <td>{worker.verificationReviewedBy || "Not reviewed yet"}</td>
                               </tr>
                             ))
                           ) : (
@@ -7443,8 +7549,13 @@ export default function AppViews({
                               {selectedWorkerDistanceLabel === "Road distance unavailable"
                                 ? "Road distance from your job site could not be calculated."
                                 : "Road distance from your job site."}{" "}
-                              This worker hasn't pinned a location on their profile yet, so there's nothing
-                              to show on the map.
+                              {/* Every worker pins a location at sign-up; the map just waits for this
+                                  job's application, which carries the pin. Saying the worker had no pin
+                                  was wrong for every worker opened from the matches (full audit,
+                                  2026-11-16). */}
+                              {selectedWorkerApplication
+                                ? "This worker hasn't pinned a location on their profile yet, so there's nothing to show on the map."
+                                : "Their pin shows on this map once they apply to this job or you invite them."}
                             </span>
                           </div>
                         )}
@@ -8189,12 +8300,23 @@ export default function AppViews({
                               type="button"
                               className="gg-applicant-decline"
                               onClick={async () => {
-                                const confirmed = await confirmDialog({
-                                  title: "Decline this application?",
-                                  message: "The worker is told it was declined. This can't be undone.",
-                                  confirmLabel: "Decline",
-                                  tone: "danger",
-                                });
+                                // An invited worker never applied: this takes the
+                                // invitation back (full audit, 2026-11-16).
+                                const confirmed = await confirmDialog(
+                                  isRequested
+                                    ? {
+                                        title: `Withdraw your invitation to ${applicantName}?`,
+                                        message: "They're told you withdrew it. This can't be undone.",
+                                        confirmLabel: "Withdraw invitation",
+                                        tone: "danger",
+                                      }
+                                    : {
+                                        title: "Decline this application?",
+                                        message: "The worker is told it was declined. This can't be undone.",
+                                        confirmLabel: "Decline",
+                                        tone: "danger",
+                                      },
+                                );
                                 if (!confirmed) {
                                   return;
                                 }
@@ -8202,7 +8324,7 @@ export default function AppViews({
                                 handleRejectApplication(applicant.id, selectedJob.id);
                               }}
                             >
-                              Decline
+                              {isRequested ? "Withdraw invite" : "Decline"}
                             </button>
                           )}
                           <button

@@ -100,7 +100,7 @@ class GawaGoApi {
     // An unknown role used to default to "worker" and open the worker app.
     if (accountRoleFrom(result.role) == null) {
       throw const ApiException(
-        "This account type isn't supported in the app. Please contact support.",
+        "This account type can't sign in to the app. Use the GawaGo website instead.",
         type: ApiErrorType.forbidden,
       );
     }
