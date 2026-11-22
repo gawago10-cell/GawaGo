@@ -56,6 +56,7 @@ class JobScheduleWords {
     required String? endDate,
     int? workingDays,
     bool finished = false,
+    bool cancelled = false,
     DateTime? today,
   }) {
     final start = (startDate ?? '').trim();
@@ -67,13 +68,19 @@ class JobScheduleWords {
     return JobScheduleWords._(
       start: start,
       end: end,
+      // A cancelled job never took place: its dates are the planned ones,
+      // not "Started" (mobile household audit, 2026-11-23).
       startWord: start.isEmpty
           ? 'Start'
+          : cancelled
+          ? 'Planned start'
           : start.compareTo(now) > 0
           ? 'Starts'
           : 'Started',
       endWord: end.isEmpty
           ? 'End'
+          : cancelled
+          ? 'Planned end'
           : finished || end.compareTo(now) < 0
           ? 'Ended'
           : 'Ends',
@@ -93,6 +100,7 @@ class JobScheduleBox extends StatelessWidget {
     required this.endDate,
     this.workingDays,
     this.finished = false,
+    this.cancelled = false,
     this.today,
   });
 
@@ -100,6 +108,9 @@ class JobScheduleBox extends StatelessWidget {
   final String? endDate;
   final int? workingDays;
   final bool finished;
+
+  /// A cancelled job: its dates read "Planned start" / "Planned end".
+  final bool cancelled;
 
   /// For tests; defaults to now.
   final DateTime? today;
@@ -111,6 +122,7 @@ class JobScheduleBox extends StatelessWidget {
       endDate: endDate,
       workingDays: workingDays,
       finished: finished,
+      cancelled: cancelled,
       today: today,
     );
     if (schedule == null) return const SizedBox.shrink();

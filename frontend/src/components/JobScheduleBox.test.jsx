@@ -34,6 +34,15 @@ describe("JobScheduleBox", () => {
     expect(screen.getByText("3 working days")).toBeTruthy();
   });
 
+  // A cancelled job never took place (mobile household audit, 2026-11-23).
+  it("words a cancelled job's dates as planned", () => {
+    at("2026-11-23");
+    render(<JobScheduleBox startDate="2026-11-20" endDate="2026-11-21" cancelled />);
+    expect(screen.getByText("Planned start")).toBeTruthy();
+    expect(screen.getByText("Planned end")).toBeTruthy();
+    expect(screen.queryByText("Started")).toBeNull();
+  });
+
   it("words a job that is under way, and one that is finished", () => {
     at("2026-10-31");
     const { rerender } = render(<JobScheduleBox startDate="2026-10-30" endDate="2026-11-01" />);

@@ -38,7 +38,7 @@ export function workingDaysText(startDate, endDate, workingDays) {
  * with its day of the week. A one-day job with no end date ends the day it
  * starts. Null when the job has no dates.
  */
-export function describeJobSchedule({ startDate, endDate, workingDays, finished = false }) {
+export function describeJobSchedule({ startDate, endDate, workingDays, finished = false, cancelled = false }) {
   if (!startDate && !endDate) {
     return null;
   }
@@ -46,10 +46,13 @@ export function describeJobSchedule({ startDate, endDate, workingDays, finished 
   const end = endDate || (days === 1 ? startDate : "");
   const today = localIsoDate();
   return {
-    startWord: !startDate ? "Start" : startDate > today ? "Starts" : "Started",
+    // A cancelled job never took place, so its dates are the planned ones;
+    // "Started" read as if work had happened (mobile household audit,
+    // 2026-11-23).
+    startWord: !startDate ? "Start" : cancelled ? "Planned start" : startDate > today ? "Starts" : "Started",
     startText: formatJobDay(startDate) || "Not set",
     startSet: Boolean(startDate),
-    endWord: !end ? "End" : finished || end < today ? "Ended" : "Ends",
+    endWord: !end ? "End" : cancelled ? "Planned end" : finished || end < today ? "Ended" : "Ends",
     endText: formatJobDay(end) || "Not set",
     endSet: Boolean(end),
     daysText: workingDaysText(startDate, endDate, days),

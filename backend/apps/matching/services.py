@@ -316,6 +316,17 @@ def get_worker_rate(profile):
     return profile.daily_rate or profile.hourly_rate
 
 
+def get_worker_rate_label(profile):
+    """"PHP 500.00 / day" or "PHP 120.00 / hour" -- the rate above with its
+    unit. A bare "500.00" showed on the app's worker profile, and an hourly
+    rate read as daily on its cards (mobile household audit, 2026-11-23)."""
+    if profile.daily_rate:
+        return f"PHP {profile.daily_rate:.2f} / day"
+    if profile.hourly_rate:
+        return f"PHP {profile.hourly_rate:.2f} / hour"
+    return ""
+
+
 def calculate_rate_score(job, profile):
     worker_rate = get_worker_rate(profile)
     if worker_rate is None or job.service_rate is None:
@@ -454,6 +465,7 @@ def build_match_results(job, worker_profiles):
                 "available_at_requested_time": True,
                 "rate_score": round(rate_score, 2),
                 "worker_rate": str(get_worker_rate(profile) or ""),
+                "worker_rate_label": get_worker_rate_label(profile),
             }
         )
     return sorted(results, key=lambda item: item["_sort_key"])

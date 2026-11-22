@@ -414,7 +414,9 @@ void main() {
 
       expect(find.text('Welcome, juan dela cruz'), findsOneWidget);
       expect(find.textContaining('IN PROCESS'), findsOneWidget);
-      expect(find.text('No posted jobs yet.'), findsOneWidget);
+      // Every job is finished, so none is "posted yet" (mobile household
+      // audit, 2026-11-23).
+      expect(find.text('No jobs in progress right now.'), findsOneWidget);
       expect(find.text('Driver'), findsNothing);
       expect(find.text('laundry'), findsNothing);
     },

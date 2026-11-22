@@ -7139,6 +7139,7 @@ export default function AppViews({
                               endDate={job.jobEndDate}
                               workingDays={job.estimatedWorkingDays}
                               finished={job.status === "Completed"}
+                              cancelled={isCancelled}
                             />
 
                             {isCancelled ? (

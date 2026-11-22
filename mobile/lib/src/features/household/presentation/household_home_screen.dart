@@ -14,6 +14,7 @@ import '../../../core/storage/session_storage.dart';
 import '../../../core/theme/gawago_colors.dart';
 import '../../../shared/constants/gawago_options.dart';
 import '../../../shared/utils/display_formatters.dart';
+import '../../../shared/utils/signup_validation.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
@@ -317,6 +318,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen>
       ),
       _Page.postJob => _PostJob(
         repository: _repository,
+        visible: _page == _Page.postJob,
         onCancel: () => _select(_Page.dashboard),
         onOpenJobs: () => _select(_Page.jobs),
         onCreated: _openJobMatches,
@@ -700,6 +702,7 @@ class _DashboardState extends State<_Dashboard> {
               if (inProcessJobs.isEmpty)
                 _HouseholdEmptyJobsCard(
                   onTap: () => widget.onNavigate(_Page.postJob),
+                  hasPastJobs: jobs.isNotEmpty,
                 )
               else
                 ...inProcessJobs.map(
@@ -712,6 +715,8 @@ class _DashboardState extends State<_Dashboard> {
                       onMarkDone: () => _markDone(job),
                       onCancel: () => _cancelJob(job),
                       onOpenDetails: () => _openJobDetail(job.id),
+                      onViewWorker: (application) =>
+                          _openApplicantDetail(job, application),
                     ),
                   ),
                 ),
@@ -808,6 +813,7 @@ class _InProcessJobCard extends StatelessWidget {
     required this.onMarkDone,
     required this.onCancel,
     required this.onOpenDetails,
+    required this.onViewWorker,
   });
 
   final HouseholdJob job;
@@ -820,6 +826,47 @@ class _InProcessJobCard extends StatelessWidget {
   /// Workers > View Job Details; the web card has Edit Job on it (full
   /// audit, 2026-11-16).
   final VoidCallback onOpenDetails;
+
+  /// The hired worker's profile, route and contact. The card showed their
+  /// name with no way to open them; the web card has "View Worker & Route"
+  /// (mobile household audit, 2026-11-23).
+  final ValueChanged<HouseholdApplication> onViewWorker;
+
+  /// Edit Job (open jobs) and Cancel Job, as small links under the card.
+  Widget _editCancelLinks({required bool showEdit, required bool showCancel}) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 18,
+      children: [
+        if (showEdit)
+          TextButton.icon(
+            key: const ValueKey('household-dashboard-edit-job'),
+            onPressed: onOpenDetails,
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: const Text(
+              'Edit Job',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: GawaGoColors.leafDeep,
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        if (showCancel)
+          TextButton(
+            onPressed: onCancel,
+            style: TextButton.styleFrom(
+              foregroundColor: GawaGoColors.danger,
+              padding: EdgeInsets.zero,
+            ),
+            child: const Text(
+              'Cancel Job',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+            ),
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1093,6 +1140,29 @@ class _InProcessJobCard extends StatelessWidget {
                 ),
               ),
             ],
+            ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  key: const ValueKey('household-dashboard-view-worker'),
+                  onPressed: () => onViewWorker(assignedApp),
+                  icon: const Icon(Icons.route_outlined, size: 16),
+                  label: const Text('View Worker & Route'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: GawaGoColors.leafDeep,
+                    side: const BorderSide(
+                      color: GawaGoColors.primary,
+                      width: 1.5,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ],
             if (job.canCancel) ...[
               const SizedBox(height: 8),
               Center(
@@ -1153,24 +1223,47 @@ class _InProcessJobCard extends StatelessWidget {
                 ),
               ),
             ),
+            // The note says to edit the dates or cancel the job; the card had
+            // neither button, as the web one does (mobile household audit,
+            // 2026-11-23).
+            const SizedBox(height: 8),
+            _editCancelLinks(
+              showEdit: job.status == 'open',
+              showCancel: job.canCancel,
+            ),
           ] else ...[
+            if (hasApplicants || awaitingReply) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onViewApplicants,
+                  icon: const Icon(Icons.groups_outlined, size: 16),
+                  label: const Text('View Applicants'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: GawaGoColors.leafDeep,
+                    side: const BorderSide(
+                      color: GawaGoColors.primary,
+                      width: 1.5,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            // Browse Workers stays while the job is open: once anyone applied
+            // or was invited it gave way to View Applicants, so there was no
+            // looking for other workers (mobile household audit, 2026-11-23).
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: hasApplicants || awaitingReply
-                    ? onViewApplicants
-                    : onBrowseWorkers,
-                icon: Icon(
-                  hasApplicants || awaitingReply
-                      ? Icons.groups_outlined
-                      : Icons.search,
-                  size: 16,
-                ),
-                label: Text(
-                  hasApplicants || awaitingReply
-                      ? 'View Applicants'
-                      : 'Browse Workers',
-                ),
+                key: const ValueKey('household-dashboard-browse-workers'),
+                onPressed: onBrowseWorkers,
+                icon: const Icon(Icons.search, size: 16),
+                label: const Text('Browse Workers'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: GawaGoColors.leafDeep,
                   side: const BorderSide(
@@ -1205,42 +1298,7 @@ class _InProcessJobCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 18,
-              children: [
-                TextButton.icon(
-                  key: const ValueKey('household-dashboard-edit-job'),
-                  onPressed: onOpenDetails,
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                  label: const Text(
-                    'Edit Job',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                  style: TextButton.styleFrom(
-                    foregroundColor: GawaGoColors.leafDeep,
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
-                TextButton(
-                  onPressed: onCancel,
-                  style: TextButton.styleFrom(
-                    foregroundColor: GawaGoColors.danger,
-                    padding: EdgeInsets.zero,
-                  ),
-                  child: const Text(
-                    'Cancel Job',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            _editCancelLinks(showEdit: true, showCancel: true),
           ],
         ],
       ),
@@ -1371,33 +1429,33 @@ class _PendingReviewJobCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: assignedApp != null ? onRate : null,
-                  icon: const Icon(Icons.star_rounded, size: 16),
-                  label: const Text('Rate & Review'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: GawaGoColors.primary,
-                    foregroundColor: GawaGoColors.onPrimary,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: assignedApp != null ? onRate : null,
+              icon: const Icon(Icons.star_rounded, size: 16),
+              label: const Text('Rate & Review'),
+              style: FilledButton.styleFrom(
+                backgroundColor: GawaGoColors.primary,
+                foregroundColor: GawaGoColors.onPrimary,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              const SizedBox(width: 10),
-              TextButton.icon(
-                onPressed: onReport,
-                icon: const Icon(Icons.flag_outlined, size: 16),
-                label: const Text('Complain'),
-                style: TextButton.styleFrom(
-                  foregroundColor: GawaGoColors.danger,
-                ),
-              ),
-            ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // "File a Complaint", as on the web; it read "Complain" (mobile
+          // household audit, 2026-11-23). On its own line so the longer label
+          // fits a phone.
+          Center(
+            child: TextButton.icon(
+              onPressed: onReport,
+              icon: const Icon(Icons.flag_outlined, size: 16),
+              label: const Text('File a Complaint'),
+              style: TextButton.styleFrom(foregroundColor: GawaGoColors.danger),
+            ),
           ),
         ],
       ),
@@ -1439,9 +1497,16 @@ class _JobStatusPill extends StatelessWidget {
 }
 
 class _HouseholdEmptyJobsCard extends StatelessWidget {
-  const _HouseholdEmptyJobsCard({required this.onTap});
+  const _HouseholdEmptyJobsCard({
+    required this.onTap,
+    this.hasPastJobs = false,
+  });
 
   final VoidCallback onTap;
+
+  /// "No posted jobs yet." was wrong for a household whose jobs are all
+  /// finished (mobile household audit, 2026-11-23).
+  final bool hasPastJobs;
 
   @override
   Widget build(BuildContext context) {
@@ -1449,7 +1514,11 @@ class _HouseholdEmptyJobsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('No posted jobs yet.'),
+          Text(
+            hasPastJobs
+                ? 'No jobs in progress right now.'
+                : 'No posted jobs yet.',
+          ),
           const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: onTap,
@@ -1570,9 +1639,16 @@ class _PostJob extends StatefulWidget {
     required this.onCancel,
     this.onOpenJobs,
     this.onNetworkUncertainty,
+    this.visible = true,
   });
 
   final HouseholdRepository repository;
+
+  /// Whether the page is the one on screen. It stays alive in the
+  /// IndexedStack, so its posting check is re-run each time it comes back:
+  /// fetched once, it still said "Mark it as done" after the job was marked
+  /// done and rated (mobile household audit, 2026-11-23).
+  final bool visible;
   final ValueChanged<HouseholdJob> onCreated;
   final VoidCallback onCancel;
 
@@ -1605,6 +1681,23 @@ class _PostJobState extends State<_PostJob> {
   LatLng? _pin;
   final List<String> _imagePaths = [];
   bool _posting = false;
+
+  // The form fields and the map, so a refused Post Job can bring the first
+  // problem into view: the errors sat above the screen while the person
+  // looked at the button (mobile household audit, 2026-11-23).
+  final _fieldsKey = GlobalKey();
+  final _mapKey = GlobalKey();
+
+  void _showFirstError() {
+    final onlyPin = _errors.keys.every((key) => key == 'pin');
+    final target = (onlyPin ? _mapKey : _fieldsKey).currentContext;
+    if (target == null) return;
+    Scrollable.ensureVisible(
+      target,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+    );
+  }
 
   // Set when a finished hire still waits to be marked done or rated; the
   // backend refuses the post until then (2026-11-02).
@@ -1662,6 +1755,10 @@ class _PostJobState extends State<_PostJob> {
     for (final controller in [_rate, _slots, _customService]) {
       controller.addListener(_refreshErrors);
     }
+    _loadPostingStatus();
+  }
+
+  void _loadPostingStatus() {
     widget.repository.getPostingStatus().then(
       (status) {
         if (mounted) setState(() => _postingStatus = status);
@@ -1669,6 +1766,12 @@ class _PostJobState extends State<_PostJob> {
       // The backend still refuses the post with the same message.
       onError: (_) {},
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant _PostJob oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.visible && !oldWidget.visible) _loadPostingStatus();
   }
 
   bool get _postBlocked => _postingStatus?.canPost == false;
@@ -1787,6 +1890,9 @@ class _PostJobState extends State<_PostJob> {
     if (_posting) return;
     if (_errors.isNotEmpty) {
       setState(() => _showErrors = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showFirstError();
+      });
       return;
     }
     final serviceType = _serviceType!;
@@ -1965,60 +2071,66 @@ class _PostJobState extends State<_PostJob> {
                       final errors = _showErrors
                           ? _errors
                           : const <String, String>{};
-                      final fields = _PostJobFields(
-                        errors: errors,
-                        title: _title,
-                        description: _description,
-                        street: _location,
-                        rate: _rate,
-                        slots: _slots,
-                        customService: _customService,
-                        serviceType: _skill,
-                        scheduleType: _scheduleType,
-                        barangay: _barangay,
-                        rateType: _rateType,
-                        spanHint: describeJobSpan(_startDate, _endDate),
-                        startDateLabel: _startDate == null
-                            ? 'mm/dd/yyyy'
-                            : '${_startDate!.month.toString().padLeft(2, '0')}/${_startDate!.day.toString().padLeft(2, '0')}/${_startDate!.year}',
-                        endDateLabel: _endDate == null
-                            ? 'mm/dd/yyyy'
-                            : '${_endDate!.month.toString().padLeft(2, '0')}/${_endDate!.day.toString().padLeft(2, '0')}/${_endDate!.year}',
-                        onServiceChanged: (value) =>
-                            setState(() => _skill = value),
-                        onScheduleChanged: (value) => setState(
-                          () => _scheduleType = value ?? _scheduleType,
+                      final fields = KeyedSubtree(
+                        key: _fieldsKey,
+                        child: _PostJobFields(
+                          errors: errors,
+                          title: _title,
+                          description: _description,
+                          street: _location,
+                          rate: _rate,
+                          slots: _slots,
+                          customService: _customService,
+                          serviceType: _skill,
+                          scheduleType: _scheduleType,
+                          barangay: _barangay,
+                          rateType: _rateType,
+                          spanHint: describeJobSpan(_startDate, _endDate),
+                          startDateLabel: _startDate == null
+                              ? 'mm/dd/yyyy'
+                              : '${_startDate!.month.toString().padLeft(2, '0')}/${_startDate!.day.toString().padLeft(2, '0')}/${_startDate!.year}',
+                          endDateLabel: _endDate == null
+                              ? 'mm/dd/yyyy'
+                              : '${_endDate!.month.toString().padLeft(2, '0')}/${_endDate!.day.toString().padLeft(2, '0')}/${_endDate!.year}',
+                          onServiceChanged: (value) =>
+                              setState(() => _skill = value),
+                          onScheduleChanged: (value) => setState(
+                            () => _scheduleType = value ?? _scheduleType,
+                          ),
+                          // A job in another barangay is pinned there, not at
+                          // the household's home pin.
+                          onBarangayChanged: (value) => setState(() {
+                            if (value != _barangay) _pin = null;
+                            _barangay = value;
+                          }),
+                          onRateTypeChanged: (value) =>
+                              setState(() => _rateType = value ?? _rateType),
+                          onPickStartDate: () async {
+                            final value = await showDatePicker(
+                              context: context,
+                              firstDate: DateTime.now(),
+                              lastDate: DateTime.now().add(
+                                const Duration(days: 730),
+                              ),
+                            );
+                            if (value != null) {
+                              setState(() => _startDate = value);
+                            }
+                          },
+                          onPickEndDate: () async {
+                            final value = await showDatePicker(
+                              context: context,
+                              firstDate: _startDate ?? DateTime.now(),
+                              lastDate: DateTime.now().add(
+                                const Duration(days: 730),
+                              ),
+                            );
+                            if (value != null) setState(() => _endDate = value);
+                          },
                         ),
-                        // A job in another barangay is pinned there, not at
-                        // the household's home pin.
-                        onBarangayChanged: (value) => setState(() {
-                          if (value != _barangay) _pin = null;
-                          _barangay = value;
-                        }),
-                        onRateTypeChanged: (value) =>
-                            setState(() => _rateType = value ?? _rateType),
-                        onPickStartDate: () async {
-                          final value = await showDatePicker(
-                            context: context,
-                            firstDate: DateTime.now(),
-                            lastDate: DateTime.now().add(
-                              const Duration(days: 730),
-                            ),
-                          );
-                          if (value != null) setState(() => _startDate = value);
-                        },
-                        onPickEndDate: () async {
-                          final value = await showDatePicker(
-                            context: context,
-                            firstDate: _startDate ?? DateTime.now(),
-                            lastDate: DateTime.now().add(
-                              const Duration(days: 730),
-                            ),
-                          );
-                          if (value != null) setState(() => _endDate = value);
-                        },
                       );
                       final map = Column(
+                        key: _mapKey,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _PostJobMapPanel(
@@ -2729,10 +2841,20 @@ class _PostJobMapPanelState extends State<_PostJobMapPanel> {
         ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: SizedBox(
-            height: 462,
+            // Shorter, and one finger scrolls the page: at 462 px with every
+            // gesture on, a swipe over the map moved it instead of the page,
+            // and the form couldn't be scrolled past (mobile household audit,
+            // 2026-11-23). Two fingers move or zoom the map; a tap pins.
+            height: 320,
             child: FlutterMap(
               mapController: _controller,
               options: MapOptions(
+                interactionOptions: const InteractionOptions(
+                  flags:
+                      InteractiveFlag.pinchZoom |
+                      InteractiveFlag.pinchMove |
+                      InteractiveFlag.doubleTapZoom,
+                ),
                 // Fallback is Tayabas City (the service area), the same
                 // center the worker screens use -- not the whole country,
                 // where a tap can't place a usable pin.
@@ -2763,6 +2885,11 @@ class _PostJobMapPanelState extends State<_PostJobMapPanel> {
               ],
             ),
           ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Tap the map to place the pin. Use two fingers to move or zoom it.',
+          style: TextStyle(color: GawaGoColors.textMuted, fontSize: 12),
         ),
         const SizedBox(height: 10),
         Wrap(
@@ -2861,12 +2988,17 @@ class _PostJobImagesBox extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
+                    // Phone wording: there's nothing to drag or click
+                    // (mobile household audit, 2026-11-23).
                     const Text(
-                      'Drag & drop images here',
+                      'Add photos of the job',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 4),
-                    const Text('or click to browse'),
+                    const Text(
+                      'Up to 5 photos, 5 MB each.',
+                      textAlign: TextAlign.center,
+                    ),
                     const SizedBox(height: 8),
                     OutlinedButton(
                       onPressed: onPickImages,
@@ -3501,6 +3633,7 @@ class _HistoryJobCard extends StatelessWidget {
               endDate: job.jobEndDate,
               workingDays: job.estimatedWorkingDays,
               finished: _normalizedJobStatus(job.status) == 'completed',
+              cancelled: _normalizedJobStatus(job.status) == 'cancelled',
             ),
           ] else ...[
             const SizedBox(height: 2),
@@ -4664,7 +4797,9 @@ Widget _buildApplicantCard({
           SnackBar(
             content: Text(
               next == 'rejected'
-                  ? 'Application declined.'
+                  ? status == 'hire_requested'
+                        ? 'Invitation withdrawn. ${application.workerName} has been told.'
+                        : 'Application declined.'
                   : '${application.workerName} is hired. The job is now in progress.',
             ),
           ),
@@ -4692,6 +4827,20 @@ Widget _buildApplicantCard({
     skills: application.workerSkills,
     bio: application.workerBio,
     appliedAgo: formatTimeAgo(application.appliedAt),
+    invited: application.invited || status == 'hire_requested',
+    // A request still waiting can be taken back, as on the website; the
+    // app had no way to (mobile household audit, 2026-11-23).
+    onWithdrawInvite: status == 'hire_requested'
+        ? () async {
+            final confirmed = await _confirmDialog(
+              context,
+              title: 'Withdraw your invitation to ${application.workerName}?',
+              message: "They're told you withdrew it. This can't be undone.",
+              destructive: true,
+            );
+            if (confirmed) await respond('rejected');
+          }
+        : null,
     isTopMatch: topMatchId != null && topMatchId == application.id,
     statusLabel: unavailable
         ? 'Not available right now'
@@ -4794,7 +4943,7 @@ class _SmartMatchedWorkersPanel extends StatelessWidget {
                           ratingCount: worker.ratingCount,
                           distanceLabel: worker.distanceLabel,
                           completedJobs: worker.completedJobs,
-                          rateLabel: _shortRate(worker.workerRate),
+                          rateLabel: _shortRate(worker.displayRate),
                           skills: worker.skills,
                           bio: worker.bio,
                           // Smart Matching order; it has no AI score.
@@ -4980,31 +5129,31 @@ Future<void> _showWorkerMatchProfile(
   required HouseholdJob job,
   required RecommendedWorker worker,
   required VoidCallback onChanged,
+  ValueChanged<int>? onRequestSent,
 }) {
   final requested = _applicationForWorker(
     job,
     worker,
   )?.status.trim().toLowerCase();
-  final alreadyOffered = requested == 'hired' || requested == 'hire_requested';
-  // Only a verified worker can be hired, so say so on the button instead of
-  // leaving it pressable and warning after the tap.
-  final unverified =
-      !alreadyOffered &&
-      worker.verificationStatus.trim().toLowerCase() != 'verified';
+  // The same rule as the list's button: hired, already asked, withdrew,
+  // declined or closed, or not verified. The profile offered "Send Hire
+  // Request" to a worker the list showed as Not Available, and the server
+  // refused it (mobile household audit, 2026-11-23).
+  final blocked = _inviteBlockedLabel(job, worker);
+  final unverified = blocked == 'Not Verified Yet';
   return Navigator.of(context).push(
     MaterialPageRoute(
       builder: (_) => _WorkerProfileScreen(
         subject: _WorkerProfileSubject.fromRecommendation(worker),
         repository: repository,
-        hireEnabled: !alreadyOffered && !unverified,
+        hireEnabled: blocked == null,
         hireLocked: unverified,
-        hireLabel: requested == 'hired'
-            ? 'Hired'
-            : requested == 'hire_requested'
-            ? 'Request Sent'
-            : unverified
-            ? 'Not verified yet'
-            : null,
+        // A worker who applied is hired outright; anyone else is sent a
+        // request to confirm, and the button says so. "Hire Ben" read as if
+        // it hired them (mobile household audit, 2026-11-23).
+        hireLabel:
+            blocked ?? (requested == 'pending' ? null : 'Send Hire Request'),
+        doneLabel: requested == 'pending' ? 'Hired' : 'Request Sent',
         matchBreakdown: AiMatchBreakdown(
           skillContribution: worker.skillContribution,
           proximityContribution: worker.proximityContribution,
@@ -5012,13 +5161,18 @@ Future<void> _showWorkerMatchProfile(
           distanceKm: worker.distanceKm,
           exactSkillMatch: worker.exactSkillMatch,
         ),
-        onHire: () => _hireRecommendedWorker(
-          context: context,
-          repository: repository,
-          job: job,
-          worker: worker,
-          onChanged: onChanged,
-        ),
+        onHire: () {},
+        onHireAsync: () async {
+          final sent = await _hireRecommendedWorker(
+            context: context,
+            repository: repository,
+            job: job,
+            worker: worker,
+            onChanged: onChanged,
+          );
+          if (sent) onRequestSent?.call(worker.id);
+          return sent;
+        },
       ),
     ),
   );
@@ -5396,6 +5550,17 @@ class _ProfileFormState extends State<_ProfileForm> {
   bool _saving = false;
   int _tab = 0;
 
+  /// Problems shown under each field. The phone (and any other refusal) only
+  /// came back as a passing SnackBar from the server (mobile household
+  /// audit, 2026-11-23).
+  Map<String, String> _fieldErrors = {};
+
+  void _clearFieldError(String field) {
+    if (_fieldErrors.containsKey(field)) {
+      setState(() => _fieldErrors = {..._fieldErrors}..remove(field));
+    }
+  }
+
   Future<void> _locateProfilePin() async {
     try {
       var permission = await Geolocator.checkPermission();
@@ -5446,14 +5611,22 @@ class _ProfileFormState extends State<_ProfileForm> {
       ).showSnackBar(const SnackBar(content: Text('Select your barangay.')));
       return;
     }
-    if (_emailChanged && _emailPassword.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Enter your current password to change your email.'),
-        ),
-      );
-      return;
+    final errors = <String, String>{};
+    if (_first.text.trim().isEmpty) errors['first'] = 'Enter your first name.';
+    if (_last.text.trim().isEmpty) errors['last'] = 'Enter your last name.';
+    if (!isValidEmailAddress(_email.text)) {
+      errors['email'] =
+          'Enter a complete email address, e.g. juan@example.com.';
     }
+    if (_emailChanged && _emailPassword.text.isEmpty) {
+      errors['emailPassword'] =
+          'Enter your current password to change your email.';
+    }
+    if (!isValidMobileNumber(_phone.text)) {
+      errors['phone'] = phoneFormatMessage;
+    }
+    setState(() => _fieldErrors = errors);
+    if (errors.isNotEmpty) return;
     setState(() => _saving = true);
     try {
       await widget.repository.updateProfile({
@@ -5477,7 +5650,19 @@ class _ProfileFormState extends State<_ProfileForm> {
         ).showSnackBar(const SnackBar(content: Text('Profile saved.')));
       }
     } catch (error) {
-      if (mounted) {
+      if (!mounted) return;
+      final fieldErrors = error is ApiException
+          ? serverFieldErrors(error.data, const {
+              'first_name': 'first',
+              'last_name': 'last',
+              'email': 'email',
+              'current_password': 'emailPassword',
+              'phone': 'phone',
+            })
+          : const <String, String>{};
+      if (fieldErrors.isNotEmpty) {
+        setState(() => _fieldErrors = fieldErrors);
+      } else {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(friendlyApiError(error))));
@@ -5615,8 +5800,18 @@ class _ProfileFormState extends State<_ProfileForm> {
                   style: TextStyle(color: GawaGoColors.ink, fontSize: 13),
                 ),
                 const SizedBox(height: 16),
-                _ProfileTextField(label: 'First Name', controller: _first),
-                _ProfileTextField(label: 'Last Name', controller: _last),
+                _ProfileTextField(
+                  label: 'First Name',
+                  controller: _first,
+                  errorText: _fieldErrors['first'],
+                  onChanged: (_) => _clearFieldError('first'),
+                ),
+                _ProfileTextField(
+                  label: 'Last Name',
+                  controller: _last,
+                  errorText: _fieldErrors['last'],
+                  onChanged: (_) => _clearFieldError('last'),
+                ),
                 _ProfileTextField(
                   label: 'Username',
                   controller: _username,
@@ -5626,7 +5821,10 @@ class _ProfileFormState extends State<_ProfileForm> {
                   label: 'Email',
                   controller: _email,
                   keyboardType: TextInputType.emailAddress,
-                  onChanged: (_) => setState(() {}),
+                  errorText: _fieldErrors['email'],
+                  onChanged: (_) => setState(
+                    () => _fieldErrors = {..._fieldErrors}..remove('email'),
+                  ),
                 ),
                 if (_emailChanged)
                   _ProfileTextField(
@@ -5634,14 +5832,19 @@ class _ProfileFormState extends State<_ProfileForm> {
                     label: 'Current password (needed to change your email)',
                     controller: _emailPassword,
                     obscureText: true,
+                    errorText: _fieldErrors['emailPassword'],
+                    onChanged: (_) => _clearFieldError('emailPassword'),
                   ),
                 _ProfileTextField(
+                  key: const ValueKey('household-profile-phone'),
                   label: 'Phone Number',
                   controller: _phone,
                   prefixText: '+63 ',
                   hint: '9XXXXXXXXX',
                   keyboardType: TextInputType.phone,
                   maxLength: 10,
+                  errorText: _fieldErrors['phone'],
+                  onChanged: (_) => _clearFieldError('phone'),
                 ),
                 _ProfileDropdownField(
                   label: 'Barangay',
@@ -5929,6 +6132,7 @@ class _ProfileTextField extends StatelessWidget {
     this.keyboardType,
     this.maxLength,
     this.onChanged,
+    this.errorText,
   });
 
   final String label;
@@ -5940,6 +6144,9 @@ class _ProfileTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final int? maxLength;
   final ValueChanged<String>? onChanged;
+
+  /// Shown under the box in red (mobile household audit, 2026-11-23).
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
@@ -5961,6 +6168,8 @@ class _ProfileTextField extends StatelessWidget {
           hintText: hint,
           prefixText: prefixText,
           counterText: '',
+          errorText: errorText,
+          errorMaxLines: 3,
           filled: true,
           fillColor: GawaGoColors.surfaceMuted,
           contentPadding: const EdgeInsets.symmetric(
@@ -6751,7 +6960,12 @@ class _NotificationsState extends State<_Notifications> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
           ),
-          if (application != null && job != null)
+          // Not for a job that's over: it opened a hiring screen for a
+          // cancelled job (mobile household audit, 2026-11-23).
+          if (application != null &&
+              job != null &&
+              job.status != 'cancelled' &&
+              job.status != 'completed')
             FilledButton(
               onPressed: () {
                 Navigator.pop(context);
@@ -6766,9 +6980,17 @@ class _NotificationsState extends State<_Notifications> {
                   ),
                 );
               },
-              child: const Text('View applicant'),
+              child: Text(
+                application.status == 'hired' ||
+                        application.status == 'completed'
+                    ? 'View worker'
+                    : 'View applicant',
+              ),
             ),
-          if (application == null && item.targetJobId != null)
+          if (item.targetJobId != null &&
+              (application == null ||
+                  job?.status == 'cancelled' ||
+                  job?.status == 'completed'))
             FilledButton(
               onPressed: () {
                 Navigator.pop(context);
@@ -6995,9 +7217,14 @@ class _HouseholdNotificationPreview extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      const Text(
-                        'Worker profile summary is available in full details.',
-                        style: TextStyle(color: GawaGoColors.textMuted),
+                      // Where this worker stands on the job, instead of the
+                      // placeholder "Worker profile summary is available in
+                      // full details." (mobile household audit, 2026-11-23).
+                      Text(
+                        application!.statusLabel.isNotEmpty
+                            ? application!.statusLabel
+                            : applicationStatusLabel(application!.status),
+                        style: const TextStyle(color: GawaGoColors.textMuted),
                       ),
                     ],
                   ),
@@ -7325,6 +7552,11 @@ class _JobMatchesState extends State<_JobMatches> {
   final Set<int> _sendingWorkerIds = {};
   final Set<int> _sentWorkerIds = {};
 
+  /// A request sent from the worker's profile shows on this list too.
+  void _markRequestSent(int workerId) {
+    if (mounted) setState(() => _sentWorkerIds.add(workerId));
+  }
+
   Future<void> _sendRequest(RecommendedWorker worker) async {
     if (_sendingWorkerIds.contains(worker.id)) return;
     setState(() => _sendingWorkerIds.add(worker.id));
@@ -7445,6 +7677,7 @@ class _JobMatchesState extends State<_JobMatches> {
                           job: widget.job,
                           worker: worker,
                           onChanged: widget.onChanged,
+                          onRequestSent: _markRequestSent,
                         ),
                         onHire: (worker) => _sendRequest(worker),
                         requestBlockedLabel: (worker) =>
@@ -7495,7 +7728,7 @@ class _JobMatchesState extends State<_JobMatches> {
                         ratingCount: worker.ratingCount,
                         distanceLabel: worker.distanceLabel,
                         completedJobs: worker.completedJobs,
-                        rateLabel: _shortRate(worker.workerRate),
+                        rateLabel: _shortRate(worker.displayRate),
                         skills: worker.skills,
                         bio: worker.bio,
                         breakdown: AiMatchBreakdown(
@@ -7521,6 +7754,7 @@ class _JobMatchesState extends State<_JobMatches> {
                           job: widget.job,
                           worker: worker,
                           onChanged: widget.onChanged,
+                          onRequestSent: _markRequestSent,
                         ),
                         onSendRequest: _sendingWorkerIds.contains(worker.id)
                             ? () {}
@@ -7873,7 +8107,10 @@ class _WorkerProfileSubject {
       distanceKm: item.distanceKm,
       distanceLabel: item.distanceLabel,
       matchScore: item.workerMatchScore,
-      matchBasis: 'Based on verification, skills and distance',
+      // The applicant's score is the same AI skill-and-distance score as a
+      // recommendation's; it said verification counted (mobile household
+      // audit, 2026-11-23).
+      matchBasis: 'Based on skill fit & distance',
     );
   }
 
@@ -7891,7 +8128,7 @@ class _WorkerProfileSubject {
       skills: worker.skills,
       hourlyRate: null,
       dailyRate: null,
-      rateFallback: worker.workerRate,
+      rateFallback: worker.displayRate,
       yearsExperience: null,
       distanceKm: worker.distanceKm,
       distanceLabel: worker.distanceLabel,
@@ -7912,6 +8149,8 @@ class _WorkerProfileScreen extends StatefulWidget {
     required this.hireEnabled,
     this.hireLocked = false,
     this.hireLabel,
+    this.onHireAsync,
+    this.doneLabel = 'Request Sent',
     this.matchBreakdown,
     this.mapPanel,
     this.bottomActions = const [],
@@ -7921,6 +8160,13 @@ class _WorkerProfileScreen extends StatefulWidget {
   final HouseholdRepository repository;
   final VoidCallback onHire;
   final bool hireEnabled;
+
+  /// Used instead of [onHire] when the screen should show the outcome: true
+  /// once the request went through, and the button then reads [doneLabel]
+  /// and is off. A request sent from here left "Hire Ben" on the button
+  /// (mobile household audit, 2026-11-23).
+  final Future<bool> Function()? onHireAsync;
+  final String doneLabel;
 
   /// The worker isn't verified yet: the hire button shows as locked, with a
   /// line saying when it opens.
@@ -7953,8 +8199,29 @@ class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
   late final Future<List<GawaGoReview>> _reviews = widget.repository
       .getWorkerReviews(widget.subject.username);
 
-  String get _hireText =>
-      widget.hireLabel ?? 'Hire ${widget.subject.firstName}';
+  bool _done = false;
+  bool _busy = false;
+
+  String get _hireText => _done
+      ? widget.doneLabel
+      : widget.hireLabel ?? 'Hire ${widget.subject.firstName}';
+
+  bool get _hireEnabled => widget.hireEnabled && !_done && !_busy;
+
+  Future<void> _hire() async {
+    final send = widget.onHireAsync;
+    if (send == null) {
+      widget.onHire();
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final sent = await send();
+      if (mounted && sent) setState(() => _done = true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -7968,7 +8235,7 @@ class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
         SizedBox(
           height: 38,
           child: FilledButton(
-            onPressed: widget.hireEnabled ? widget.onHire : null,
+            onPressed: _hireEnabled ? _hire : null,
             style: FilledButton.styleFrom(
               backgroundColor: GawaGoColors.primary,
               foregroundColor: GawaGoColors.onPrimary,
@@ -7998,7 +8265,7 @@ class _WorkerProfileScreenState extends State<_WorkerProfileScreen> {
           _WorkerProfileHeaderCard(
             subject: subject,
             hireLabel: _hireText,
-            onHire: widget.hireEnabled ? widget.onHire : null,
+            onHire: _hireEnabled ? _hire : null,
             locked: widget.hireLocked,
           ),
           if (subject.matchScore != null) ...[
@@ -8307,7 +8574,11 @@ class _WorkerProfileHeaderCard extends StatelessWidget {
                 if (subject.distanceKm != null)
                   _ProfileFactRow(
                     label: 'Distance',
-                    value: '${subject.distanceKm!.toStringAsFixed(1)} km away',
+                    // The backend's distance wording: "0.0 km away" read
+                    // oddly under 1 km (mobile household audit, 2026-11-23).
+                    value: subject.distanceKm! < 1
+                        ? 'Within 1 km'
+                        : '${subject.distanceKm!.toStringAsFixed(1)} km away',
                   )
                 else if (subject.distanceLabel.isNotEmpty)
                   _ProfileFactRow(

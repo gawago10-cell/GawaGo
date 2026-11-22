@@ -109,9 +109,14 @@ class ReviewCreateSerializer(serializers.Serializer):
     target_username = serializers.CharField(max_length=150)
     job_id = serializers.IntegerField()
     job_title = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    # Two decimals accepted, then rounded to the one the model keeps: the
+    # mobile app sent an exact metric average like 4.25, which the field
+    # refused before validate() could replace it with the rounded average,
+    # so the household couldn't rate at all (mobile household audit,
+    # 2026-11-23).
     rating = serializers.DecimalField(
-        max_digits=2,
-        decimal_places=1,
+        max_digits=3,
+        decimal_places=2,
         required=False,
         min_value=1,
         max_value=5,
@@ -151,4 +156,6 @@ class ReviewCreateSerializer(serializers.Serializer):
         metric_average = average_metric_rating(attrs)
         if metric_average is not None:
             attrs["rating"] = metric_average
+        elif attrs.get("rating") is not None:
+            attrs["rating"] = Decimal(attrs["rating"]).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
         return attrs

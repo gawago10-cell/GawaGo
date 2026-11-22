@@ -47,6 +47,7 @@ class MatchResultSerializer(serializers.Serializer):
     available_at_requested_time = serializers.BooleanField()
     rate_score = serializers.FloatField()
     worker_rate = serializers.CharField(allow_blank=True)
+    worker_rate_label = serializers.CharField(allow_blank=True, default="")
     ai_score = serializers.FloatField()
     skill_similarity = serializers.FloatField()
     skill_contribution = serializers.FloatField()

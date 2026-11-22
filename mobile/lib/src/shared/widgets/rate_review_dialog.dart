@@ -69,6 +69,18 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
   // No stars until the household picks: a preset 5 let one tap give a
   // perfect score (second scan, 2026-11-01).
   double _rating = 0;
+
+  /// The average of the rated metrics to one decimal place (the web's
+  /// getReviewMetricAverage), or null. With metrics rated it is the overall
+  /// rating. The exact average (4.25) was sent before, which the API
+  /// refused, so the household couldn't rate (mobile household audit,
+  /// 2026-11-23).
+  double? get _metricAverage {
+    if (_metrics.isEmpty) return null;
+    final average = _metrics.values.reduce((a, b) => a + b) / _metrics.length;
+    return (average * 10).round() / 10;
+  }
+
   final Map<String, int> _metrics = {};
   final _feedback = TextEditingController();
   bool _submitting = false;
@@ -89,9 +101,7 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
     try {
       // With metrics rated, the overall rating is their average (AGENTS.md
       // II.A); the stars only stand alone when no metric was given.
-      final metricAverage = _metrics.isEmpty
-          ? null
-          : _metrics.values.reduce((a, b) => a + b) / _metrics.length;
+      final metricAverage = _metricAverage;
       await widget.onSubmit(
         rating: metricAverage ?? _rating,
         feedback: _feedback.text.trim(),
@@ -180,11 +190,13 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                               minHeight: 34,
                             ),
                             visualDensity: VisualDensity.compact,
-                            onPressed: _submitting
+                            // With metrics rated the stars show their average
+                            // and can't be set apart from it, as on the web.
+                            onPressed: _submitting || _metricAverage != null
                                 ? null
                                 : () => setState(() => _rating = value),
                             icon: Icon(
-                              _rating >= value
+                              (_metricAverage ?? _rating).round() >= value
                                   ? Icons.star_rounded
                                   : Icons.star_border_rounded,
                               color: const Color(0xFFE0A82E),
@@ -197,7 +209,10 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                         // a phone-width dialog.
                         Flexible(
                           child: Text(
-                            _rating == 0
+                            _metricAverage != null
+                                ? '${_metricAverage!.toStringAsFixed(1)}/5 · '
+                                      'average of the metrics below'
+                                : _rating == 0
                                 ? 'Tap a star'
                                 : '${_rating.toStringAsFixed(0)}/5',
                             style: const TextStyle(

@@ -569,7 +569,16 @@ class ApplicantCard extends StatelessWidget {
     required this.onDecline,
     required this.onViewProfile,
     required this.onAccept,
+    this.invited = false,
+    this.onWithdrawInvite,
   });
+
+  /// Reads "Invited ..." instead of "Applied ...".
+  final bool invited;
+
+  /// Takes back a hire request still waiting on the worker; shown beside
+  /// View Profile on an invited card (the web's "Withdraw invite").
+  final VoidCallback? onWithdrawInvite;
 
   final String name;
   final String locationLabel;
@@ -726,7 +735,8 @@ class ApplicantCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        appliedAgo.isEmpty ? 'Applied' : 'Applied $appliedAgo',
+                        '${invited ? 'Invited' : 'Applied'}'
+                        '${appliedAgo.isEmpty ? '' : ' $appliedAgo'}',
                         style: const TextStyle(
                           color: GawaGoColors.textMuted,
                           fontSize: 11.5,
@@ -752,6 +762,14 @@ class ApplicantCard extends StatelessWidget {
                 if (!settled) ...[
                   Expanded(
                     child: _CardAction(label: 'Decline', onPressed: onDecline),
+                  ),
+                  const VerticalDivider(width: 1, color: _cardBorder),
+                ] else if (onWithdrawInvite != null) ...[
+                  Expanded(
+                    child: _CardAction(
+                      label: 'Withdraw invite',
+                      onPressed: onWithdrawInvite!,
+                    ),
                   ),
                   const VerticalDivider(width: 1, color: _cardBorder),
                 ],

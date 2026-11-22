@@ -1023,7 +1023,30 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
       widget.onLogin();
     } catch (error) {
       if (!mounted) return;
-      _showMessage(friendlyApiError(error));
+      // The server's refusals (a taken username or email, a too-common
+      // password, a blocked email or phone) go under their fields too; they
+      // were only a passing SnackBar (mobile household audit, 2026-11-23).
+      final fieldErrors = error is ApiException
+          ? serverFieldErrors(error.data, const {
+              'username': SignupField.username,
+              'email': SignupField.email,
+              'password': SignupField.password,
+              'phone': SignupField.phone,
+              'first_name': SignupField.firstName,
+              'last_name': SignupField.lastName,
+              'skills': SignupField.skills,
+            })
+          : const <String, String>{};
+      if (fieldErrors.isNotEmpty) {
+        setState(() => _errors = fieldErrors);
+        _showMessage(
+          fieldErrors.length == 1
+              ? fieldErrors.values.first
+              : 'Please fix the ${fieldErrors.length} fields marked in red.',
+        );
+      } else {
+        _showMessage(friendlyApiError(error));
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -1703,8 +1726,13 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
                       _WorkerLocationPreview._tayabasCenter,
                   initialZoom: 14,
                   onTap: (_, point) => widget.onChanged(point),
+                  // One finger scrolls the sign-up form; two move or zoom
+                  // the map (mobile household audit, 2026-11-23).
                   interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
+                    flags:
+                        InteractiveFlag.pinchZoom |
+                        InteractiveFlag.pinchMove |
+                        InteractiveFlag.doubleTapZoom,
                   ),
                 ),
                 children: [
@@ -1740,7 +1768,7 @@ class _WorkerLocationPreviewState extends State<_WorkerLocationPreview> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Use your current location, or tap the map so households can see accurate distance and routes.',
+            'Use your current location, or tap the map so households can see accurate distance and routes. Use two fingers to move or zoom the map.',
             style: TextStyle(
               color: GawaGoColors.mutedText,
               fontSize: 9,

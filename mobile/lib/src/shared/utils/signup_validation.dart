@@ -20,6 +20,49 @@ abstract final class SignupField {
 /// Same check as the web form (EMAIL_ADDRESS_PATTERN in appConstants.js).
 final _emailPattern = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$');
 
+bool isValidEmailAddress(String value) => _emailPattern.hasMatch(value.trim());
+
+/// The backend's PHONE_FORMAT_MESSAGE.
+const phoneFormatMessage =
+    'Enter a Philippine mobile number, like 0912 345 6789.';
+
+/// True for a number the backend's clean_mobile_number accepts: the ten
+/// digits after +63 or 0, starting with 9. Blank counts as valid here; the
+/// required check is separate.
+bool isValidMobileNumber(String value) {
+  var digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.isEmpty) return true;
+  if (digits.length == 12 && digits.startsWith('63')) {
+    digits = digits.substring(2);
+  } else if (digits.length == 11 && digits.startsWith('0')) {
+    digits = digits.substring(1);
+  }
+  return RegExp(r'^9\d{9}$').hasMatch(digits);
+}
+
+/// The server's field errors, keyed by the form's own field names, so they
+/// show under the field instead of in a passing SnackBar (mobile household
+/// audit, 2026-11-23). [fields] maps a server field name to a form key.
+Map<String, String> serverFieldErrors(
+  Map<String, dynamic>? data,
+  Map<String, String> fields,
+) {
+  final errors = <String, String>{};
+  if (data == null) return errors;
+  fields.forEach((serverField, formField) {
+    final value = data[serverField];
+    final message = value is List
+        ? value
+              .map((item) => item.toString())
+              .firstWhere((item) => item.trim().isNotEmpty, orElse: () => '')
+        : (value?.toString() ?? '');
+    if (message.trim().isNotEmpty && !errors.containsKey(formField)) {
+      errors[formField] = message.trim();
+    }
+  });
+  return errors;
+}
+
 const _requiredLabels = {
   SignupField.firstName: 'First name',
   SignupField.lastName: 'Last name',
@@ -56,6 +99,10 @@ Map<String, String> signupFieldErrors({
     errors[SignupField.email] =
         'Enter a complete email address, e.g. juan@example.com.';
   }
+  if (!errors.containsKey(SignupField.phone) &&
+      !isValidMobileNumber(value(SignupField.phone))) {
+    errors[SignupField.phone] = phoneFormatMessage;
+  }
   if (barangay == null || barangay.isEmpty) {
     errors[SignupField.barangay] = 'Barangay is required.';
   }
@@ -76,7 +123,8 @@ Map<String, String> signupFieldErrors({
       text[SignupField.customSkill] ?? '',
     );
     if (skillsProblem != null) {
-      final aboutTypedSkill = skills.any(isOtherSkillChoice) &&
+      final aboutTypedSkill =
+          skills.any(isOtherSkillChoice) &&
           skillsProblem.startsWith('Type the name');
       errors[aboutTypedSkill ? SignupField.customSkill : SignupField.skills] =
           skillsProblem;

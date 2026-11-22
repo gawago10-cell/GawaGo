@@ -252,7 +252,13 @@ class HouseholdApplication {
     required this.appliedAt,
     required this.routePoints,
     this.householdCanReview = false,
+    this.invited = false,
   });
+
+  /// The household invited this worker rather than the worker applying
+  /// (the API's `invited`). The card said "Applied 1 minute ago" for an
+  /// invitation (mobile household audit, 2026-11-23).
+  final bool invited;
 
   final int id;
   final int workerId;
@@ -343,6 +349,7 @@ class HouseholdApplication {
       workerCompletedJobs: _integer(json['worker_completed_jobs']),
       workerMatchScore: _number(json['worker_match_score']),
       appliedAt: _text(json['applied_at']),
+      invited: json['invited'] == true,
       routePoints: _list(
         json['route_points'],
       ).map(RoutePoint.fromJson).whereType<RoutePoint>().toList(),
@@ -437,6 +444,7 @@ class RecommendedWorker {
     required this.matchScore,
     required this.ratingLabel,
     required this.workerRate,
+    this.workerRateLabel = '',
     required this.aiScore,
     required this.skillSimilarity,
     required this.skillContribution,
@@ -467,6 +475,14 @@ class RecommendedWorker {
   final double matchScore;
   final String ratingLabel;
   final String workerRate;
+
+  /// "PHP 500.00 / day" or "PHP 120.00 / hour": the rate with its unit,
+  /// which [workerRate] lacks (mobile household audit, 2026-11-23).
+  final String workerRateLabel;
+
+  /// The labelled rate when the server sent one, else the bare number.
+  String get displayRate =>
+      workerRateLabel.isNotEmpty ? workerRateLabel : workerRate;
   final double aiScore;
 
   /// The skill fit itself in [0, 1], and the two weighted terms that sum to
@@ -498,6 +514,7 @@ class RecommendedWorker {
       matchScore: _number(json['match_score']) ?? 0,
       ratingLabel: _text(json['rating_label']),
       workerRate: _text(json['worker_rate']),
+      workerRateLabel: _text(json['worker_rate_label']),
       aiScore: _number(json['ai_score']) ?? 0,
       skillSimilarity: _number(json['skill_similarity']) ?? 0,
       skillContribution: _number(json['skill_contribution']) ?? 0,

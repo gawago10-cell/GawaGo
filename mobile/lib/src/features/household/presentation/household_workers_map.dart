@@ -569,9 +569,13 @@ class _AreaWorkerTile extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const TextSpan(
-                        text: '/day',
-                        style: TextStyle(
+                      TextSpan(
+                        // Hourly rates read as daily (mobile household
+                        // audit, 2026-11-23).
+                        text: worker.workerRateLabel.contains('hour')
+                            ? '/hr'
+                            : '/day',
+                        style: const TextStyle(
                           color: GawaGoColors.textMuted,
                           fontSize: 12,
                         ),
