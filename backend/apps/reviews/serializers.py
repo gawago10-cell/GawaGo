@@ -97,11 +97,12 @@ class ReviewSerializer(serializers.ModelSerializer):
         return obj.target.get_full_name().strip() or obj.target.username
 
     def get_overall_rating(self, obj):
-        metrics = [obj.quality_of_work, obj.punctuality, obj.communication, obj.professionalism]
-        valid_metrics = [m for m in metrics if m is not None]
-        if not valid_metrics:
-            return obj.rating
-        return round(sum(valid_metrics) / len(valid_metrics), 1)
+        # The same rounding as the stored rating and the profile average:
+        # Python's round() sent 4.25 down to 4.2 while `rating` held 4.3.
+        from apps.reviews.services import effective_review_rating
+
+        value = effective_review_rating(obj)
+        return float(value) if value is not None else None
 
 
 class ReviewCreateSerializer(serializers.Serializer):

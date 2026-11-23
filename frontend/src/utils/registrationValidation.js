@@ -26,6 +26,9 @@ export const WORKER_REGISTRATION_FIELD_ORDER = [
   "barangay",
   "streetAddress",
   "location",
+  "hourlyRate",
+  "dailyRate",
+  "yearsExperience",
   "skills",
   "customSkill",
   "password",
@@ -91,6 +94,10 @@ const SERVER_REGISTRATION_FIELDS = {
   first_name: "firstName",
   last_name: "lastName",
   skills: "skills",
+  hourly_rate: "hourlyRate",
+  daily_rate: "dailyRate",
+  service_rate: "dailyRate",
+  years_experience: "yearsExperience",
 };
 
 /**

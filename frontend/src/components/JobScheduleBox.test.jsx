@@ -53,11 +53,27 @@ describe("JobScheduleBox", () => {
     expect(screen.getByText("Ended")).toBeTruthy();
   });
 
-  it("ends a one-day job on its start day when no end date was set", () => {
+  // One date, not the same day as both start and end (mobile worker audit,
+  // 2026-11-23).
+  it("shows a one-day job's single date once", () => {
     at("2026-10-31");
-    render(<JobScheduleBox startDate="2026-10-22" endDate="" workingDays={1} />);
-    expect(screen.getAllByText("Thu, Oct 22, 2026")).toHaveLength(2);
+    const { rerender } = render(<JobScheduleBox startDate="2026-10-22" endDate="" workingDays={1} />);
+    expect(screen.getAllByText("Thu, Oct 22, 2026")).toHaveLength(1);
+    expect(screen.getByText("Date")).toBeTruthy();
+    expect(screen.queryByText("Started")).toBeNull();
     expect(screen.getByText("1 working day")).toBeTruthy();
+
+    rerender(<JobScheduleLines startDate="2026-12-02" endDate="2026-12-02" cancelled />);
+    expect(screen.getAllByText("Wed, Dec 2, 2026")).toHaveLength(1);
+    expect(screen.getByText("Planned date")).toBeTruthy();
+  });
+
+  it("words a cancelled job's dates as planned in the list too", () => {
+    at("2026-11-23");
+    render(<JobScheduleLines startDate="2026-11-22" endDate="2026-11-23" cancelled />);
+    expect(screen.getByText("Planned start")).toBeTruthy();
+    expect(screen.getByText("Planned end")).toBeTruthy();
+    expect(screen.queryByText("Started")).toBeNull();
   });
 
   it("lists the schedule as lines for My Applications, or its wording without dates", () => {

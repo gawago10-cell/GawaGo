@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/gawago_colors.dart';
 import '../../features/worker/data/worker_models.dart';
+import '../utils/display_formatters.dart';
 import 'async_state.dart';
 import 'status_card.dart';
 
@@ -144,9 +145,7 @@ class _Summary extends StatelessWidget {
   Widget build(BuildContext context) {
     final ratings = reviews.map((item) => item.rating).whereType<double>();
     final count = ratings.length;
-    final average = count == 0
-        ? null
-        : ratings.reduce((left, right) => left + right) / count;
+    final average = averageRating(ratings);
     final distribution = {
       for (final star in [5, 4, 3, 2, 1])
         star: reviews.where((review) => review.rating?.round() == star).length,

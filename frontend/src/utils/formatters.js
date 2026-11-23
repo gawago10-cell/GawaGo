@@ -39,8 +39,22 @@ export function formatWorkerRate(amount, suffix = "") {
 
 // Same wording as the Find Jobs cards ("PHP 600.00/per day"); "PHP 600.00 /
 // Per Day" wrapped onto two lines in table cells.
+/**
+ * What a rate is per, for "PHP 650.00 / day": "day", "hour", or "job" for a
+ * fixed rate, from the rate type label ("Per Day", "Per Hour", "Fixed Rate")
+ * or value ("per_day"). Screens wrote "/per day" and "/ Per Day" (mobile
+ * worker audit, 2026-11-23); the mobile app's rateUnit matches.
+ */
+export function rateUnit(rateType) {
+  const value = String(rateType || "").toLowerCase();
+  if (value.includes("hour")) return "hour";
+  if (value.includes("fixed")) return "job";
+  return "day";
+}
+
+/** "PHP 650.00 / day". */
 export function formatRate(amount, rateType) {
-  return `${formatCurrency(amount)}/${(rateType || "Per Day").toLowerCase()}`;
+  return `${formatCurrency(amount)} / ${rateUnit(rateType)}`;
 }
 
 export function isImagePreviewUrl(url) {
@@ -285,7 +299,7 @@ export function getDisplayRating(ratingCount, averageRating) {
   if (!ratingCount || averageRating == null) {
     return "No ratings yet";
   }
-  return `${Number(averageRating).toFixed(2)} / 5`;
+  return `${Number(averageRating).toFixed(1)} / 5`;
 }
 
 export function sanitizePhilippinesPhone(value) {

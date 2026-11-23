@@ -33,10 +33,22 @@ export function workerProfileFieldErrors(form) {
   if (!isValidMobileNumber(form?.phone)) {
     errors.phone = PHONE_FORMAT_MESSAGE;
   }
-  for (const field of ["hourlyRate", "dailyRate"]) {
-    const value = form?.[field];
-    if (String(value ?? "").trim() !== "" && !(Number(value) >= 0)) {
-      errors[field] = "A rate can't be below PHP 0.";
+  // The server's RATE_LIMITS (mobile worker audit, 2026-11-23): blank or 0
+  // means not given; a given rate is PHP 1 up to a sanity ceiling.
+  for (const [field, max] of [["hourlyRate", 10000], ["dailyRate", 100000]]) {
+    const text = String(form?.[field] ?? "").trim();
+    if (text === "") {
+      continue;
+    }
+    const value = Number(text);
+    if (!Number.isFinite(value)) {
+      errors[field] = "Enter the rate as a number.";
+    } else if (value < 0) {
+      errors[field] = "A rate can't be negative.";
+    } else if (value > 0 && value < 1) {
+      errors[field] = "Enter at least PHP 1, or leave it blank.";
+    } else if (value > max) {
+      errors[field] = `Enter PHP ${max.toLocaleString("en-US")} or less.`;
     }
   }
   if (!errors.hourlyRate && !errors.dailyRate && !isPositiveRate(form?.hourlyRate) && !isPositiveRate(form?.dailyRate)) {
@@ -56,6 +68,7 @@ const SERVER_PROFILE_FIELDS = {
   daily_rate: "dailyRate",
   service_rate: "dailyRate",
   current_password: "currentPassword",
+  years_experience: "yearsExperience",
 };
 
 /** The server's field errors on a profile save, keyed by form field. */

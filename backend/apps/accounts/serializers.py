@@ -74,6 +74,61 @@ MAX_WORKER_SKILLS = 3
 # WorkerSkill.skill_name's column size; every profile skill gets a WorkerSkill row.
 SKILL_NAME_MAX_LENGTH = 120
 
+# Sanity limits for what a worker says about themselves (mobile worker audit,
+# 2026-11-23): 200 years of experience and PHP 99,999,999 a day were saved.
+# A rate of 0 or blank means "not given"; one that is given pays at least
+# PHP 1, like a job.
+MAX_YEARS_EXPERIENCE = 60
+RATE_LIMITS = {
+    "hourly_rate": (Decimal("1"), Decimal("10000")),
+    "daily_rate": (Decimal("1"), Decimal("100000")),
+}
+
+
+def years_experience_field():
+    return serializers.IntegerField(
+        required=False,
+        min_value=0,
+        max_value=MAX_YEARS_EXPERIENCE,
+        error_messages={
+            "min_value": "Years of experience can't be negative.",
+            "max_value": f"Enter {MAX_YEARS_EXPERIENCE} years or fewer.",
+            "invalid": "Enter years of experience as a whole number.",
+        },
+    )
+
+
+def rate_field():
+    return serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        min_value=Decimal("0.00"),
+        error_messages={
+            "min_value": "A rate can't be negative.",
+            "invalid": "Enter the rate as a number.",
+            "max_digits": "Enter a smaller rate.",
+            "max_whole_digits": "Enter a smaller rate.",
+            "max_decimal_places": "Use at most 2 decimal places.",
+        },
+    )
+
+
+def validate_rate_limits(attrs):
+    errors = {}
+    for field, (low, high) in RATE_LIMITS.items():
+        value = attrs.get(field)
+        if value is None or Decimal(str(value)) == 0:
+            continue
+        value = Decimal(str(value))
+        if value < low:
+            errors[field] = f"Enter at least PHP {low:,.0f}, or leave it blank."
+        elif value > high:
+            errors[field] = f"Enter PHP {high:,.0f} or less."
+    if errors:
+        raise serializers.ValidationError(errors)
+
 
 def viewer_may_see_credential_review(request, worker_id):
     """Admin review notes and the reviewing admin's identity belong to staff
@@ -140,6 +195,7 @@ def validate_worker_profile_requirements(attrs, *, role, profile=None):
             )
         attrs["skills"] = deduplicated
 
+    validate_rate_limits(attrs)
     hourly_rate = attrs.get("hourly_rate", getattr(profile, "hourly_rate", None))
     daily_rate = attrs.get("daily_rate", getattr(profile, "daily_rate", None))
     if not any(
@@ -292,16 +348,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return obj.user.get_full_name().strip() or obj.user.username
 
     def get_verification_stage(self, obj):
-        """Where the account stands: verified, pending_review (documents in the
-        queue), rejected, or not_submitted. verification_status reads
-        "pending" both before anything is sent and while it waits for review,
-        which is how admins saw nine "Pending" households with one in the
-        queue (system scan, 2026-11-01)."""
-        status = (obj.verification_status or "").lower()
-        if status in ("verified", "rejected"):
-            return status
-        latest = obj.user.verification_requests.order_by("-submitted_at").first()
-        return "pending_review" if latest and latest.status == "pending" else "not_submitted"
+        return obj.verification_stage
 
     def get_verification_request(self, obj):
         request_obj = obj.user.verification_requests.order_by("-submitted_at").first()
@@ -393,14 +440,10 @@ class RegisterSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=UserProfile.ROLE_CHOICES, default=UserProfile.ROLE_WORKER)
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     bio = serializers.CharField(required=False, allow_blank=True)
-    years_experience = serializers.IntegerField(required=False, min_value=0)
+    years_experience = years_experience_field()
     skills = FlexibleStringListField(child=serializers.CharField(max_length=SKILL_NAME_MAX_LENGTH), required=False)
-    hourly_rate = serializers.DecimalField(
-        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
-    )
-    daily_rate = serializers.DecimalField(
-        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
-    )
+    hourly_rate = rate_field()
+    daily_rate = rate_field()
     location_label = serializers.CharField(required=False, allow_blank=True, max_length=255)
     latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
     longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
@@ -482,14 +525,10 @@ class ProfileUpdateSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     bio = serializers.CharField(required=False, allow_blank=True)
-    years_experience = serializers.IntegerField(required=False, min_value=0)
+    years_experience = years_experience_field()
     skills = FlexibleStringListField(child=serializers.CharField(max_length=SKILL_NAME_MAX_LENGTH), required=False)
-    hourly_rate = serializers.DecimalField(
-        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
-    )
-    daily_rate = serializers.DecimalField(
-        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0.00")
-    )
+    hourly_rate = rate_field()
+    daily_rate = rate_field()
     location_label = serializers.CharField(required=False, allow_blank=True, max_length=255)
     latitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
     longitude = RoundedCoordinateField(max_digits=10, decimal_places=7, required=False, allow_null=True)
@@ -783,6 +822,7 @@ class SkillRatingSerializer(serializers.ModelSerializer):
 
 
 class WorkerPortfolioSerializer(serializers.ModelSerializer):
+    years_experience = years_experience_field()
     skills = serializers.SerializerMethodField()
     certifications = serializers.SerializerMethodField()
 

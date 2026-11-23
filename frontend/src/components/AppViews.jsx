@@ -37,6 +37,7 @@ import {
   getHouseholdInitials,
   isSameWorker,
   notificationDayGroup,
+  rateUnit,
 } from "../utils/formatters";
 import { householdJobFormErrors, MAX_WORKERS_NEEDED } from "../utils/jobFormValidation";
 import { isConfirmedJobPin } from "../hooks/useHouseholdJobLocation";
@@ -45,7 +46,7 @@ import { AI_SKILL_WEIGHT, EMPTY_HOUSEHOLD_REVIEW_FORM, GOVERNMENT_ID_TYPES, MAX_
 import { isInsideTayabasCity } from "../utils/tayabasMapFrame";
 import { describeJobSpan, formatExperience, formatJobDate, formatTimeAgo, formatTimestamp, formatWorkerRate, getWorkerPhoto, parseRatingValue } from "../utils/formatters";
 import { getVerificationNavLabel, getVerificationStageLabel } from "../utils/normalizers";
-import { getReviewMetricAverage } from "../utils/reviewUtils";
+import { averageRating, getReviewMetricAverage } from "../utils/reviewUtils";
 import { workerProfileFieldErrors } from "../utils/profileValidation";
 import { confirmDialog } from "./AppDialogs";
 import { usePostingStatus } from "../hooks/usePostingStatus";
@@ -665,8 +666,7 @@ export default function AppViews({
     count: workerHouseholdRatings.filter((review) => Math.round(reviewScore(review)) === rating).length,
   }));
   const workerTotalReviews = workerHouseholdRatings.length;
-  const workerRatingTotal = workerHouseholdRatings.reduce((total, review) => total + (reviewScore(review) || 0), 0);
-  const workerAverageRating = workerTotalReviews > 0 ? workerRatingTotal / workerTotalReviews : null;
+  const workerAverageRating = averageRating(workerHouseholdRatings.map((review) => reviewScore(review) || 0));
   const workerFiveStarRate =
     workerTotalReviews > 0
       ? Math.round(((workerRatingCounts.find((item) => item.rating === 5)?.count || 0) / workerTotalReviews) * 100)
@@ -927,7 +927,7 @@ export default function AppViews({
       selectedJob?.serviceType,
       selectedJob?.barangay,
       selectedJob?.scheduleType,
-      selectedJob?.offeredRate ? `${formatCurrency(selectedJob.offeredRate)}/day` : "",
+      selectedJob?.offeredRate ? formatRate(selectedJob.offeredRate, selectedJob.rateType) : "",
       "Nearby workers",
     ].filter(Boolean);
     const labels = labelPool.length > 0 ? labelPool.slice(0, 6) : ["Matching your job"];
@@ -1014,11 +1014,6 @@ export default function AppViews({
         {images.length > 4 && <span className="worker-job-image-count">+{images.length - 4}</span>}
       </div>
     );
-  };
-  const formatWorkerJobPesoRate = (job) => {
-    const amount = Number(job?.offeredRate || 0);
-    const safeAmount = Number.isFinite(amount) ? amount : 0;
-    return `₱${safeAmount.toFixed(2)}${job?.rateType ? ` / ${job.rateType}` : ""}`;
   };
   // The bar is the match score itself, split into the points skill fit and
   // distance earned; the words give the real skill fit and distance. The
@@ -1172,7 +1167,11 @@ export default function AppViews({
       markNotificationRead(notification.id);
     }
     const type = notification.notificationType;
-    if (type === "verification") {
+    if (notification.actionType === "complaint") {
+      // A complaint update: My Complaints shows the status and resolution
+      // (mobile worker audit, 2026-11-23).
+      openMyComplaints();
+    } else if (type === "verification") {
       openHouseholdGetVerified();
     } else if (type === "review") {
       // Feedback from a worker: it lives under My Profile.
@@ -1265,6 +1264,11 @@ export default function AppViews({
     }
     if (type === "verification") {
       return { label: "Go to Verification", open: openWorkerGetVerified };
+    }
+    if (notification.actionType === "complaint") {
+      // A complaint update: My Complaints shows the status and resolution
+      // (mobile worker audit, 2026-11-23).
+      return { label: "Go to My Complaints", open: openMyComplaints };
     }
     if (type === "account_activity") {
       return null;
@@ -1628,9 +1632,7 @@ export default function AppViews({
         .map((review) => reviewScore(review)),
     [householdSubmittedReviews],
   );
-  const householdAvgRatingGiven = householdRatingsGiven.length
-    ? householdRatingsGiven.reduce((sum, value) => sum + value, 0) / householdRatingsGiven.length
-    : 0;
+  const householdAvgRatingGiven = averageRating(householdRatingsGiven) ?? 0;
   const renderHouseholdStarRatingInput = (labelId) => {
     // Once any metric below is rated, the overall rating is their average
     // and the stars here only show it. They used to stay at the default 5,
@@ -1992,11 +1994,16 @@ export default function AppViews({
                           min="0"
                           step="0.01"
                           name="hourlyRate"
-                          className="form-control"
+                          className={`form-control${registerErrors?.hourlyRate ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.hourlyRate ? "true" : undefined}
+                          aria-describedby={registerErrors?.hourlyRate ? "register-error-hourlyRate" : undefined}
                           placeholder="0.00"
                           value={workerForm.hourlyRate}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.hourlyRate && (
+                          <div className="invalid-feedback d-block" id="register-error-hourlyRate">{registerErrors.hourlyRate}</div>
+                        )}
                       </div>
                       <div className="col-md-4">
                         <label className="form-label fw-semibold">Daily Rate (PHP)</label>
@@ -2005,23 +2012,34 @@ export default function AppViews({
                           min="0"
                           step="0.01"
                           name="dailyRate"
-                          className="form-control"
+                          className={`form-control${registerErrors?.dailyRate ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.dailyRate ? "true" : undefined}
+                          aria-describedby={registerErrors?.dailyRate ? "register-error-dailyRate" : undefined}
                           placeholder="0.00"
                           value={workerForm.dailyRate}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.dailyRate && (
+                          <div className="invalid-feedback d-block" id="register-error-dailyRate">{registerErrors.dailyRate}</div>
+                        )}
                       </div>
                       <div className="col-md-4">
                         <label className="form-label fw-semibold">Years of Experience</label>
                         <input
                           type="number"
                           min="0"
+                          max="60"
                           name="yearsExperience"
-                          className="form-control"
+                          className={`form-control${registerErrors?.yearsExperience ? " is-invalid" : ""}`}
+                          aria-invalid={registerErrors?.yearsExperience ? "true" : undefined}
+                          aria-describedby={registerErrors?.yearsExperience ? "register-error-yearsExperience" : undefined}
                           placeholder="0"
                           value={workerForm.yearsExperience}
                           onChange={handleWorkerChange}
                         />
+                        {registerErrors?.yearsExperience && (
+                          <div className="invalid-feedback d-block" id="register-error-yearsExperience">{registerErrors.yearsExperience}</div>
+                        )}
                       </div>
                       <div className="col-12">
                         <div className="register-section-label">
@@ -2726,7 +2744,7 @@ export default function AppViews({
                               <h2 className="worker-jobcard-title">{job.jobTitle || job.serviceType}</h2>
                               <p className="worker-jobcard-rate">
                                 <strong>{formatCurrency(job.offeredRate)}</strong>
-                                <span>/{(job.rateType || "Per Day").toLowerCase()}</span>
+                                <span> / {rateUnit(job.rateType)}</span>
                               </p>
                             </div>
                             <p className="worker-jobcard-location">
@@ -2820,9 +2838,9 @@ export default function AppViews({
                           {" "}
                           {aiModeActive
                             ? "No job that fits your skills is within the distance its household set. Each household chooses how far away its workers can be. Jobs farther off still show when you go back to browsing, and you can apply to them there."
-                            : workerJobTypeFilter === "All Types"
+                            : workerJobTypeFilter === "All Types" && !workerBarangayFilter.trim()
                               ? "There are no household job posts available right now."
-                              : `Wala pang household job posts para sa ${workerJobTypeFilter}.`}{" "}
+                              : "No jobs match these filters. Try another job type or barangay."}{" "}
                         </div>
                       </div>
                     </div>
@@ -4507,6 +4525,7 @@ export default function AppViews({
                                       endDate={job.jobEndDate}
                                       workingDays={job.estimatedWorkingDays}
                                       finished={job.status === "Completed" || job.applicationStatus === "Completed"}
+                                      cancelled={job.status === "Cancelled"}
                                       // An old schedule written as a date would repeat the dates above.
                                       scheduleLabel={/^\d{4}-\d{2}-\d{2}/.test(label) ? "" : label}
                                     />

@@ -40,6 +40,31 @@ bool isValidMobileNumber(String value) {
   return RegExp(r'^9\d{9}$').hasMatch(digits);
 }
 
+/// The most an hourly or a daily rate can be (the server's RATE_LIMITS in
+/// accounts/serializers.py).
+const maxHourlyRate = 10000;
+const maxDailyRate = 100000;
+
+/// What is wrong with one rate's text by the server's rules, or null: blank
+/// or 0 means not given, a given rate is PHP 1 up to [max] (mobile worker
+/// audit, 2026-11-23).
+String? rateProblem(String text, {required int max}) {
+  final value = text.trim();
+  if (value.isEmpty) return null;
+  final rate = double.tryParse(value);
+  if (rate == null) return 'Enter the rate as a number.';
+  if (rate < 0) return "A rate can't be negative.";
+  if (rate > 0 && rate < 1) return 'Enter at least PHP 1, or leave it blank.';
+  if (rate > max) {
+    final limit = max.toString().replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+$)'),
+      (match) => '${match[1]},',
+    );
+    return 'Enter PHP $limit or less.';
+  }
+  return null;
+}
+
 /// The server's field errors, keyed by the form's own field names, so they
 /// show under the field instead of in a passing SnackBar (mobile household
 /// audit, 2026-11-23). [fields] maps a server field name to a form key.
@@ -113,9 +138,15 @@ Map<String, String> signupFieldErrors({
         : 'Pin where you live on the map, or use your current location.';
   }
   if (isWorker) {
+    final hourlyProblem = rateProblem(value('hourlyRate'), max: maxHourlyRate);
+    final dailyProblem = rateProblem(value('dailyRate'), max: maxDailyRate);
     final hourly = double.tryParse(value('hourlyRate')) ?? 0;
     final daily = double.tryParse(value('dailyRate')) ?? 0;
-    if (hourly <= 0 && daily <= 0) {
+    if (hourlyProblem != null) {
+      errors[SignupField.rate] = 'Hourly rate: $hourlyProblem';
+    } else if (dailyProblem != null) {
+      errors[SignupField.rate] = 'Daily rate: $dailyProblem';
+    } else if (hourly <= 0 && daily <= 0) {
       errors[SignupField.rate] = 'Enter an hourly or a daily rate.';
     }
     final skillsProblem = workerSkillsProblem(

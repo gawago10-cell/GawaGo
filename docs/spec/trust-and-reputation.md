@@ -7,7 +7,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
 ### A. Reputation Scoring and Reviews
 - Households can rate workers after completed jobs; workers can rate households to support fairness on both sides.
 - A review can only be submitted once the job is marked `Completed` and the reviewer's hire relationship for that job is also completed, preventing ratings for work that never happened.
-- Reviews carry an overall 1-5 rating plus four optional e-commerce-style metrics — quality of work, punctuality, communication, and professionalism — each rated 1-5; when the metrics are provided, the overall rating is their average.
+- Reviews carry an overall 1-5 rating plus four optional e-commerce-style metrics — quality of work, punctuality, communication, and professionalism — each rated 1-5; when the metrics are provided, the overall rating is their average. Workers rate households with the same form, from the job page or a finished job's card on My Jobs. Every rating is kept and shown to one decimal place, halves rounding up (4.25 is 4.3), and a profile's average is the average of those, rounded the same way, so one review can't read 4.3 on one screen and 4.2 on another (mobile worker audit, 2026-11-23).
 - A review starts with no stars chosen, on web and mobile and on both sides; Submit waits for a rating (or the four metrics). A preset 5 used to let one tap give a perfect score. The rating trend reads the same effective ratings as the average and leaves out the automatic 3.5 placeholders (second scan, 2026-11-01).
 - Workers are additionally assigned a reputation tier based on their average rating and review count: `New` (default), `Established` (3.5+ with 5+ reviews), `Trusted` (4.0+ with 5+ reviews), and `Elite` (4.5+ with 5+ reviews). A rating trend (`Improving`, `Declining`, or `Neutral`) compares a worker's last 30 days of reviews against older ones.
 - Households may also rate a worker's individual portfolio skills (see II.C) after a completed job; these per-skill ratings roll up into the average shown on that skill.
@@ -19,6 +19,7 @@ Part of the GawaGo spec; [AGENTS.md](../../AGENTS.md) has the rules most changes
 ### B. Price Transparency
 - Workers must disclose service rates on profiles (hourly and/or daily).
 - Households must see agreed rates before worker confirmation.
+- A worker's hourly and daily rates are optional one at a time (blank or 0 means not given), but at least one is given; a given rate is PHP 1 to PHP 10,000 an hour or PHP 100,000 a day, and years of experience are 0 to 60 (mobile worker audit, 2026-11-23). Rates read "PHP 650.00 / day", "/ hour", or "/ job" for a fixed rate, on web and mobile.
 - A job pays at least PHP 1.00 (PHP 0.00 and PHP 0.11 posts made the agreed rate meaningless; system scan, 2026-11-01). Under the offered rate, Post a Job shows what households usually offer for that service and rate type (`GET /jobs/rate-guide/`, worded by the backend, shown once two or more posts exist). While a job is open its terms can still be edited; everyone pending or invited then gets "Job details changed" listing the old and new rate, rate type, dates, working days or schedule type.
 
 ### C. Worker Portfolio and Credibility

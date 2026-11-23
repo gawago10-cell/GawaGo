@@ -370,8 +370,19 @@ class ComplaintUpdateAdminView(APIView):
                 recipient=complaint.complainant,
                 notification_type=Notification.TYPE_ACCOUNT_ACTIVITY,
                 title="Your complaint has been updated",
-                message=f"Your {complaint.get_complaint_type_display().lower()} complaint is now: "
-                f"{complaint.get_status_display()}.",
+                # Named by its job: "Your other complaint" read the type
+                # "Other" as a word (mobile worker audit, 2026-11-23).
+                message=(
+                    f"Your complaint{f' about {complaint.job.title}' if complaint.job else ''} "
+                    f"is now {complaint.get_status_display()}."
+                    + (
+                        " Open My Complaints to read the resolution."
+                        if complaint.resolution and complaint.status in (Complaint.STATUS_RESOLVED, Complaint.STATUS_CLOSED)
+                        else ""
+                    )
+                ),
+                action_type=Notification.ACTION_COMPLAINT,
+                action_url="/my-complaints",
             )
         if status_changed:
             log_admin_action(

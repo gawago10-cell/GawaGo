@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { formatCurrency, getHouseholdInitials } from "../utils/formatters";
+import { formatCurrency, getHouseholdInitials, rateUnit } from "../utils/formatters";
 import { loadLeafletAssets } from "../utils/mapAssets";
 import { applyTwoFingerPan } from "../utils/mapGestures";
 import { frameMapToTayabas } from "../utils/tayabasMapFrame";
@@ -283,7 +283,7 @@ export default function WorkerJobsMap({ jobs, worker, getDistanceLabel, onViewDe
                     <h3>{job.jobTitle || job.serviceType}</h3>
                     <p>
                       <strong>{formatCurrency(job.offeredRate)}</strong>
-                      <span>/{(job.rateType || "Per Day").toLowerCase()}</span>
+                      <span> / {rateUnit(job.rateType)}</span>
                     </p>
                   </div>
                   <p className="worker-jobs-map-job-meta">

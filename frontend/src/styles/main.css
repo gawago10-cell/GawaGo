@@ -3409,6 +3409,11 @@ body {
   border-left: 1px solid var(--gg-line, #e3dccb);
 }
 
+/* A one-day job: its single date spans the box. */
+.job-schedule-box.is-one-day > div:first-child {
+  grid-column: 1 / -1;
+}
+
 .job-schedule-box span {
   color: var(--gg-ink-muted, #565e4e);
   font-size: 0.68rem;

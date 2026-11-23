@@ -56,6 +56,10 @@ export function describeJobSchedule({ startDate, endDate, workingDays, finished 
     endText: formatJobDay(end) || "Not set",
     endSet: Boolean(end),
     daysText: workingDaysText(startDate, endDate, days),
+    // Starts and ends the same day: one date, not "Starts Wed, Dec 2 / Ends
+    // Wed, Dec 2" (mobile worker audit, 2026-11-23).
+    oneDay: Boolean(startDate) && end === startDate,
+    dayWord: cancelled ? "Planned date" : "Date",
   };
 }
 
@@ -70,15 +74,24 @@ export default function JobScheduleBox(props) {
     return null;
   }
   return (
-    <div className="job-schedule-box">
-      <div className={schedule.startSet ? "" : "is-unset"}>
-        <span>{schedule.startWord}</span>
-        <strong>{schedule.startText}</strong>
-      </div>
-      <div className={schedule.endSet ? "" : "is-unset"}>
-        <span>{schedule.endWord}</span>
-        <strong>{schedule.endText}</strong>
-      </div>
+    <div className={`job-schedule-box${schedule.oneDay ? " is-one-day" : ""}`}>
+      {schedule.oneDay ? (
+        <div>
+          <span>{schedule.dayWord}</span>
+          <strong>{schedule.startText}</strong>
+        </div>
+      ) : (
+        <>
+          <div className={schedule.startSet ? "" : "is-unset"}>
+            <span>{schedule.startWord}</span>
+            <strong>{schedule.startText}</strong>
+          </div>
+          <div className={schedule.endSet ? "" : "is-unset"}>
+            <span>{schedule.endWord}</span>
+            <strong>{schedule.endText}</strong>
+          </div>
+        </>
+      )}
       {schedule.daysText ? <div className="job-schedule-days">{schedule.daysText}</div> : null}
     </div>
   );
@@ -89,22 +102,34 @@ export default function JobScheduleBox(props) {
  * with the schedule type ("One-Time") beside the working days. Without dates
  * it shows the schedule wording alone, as before.
  */
-export function JobScheduleLines({ startDate, endDate, workingDays, finished = false, scheduleLabel = "" }) {
-  const schedule = describeJobSchedule({ startDate, endDate, workingDays, finished });
+export function JobScheduleLines({ startDate, endDate, workingDays, finished = false, cancelled = false, scheduleLabel = "" }) {
+  // `cancelled`: "Planned start" / "Planned end" -- My Applications read
+  // "Started" for a job that never took place (mobile worker audit,
+  // 2026-11-23).
+  const schedule = describeJobSchedule({ startDate, endDate, workingDays, finished, cancelled });
   if (!schedule) {
     return scheduleLabel || "Not set";
   }
   const extra = [scheduleLabel, schedule.daysText].filter(Boolean).join(" · ");
   return (
     <div className="job-schedule-lines">
-      <div className={schedule.startSet ? "" : "is-unset"}>
-        <span>{schedule.startWord}</span>
-        <strong>{schedule.startText}</strong>
-      </div>
-      <div className={schedule.endSet ? "" : "is-unset"}>
-        <span>{schedule.endWord}</span>
-        <strong>{schedule.endText}</strong>
-      </div>
+      {schedule.oneDay ? (
+        <div>
+          <span>{schedule.dayWord}</span>
+          <strong>{schedule.startText}</strong>
+        </div>
+      ) : (
+        <>
+          <div className={schedule.startSet ? "" : "is-unset"}>
+            <span>{schedule.startWord}</span>
+            <strong>{schedule.startText}</strong>
+          </div>
+          <div className={schedule.endSet ? "" : "is-unset"}>
+            <span>{schedule.endWord}</span>
+            <strong>{schedule.endText}</strong>
+          </div>
+        </>
+      )}
       {extra ? <small>{extra}</small> : null}
     </div>
   );

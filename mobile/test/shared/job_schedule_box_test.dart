@@ -67,8 +67,52 @@ void main() {
         today: today,
       ),
     );
-    expect(find.text('Thu, Oct 22, 2026'), findsNWidgets(2));
+    // One date, not the same day as both start and end (mobile worker
+    // audit, 2026-11-23).
+    expect(find.text('Thu, Oct 22, 2026'), findsOneWidget);
+    expect(find.text('DATE'), findsOneWidget);
+    expect(find.text('STARTED'), findsNothing);
     expect(find.text('1 working day'), findsOneWidget);
+  });
+
+  testWidgets('a one-day job in a list reads one date', (tester) async {
+    await _pump(
+      tester,
+      JobScheduleLines(
+        startDate: '2026-12-02',
+        endDate: '2026-12-02',
+        workingDays: 1,
+        scheduleLabel: 'One-Time',
+        today: today,
+      ),
+    );
+    expect(
+      find.text('Date  Wed, Dec 2, 2026', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Ends', findRichText: true), findsNothing);
+  });
+
+  testWidgets('a cancelled job in a list reads its planned dates', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      JobScheduleLines(
+        startDate: '2026-10-22',
+        endDate: '2026-10-23',
+        cancelled: true,
+        today: today,
+      ),
+    );
+    expect(
+      find.text('Planned start  Thu, Oct 22, 2026', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Planned end  Fri, Oct 23, 2026', findRichText: true),
+      findsOneWidget,
+    );
   });
 
   testWidgets('shows nothing without dates', (tester) async {

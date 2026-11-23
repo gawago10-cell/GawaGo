@@ -36,6 +36,7 @@ class JobScheduleWords {
     required this.startWord,
     required this.endWord,
     required this.workingDays,
+    required this.dayWord,
   });
 
   final String start;
@@ -43,6 +44,14 @@ class JobScheduleWords {
   final String startWord;
   final String endWord;
   final int? workingDays;
+
+  /// The word for a one-day job's single date ("Date", or "Planned date"
+  /// once cancelled).
+  final String dayWord;
+
+  /// Starts and ends on the same day: one date, not "Starts Wed, Dec 2 /
+  /// Ends Wed, Dec 2" (mobile worker audit, 2026-11-23).
+  bool get oneDay => start.isNotEmpty && start == end;
 
   String get daysText => workingDaysText(start, end, workingDays);
 
@@ -85,6 +94,7 @@ class JobScheduleWords {
           ? 'Ended'
           : 'Ends',
       workingDays: days,
+      dayWord: cancelled ? 'Planned date' : 'Date',
     );
   }
 }
@@ -143,20 +153,23 @@ class JobScheduleBox extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: _Cell(label: startWord, date: start),
-                ),
-                Container(width: 1, color: GawaGoColors.border),
-                Expanded(
-                  child: _Cell(label: endWord, date: end),
-                ),
-              ],
+          if (schedule.oneDay)
+            _Cell(label: schedule.dayWord, date: start)
+          else
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _Cell(label: startWord, date: start),
+                  ),
+                  Container(width: 1, color: GawaGoColors.border),
+                  Expanded(
+                    child: _Cell(label: endWord, date: end),
+                  ),
+                ],
+              ),
             ),
-          ),
           if (days != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -189,6 +202,7 @@ class JobScheduleLines extends StatelessWidget {
     required this.endDate,
     this.workingDays,
     this.finished = false,
+    this.cancelled = false,
     this.scheduleLabel = '',
     this.today,
   });
@@ -197,6 +211,10 @@ class JobScheduleLines extends StatelessWidget {
   final String? endDate;
   final int? workingDays;
   final bool finished;
+
+  /// A cancelled job: its dates read "Planned start" / "Planned end" (they
+  /// read "Started" in My Applications; mobile worker audit, 2026-11-23).
+  final bool cancelled;
   final String scheduleLabel;
 
   /// For tests; defaults to now.
@@ -215,6 +233,7 @@ class JobScheduleLines extends StatelessWidget {
       endDate: endDate,
       workingDays: workingDays,
       finished: finished,
+      cancelled: cancelled,
       today: today,
     );
     if (schedule == null) {
@@ -230,9 +249,13 @@ class JobScheduleLines extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _line(schedule.startWord, schedule.start),
-        const SizedBox(height: 2),
-        _line(schedule.endWord, schedule.end),
+        if (schedule.oneDay)
+          _line(schedule.dayWord, schedule.start)
+        else ...[
+          _line(schedule.startWord, schedule.start),
+          const SizedBox(height: 2),
+          _line(schedule.endWord, schedule.end),
+        ],
         if (extra.isNotEmpty) ...[
           const SizedBox(height: 3),
           Text(

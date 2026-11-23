@@ -162,10 +162,26 @@ class UserProfile(models.Model):
         return self.latitude is not None and self.longitude is not None
 
     @property
+    def verification_stage(self) -> str:
+        """Where the account stands: verified, pending_review (documents in the
+        queue), rejected, or not_submitted. verification_status reads
+        "pending" both before anything is sent and while it waits for review,
+        which is how admins saw nine "Pending" households with one in the
+        queue (system scan, 2026-11-01)."""
+        status = (self.verification_status or "").lower()
+        if status in ("verified", "rejected"):
+            return status
+        latest = self.user.verification_requests.order_by("-submitted_at").first()
+        return "pending_review" if latest and latest.status == "pending" else "not_submitted"
+
+    @property
     def display_rating(self) -> str:
         if not self.rating_count or self.average_rating is None:
             return "No ratings yet"
-        return f"{self.average_rating:.2f}"
+        # One decimal, like every review (mobile worker audit, 2026-11-23).
+        from apps.reviews.services import round_rating
+
+        return f"{round_rating(self.average_rating):.1f}"
 
 
 class WorkerAvailability(models.Model):

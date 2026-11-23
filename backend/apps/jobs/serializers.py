@@ -194,7 +194,7 @@ class JobApplicationSerializer(serializers.ModelSerializer):
         return (hold_ends_on(days) + timedelta(days=1)).isoformat()
 
     def get_status_stage(self, obj):
-        return get_application_stage(obj.status, obj.job.status, job=obj.job)
+        return get_application_stage(obj.status, obj.job.status, job=obj.job, application=obj)
 
     def get_invited(self, obj):
         """True when the household invited this worker instead of the worker
@@ -231,7 +231,11 @@ class JobApplicationSerializer(serializers.ModelSerializer):
         ).exists()
 
     def get_status_label(self, obj):
-        return get_stage_label(self.get_status_stage(obj))
+        # The worker reads their own hire request as theirs to answer, not as
+        # "Awaiting worker response" (mobile worker audit, 2026-11-23).
+        user = getattr(self.context.get("request"), "user", None)
+        viewer_is_worker = bool(user and user.is_authenticated and user.id == obj.worker_id)
+        return get_stage_label(self.get_status_stage(obj), viewer_is_worker=viewer_is_worker)
 
     class Meta:
         model = JobApplication
@@ -874,16 +878,60 @@ class JobPostingSerializer(serializers.ModelSerializer):
         hold = self._worker_hold(obj) if is_worker else None
         return hold if hold and self._could_apply(obj, user, profile) else None
 
+    # Why an unverified worker can't apply, by verification stage. Find Jobs
+    # lists only jobs the worker can apply to or is told why not, so without
+    # a reason a worker who isn't verified yet saw no jobs at all and "There
+    # are no household job posts available right now" (mobile worker audit,
+    # 2026-11-23).
+    VERIFICATION_BLOCKS = {
+        "not_submitted": (
+            "Get verified to apply.",
+            "Send a government ID from Get Verified. You can apply once an admin approves it.",
+        ),
+        "pending_review": (
+            "Your ID is being reviewed.",
+            "You can apply once an admin approves it.",
+        ),
+        "rejected": (
+            "Your verification wasn't approved.",
+            "Send new documents from Get Verified. You can apply once they're approved.",
+        ),
+    }
+
+    def _verification_block(self, obj):
+        """(title, reason) for a worker who isn't verified, on a job they
+        could otherwise apply to; None otherwise."""
+        is_worker, user, profile = self.is_authenticated_worker()
+        if not is_worker or profile.verification_status == "verified":
+            return None
+        if not self.get_accepting_applications(obj):
+            return None
+        if obj.applications.filter(worker=user).exclude(
+            status__in=[JobApplication.STATUS_WITHDRAWN, JobApplication.STATUS_CLOSED]
+        ).exists():
+            return None
+        cache = self.context.setdefault("_verification_stage", {})
+        if user.id not in cache:
+            cache[user.id] = profile.verification_stage
+        return self.VERIFICATION_BLOCKS.get(cache[user.id], self.VERIFICATION_BLOCKS["not_submitted"])
+
     def get_apply_blocked_reason(self, obj):
         """Why a job the worker could otherwise apply to is closed to them
-        (another job of theirs holds them), or ""."""
+        (another job of theirs holds them, or they aren't verified yet), or
+        ""."""
         hold = self._blocking_hold(obj)
-        return hold_apply_message(hold) if hold else ""
+        if hold:
+            return hold_apply_message(hold)
+        block = self._verification_block(obj)
+        return block[1] if block else ""
 
     def get_apply_blocked_title(self, obj):
         """The short lead shown before apply_blocked_reason, or ""."""
         hold = self._blocking_hold(obj)
-        return hold_title(hold) if hold else ""
+        if hold:
+            return hold_title(hold)
+        block = self._verification_block(obj)
+        return block[0] if block else ""
 
     def get_can_accept_hire_request(self, obj):
         application = self.get_current_worker_application_obj(obj)

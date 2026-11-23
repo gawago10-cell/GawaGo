@@ -350,6 +350,7 @@ class _HouseholdHomeScreenState extends State<HouseholdHomeScreen>
         key: _notificationKey,
         repository: _repository,
         onOpenJob: _openJob,
+        onOpenMyReports: () => _select(_Page.myReports),
         onToolbarChanged: () => setState(() {}),
         onNotificationsChanged: _refreshUnreadCount,
       ),
@@ -1570,7 +1571,7 @@ String _streetFromLocation(String value) {
 }
 
 String _rateLabel(HouseholdJob job) =>
-    'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}';
+    formatJobRate(job.serviceRate, job.rateTypeLabel);
 
 String _normalizedJobStatus(String status) => status
     .trim()
@@ -6878,12 +6879,16 @@ class _Notifications extends StatefulWidget {
     super.key,
     required this.repository,
     required this.onOpenJob,
+    required this.onOpenMyReports,
     required this.onToolbarChanged,
     required this.onNotificationsChanged,
   });
 
   final HouseholdRepository repository;
   final ValueChanged<int> onOpenJob;
+
+  /// A complaint update: My Complaints shows its status and resolution.
+  final VoidCallback onOpenMyReports;
   final VoidCallback onToolbarChanged;
   final VoidCallback onNotificationsChanged;
 
@@ -6928,6 +6933,13 @@ class _NotificationsState extends State<_Notifications> {
       }
     }
     if (!mounted) return;
+    // A complaint update goes where the resolution can be read (mobile
+    // worker audit, 2026-11-23).
+    if (item.actionType == 'complaint') {
+      widget.onOpenMyReports();
+      _reload();
+      return;
+    }
     final jobId = item.targetJobId;
     HouseholdJob? job;
     if (jobId != null) {
@@ -7251,8 +7263,7 @@ class _HouseholdNotificationPreview extends StatelessWidget {
             _CompactProfileFact(label: 'Location', value: job!.locationLabel),
             _CompactProfileFact(
               label: 'Rate',
-              value:
-                  'PHP ${job!.serviceRate.toStringAsFixed(2)} / ${job!.rateTypeLabel}',
+              value: formatJobRate(job!.serviceRate, job!.rateTypeLabel),
             ),
           ],
         ],

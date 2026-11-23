@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../core/theme/gawago_colors.dart';
+import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
 import '../data/worker_models.dart';
@@ -559,7 +560,7 @@ class _AreaJobTile extends StatelessWidget {
                 TextSpan(
                   children: [
                     TextSpan(
-                      text: '₱${job.serviceRate.toStringAsFixed(2)}',
+                      text: 'PHP ${job.serviceRate.toStringAsFixed(2)}',
                       style: const TextStyle(
                         fontFamily: GawaGoColors.fontHeading,
                         color: GawaGoColors.leafDeep,
@@ -567,7 +568,7 @@ class _AreaJobTile extends StatelessWidget {
                       ),
                     ),
                     TextSpan(
-                      text: '/${job.rateTypeLabel.toLowerCase()}',
+                      text: ' / ${rateUnit(job.rateTypeLabel)}',
                       style: const TextStyle(
                         color: GawaGoColors.textMuted,
                         fontSize: 12,

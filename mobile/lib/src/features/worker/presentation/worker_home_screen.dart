@@ -13,6 +13,7 @@ import '../../../core/theme/gawago_colors.dart';
 import '../../../shared/constants/gawago_options.dart';
 import '../../../shared/utils/display_formatters.dart';
 import '../../../shared/utils/map_tile_guard.dart';
+import '../../../shared/utils/signup_validation.dart';
 import '../../../shared/widgets/async_state.dart';
 import '../../../shared/widgets/authenticated_shell.dart';
 import '../../../shared/widgets/change_password_dialog.dart';
@@ -27,6 +28,7 @@ import '../../../shared/widgets/ai_match_breakdown.dart';
 import '../../../shared/widgets/profile_section.dart';
 import '../../../shared/widgets/portfolio_pieces.dart';
 import '../../../shared/widgets/profile_tabs.dart';
+import '../../../shared/widgets/rate_review_dialog.dart';
 import '../../../shared/widgets/reason_dialog.dart';
 import '../../../shared/widgets/report_issue_dialog.dart';
 import '../../../shared/widgets/review_history.dart';
@@ -86,7 +88,13 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
     _WorkerPage.notifications,
   ];
 
-  static const _accountPages = [_WorkerPage.profile, _WorkerPage.verification];
+  // Reviews & Feedback had no menu entry: only a review notification reached
+  // it (mobile worker audit, 2026-11-23).
+  static const _accountPages = [
+    _WorkerPage.profile,
+    _WorkerPage.reviews,
+    _WorkerPage.verification,
+  ];
 
   WorkerRepository get _repository => widget.repository;
   final _notificationKey = GlobalKey<_WorkerNotificationsState>();
@@ -394,9 +402,16 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
       _WorkerPage.notifications => _WorkerNotifications(
         key: _notificationKey,
         repository: _repository,
-        onOpenJob: _openJob,
+        // Back returns to the notifications, so it says so (it read "Back to
+        // Find Jobs"; mobile worker audit, 2026-11-23).
+        onOpenJob: (id) => _openJob(
+          id,
+          backLabel: 'Back to Notifications',
+          refreshPage: _WorkerPage.notifications,
+        ),
         onOpenReviews: () => _select(_WorkerPage.reviews),
         onOpenMyJobs: () => _select(_WorkerPage.myJobs),
+        onOpenMyReports: () => _select(_WorkerPage.myReports),
         onToolbarChanged: () => setState(() {}),
         onNotificationsChanged: _refreshUnreadCount,
       ),
@@ -427,29 +442,56 @@ class _WorkerHomeScreenState extends State<WorkerHomeScreen>
   }
 }
 
-class _WorkerDashboard extends StatelessWidget {
+class _WorkerDashboard extends StatefulWidget {
   const _WorkerDashboard({required this.repository, required this.onOpenJobs});
 
   final WorkerRepository repository;
   final ValueChanged<String?> onOpenJobs;
 
   @override
+  State<_WorkerDashboard> createState() => _WorkerDashboardState();
+}
+
+class _WorkerDashboardState extends State<_WorkerDashboard> {
+  // Loaded once and kept: built inside build(), the request ran again on
+  // every rebuild of the home screen, which its 20 s notification poll
+  // causes, even with nothing new (mobile worker audit, 2026-11-23). New
+  // data arrives by the page being re-keyed, or by pull-to-refresh / Retry.
+  late Future<List<Object>> _future = _load();
+
+  Future<List<Object>> _load() => Future.wait<Object>([
+    widget.repository.getProfile(),
+    widget.repository.getJobs(),
+  ]);
+
+  void _reload() => setState(() => _future = _load());
+
+  @override
   Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: Future.wait([repository.getProfile(), repository.getJobs()]),
+    final onOpenJobs = widget.onOpenJobs;
+    return FutureBuilder<List<Object>>(
+      future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return AppErrorState(
-            error: snapshot.error,
-            onRetry: () => (context as Element).markNeedsBuild(),
-          );
+          return AppErrorState(error: snapshot.error, onRetry: _reload);
         }
         if (!snapshot.hasData) return const AppLoadingState();
         final profile = snapshot.data![0] as WorkerProfile;
         final openJobs = snapshot.data![1] as List<WorkerJob>;
         final ratingValue = profile.displayRating;
+        // The stage, not the status: "Pending" showed for a worker who had
+        // sent nothing (AGENTS.md: screens show verification_stage).
+        final stage = profile.verificationStage;
+        final verificationText = profile.verificationLabel.isNotEmpty
+            ? profile.verificationLabel
+            : formatStatus(profile.verificationStatus);
+        final verificationColorKey = switch (stage) {
+          'pending_review' => 'pending',
+          '' => profile.verificationStatus,
+          _ => stage,
+        };
         return RefreshIndicator(
-          onRefresh: () async => (context as Element).markNeedsBuild(),
+          onRefresh: () async => _reload(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
             children: [
@@ -470,8 +512,8 @@ class _WorkerDashboard extends StatelessWidget {
                   _WebsiteMetric(label: 'Your Rating', value: ratingValue),
                   _WebsiteMetric(
                     label: 'Verification',
-                    value: formatStatus(profile.verificationStatus),
-                    statusValue: profile.verificationStatus,
+                    value: verificationText,
+                    statusValue: verificationColorKey,
                   ),
                 ],
               ),
@@ -658,7 +700,12 @@ class _MetricTile extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           if (hasStatus)
-            Flexible(child: _LargeStatusBadge(status: metric.statusValue!))
+            Flexible(
+              child: _LargeStatusBadge(
+                label: metric.value,
+                status: metric.statusValue!,
+              ),
+            )
           else
             Flexible(
               child: FittedBox(
@@ -684,24 +731,29 @@ class _MetricTile extends StatelessWidget {
   }
 }
 
+/// The tile's own words ("Not submitted", "Under Review") in the colour of
+/// [status]: it printed the raw status, so a worker who had sent nothing
+/// read "Pending" (mobile worker audit, 2026-11-23).
 class _LargeStatusBadge extends StatelessWidget {
-  const _LargeStatusBadge({required this.status});
+  const _LargeStatusBadge({required this.label, required this.status});
 
+  final String label;
   final String status;
 
   @override
   Widget build(BuildContext context) {
+    final color = statusColor(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: GawaGoColors.leafTint,
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: GawaGoColors.leafLine, width: 1.5),
+        border: Border.all(color: color.withValues(alpha: 0.45), width: 1.5),
       ),
       child: Text(
-        formatStatus(status),
-        style: const TextStyle(
-          color: GawaGoColors.leafDeep,
+        label,
+        style: TextStyle(
+          color: color,
           fontSize: 14,
           fontWeight: FontWeight.w900,
           letterSpacing: 0,
@@ -1002,7 +1054,14 @@ class _WorkerJobsState extends State<_WorkerJobs> {
   String? _aiError;
   List<RecommendedJob> _aiJobs = const [];
 
+  /// Whether the list on screen was filtered, so an empty one says so
+  /// instead of "There are no household job posts available right now"
+  /// (mobile worker audit, 2026-11-23).
+  bool _filtered = false;
+
   Future<(List<WorkerJob>, WorkerProfile)> _load() async {
+    _filtered =
+        (_skill?.isNotEmpty ?? false) || _location.text.trim().isNotEmpty;
     final results = await Future.wait([
       widget.repository.getJobs(skill: _skill, location: _location.text.trim()),
       widget.repository.getProfile(),
@@ -1212,7 +1271,7 @@ class _WorkerJobsState extends State<_WorkerJobs> {
                     jobs: sortedJobs,
                     matchesSkills: (job) =>
                         _jobMatchesWorkerSkills(job, workerSkills),
-                    distanceLabel: (job) => _distanceLabel(job.distanceKm),
+                    distanceLabel: _jobDistanceText,
                     onViewDetails: _openJob,
                     onApply: _apply,
                     workerLatitude: profile.latitude,
@@ -1327,9 +1386,11 @@ class _WorkerJobsState extends State<_WorkerJobs> {
                     ),
                 ],
               ] else if (sortedJobs.isEmpty)
-                const AppEmptyState(
-                  message:
-                      'There are no household job posts available right now.',
+                AppEmptyState(
+                  message: _filtered
+                      ? 'No jobs match these filters. Try another job type '
+                            'or barangay.'
+                      : 'There are no household job posts available right now.',
                 )
               else
                 ...sortedJobs.map(
@@ -1957,8 +2018,10 @@ class _JobCardRate extends StatelessWidget {
     return Text.rich(
       TextSpan(
         children: [
+          // "PHP 650.00 / day", as everywhere else: the card read
+          // "₱650.00/per day" (mobile worker audit, 2026-11-23).
           TextSpan(
-            text: '₱${serviceRate.toStringAsFixed(2)}',
+            text: 'PHP ${serviceRate.toStringAsFixed(2)}',
             style: const TextStyle(
               color: GawaGoColors.leafDeep,
               fontSize: 16.5,
@@ -1966,7 +2029,7 @@ class _JobCardRate extends StatelessWidget {
             ),
           ),
           TextSpan(
-            text: '/${rateTypeLabel.toLowerCase()}',
+            text: ' / ${rateUnit(rateTypeLabel)}',
             style: TextStyle(
               color: GawaGoColors.ink,
               fontSize: 14,
@@ -2179,7 +2242,9 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
     });
   }
 
-  Future<void> _run(Future<void> Function() action) async {
+  /// Runs [action] and says what happened in [done]: every action used to
+  /// end with "Action completed." (mobile worker audit, 2026-11-23).
+  Future<void> _run(Future<void> Function() action, String done) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
@@ -2189,7 +2254,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
       setState(() {
         _future = _load();
       });
-      _message('Action completed.');
+      _message(done);
     } catch (error) {
       if (mounted) _message(friendlyApiError(error));
     } finally {
@@ -2232,127 +2297,23 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
     return result;
   }
 
+  /// The shared Rate & Review dialog, as households use: with the four
+  /// metrics rated the overall is their average, which is what the server
+  /// stores. This page's own dialog showed the stars picked (5/5) while the
+  /// review saved the metric average (3.0) (mobile worker audit, 2026-11-23).
   Future<void> _review(WorkerJob job) async {
-    // No preset: the worker picks the stars (second scan, 2026-11-01).
-    double? rating;
-    final feedback = TextEditingController();
-    // Optional 1-5 detail scores mirroring the web review form; null means
-    // "not rated" and is simply omitted from the request.
-    final metrics = <String, int?>{
-      'quality_of_work': null,
-      'punctuality': null,
-      'communication': null,
-      'professionalism': null,
-    };
-    const metricLabels = {
-      'quality_of_work': 'Quality of Work',
-      'punctuality': 'Punctuality',
-      'communication': 'Communication',
-      'professionalism': 'Professionalism',
-    };
-    final submit = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Leave Feedback for Household'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Overall rating',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                Row(
-                  children: [
-                    for (var value = 1; value <= 5; value++)
-                      IconButton(
-                        tooltip: '$value star${value == 1 ? '' : 's'}',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 34,
-                          minHeight: 34,
-                        ),
-                        onPressed: () =>
-                            setDialogState(() => rating = value.toDouble()),
-                        icon: Icon(
-                          (rating ?? 0) >= value
-                              ? Icons.star_rounded
-                              : Icons.star_border_rounded,
-                          color: const Color(0xFFE0A82E),
-                          size: 30,
-                        ),
-                      ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        rating == null
-                            ? 'Tap a star'
-                            : '${rating!.toStringAsFixed(0)}/5',
-                        style: const TextStyle(color: GawaGoColors.textMuted),
-                      ),
-                    ),
-                  ],
-                ),
-                for (final field in metricLabels.keys)
-                  DropdownButtonFormField<int?>(
-                    initialValue: metrics[field],
-                    decoration: InputDecoration(labelText: metricLabels[field]),
-                    items: [
-                      const DropdownMenuItem(
-                        value: null,
-                        child: Text('Not rated'),
-                      ),
-                      ...[1, 2, 3, 4, 5].map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text('$value'),
-                        ),
-                      ),
-                    ],
-                    onChanged: (value) =>
-                        setDialogState(() => metrics[field] = value),
-                  ),
-                TextField(
-                  controller: feedback,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Feedback'),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: rating == null
-                  ? null
-                  : () => Navigator.pop(context, true),
-              child: const Text('Submit'),
-            ),
-          ],
-        ),
-      ),
+    final sent = await _rateHousehold(
+      context,
+      widget.repository,
+      householdName: job.householdName,
+      householdUsername: job.householdUsername,
+      jobId: job.id,
+      jobTitle: job.title,
     );
-    if (submit == true && rating != null) {
-      await _run(
-        () => widget.repository.reviewHousehold(
-          job,
-          rating: rating!,
-          feedback: feedback.text.trim(),
-          qualityOfWork: metrics['quality_of_work'],
-          punctuality: metrics['punctuality'],
-          communication: metrics['communication'],
-          professionalism: metrics['professionalism'],
-        ),
-      );
-    }
-    feedback.dispose();
+    if (!sent || !mounted) return;
+    widget.onChanged();
+    _reload();
+    _message('Thanks! Your rating was sent to the household.');
   }
 
   @override
@@ -2384,6 +2345,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                         if (note != null) {
                           await _run(
                             () => widget.repository.apply(job.id, note),
+                            'Application sent.',
                           );
                         }
                       },
@@ -2399,6 +2361,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                           job.application!.id,
                           'accept',
                         ),
+                        'Hire request accepted. You are hired for this job.',
                       ),
                 icon: const Icon(Icons.check),
                 label: const Text('Accept Request'),
@@ -2412,6 +2375,7 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                           job.application!.id,
                           'reject',
                         ),
+                        'Hire request rejected. The household has been told.',
                       ),
                 icon: const Icon(Icons.close),
                 label: const Text('Reject Request'),
@@ -2482,9 +2446,10 @@ class _WorkerJobDetailState extends State<_WorkerJobDetail> {
                 job: job,
                 busy: _busy,
                 actions: actions,
-                backLabel: job.canAcceptHireRequest
-                    ? 'Back to Notifications'
-                    : widget.backLabel,
+                // Back goes where the page was opened from; a hire request
+                // opened from My Applications said "Back to Notifications"
+                // (mobile worker audit, 2026-11-23).
+                backLabel: widget.backLabel,
                 notice: notice,
                 onBack: () => Navigator.pop(context),
               ),
@@ -2718,8 +2683,7 @@ class _WorkerJobDetailsCard extends StatelessWidget {
           ),
           _WorkerDetailRow(
             label: 'Rate',
-            value:
-                'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}',
+            value: formatJobRate(job.serviceRate, job.rateTypeLabel),
           ),
           _WorkerDetailRow(
             label: 'Location',
@@ -2991,6 +2955,11 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
         }
         if (!snapshot.hasData) return const AppLoadingState();
         final applications = snapshot.data!;
+        final statusOptions = <String>{
+          for (final item in applications)
+            _workerApplicationDisplayStatus(item),
+          ?_statusFilter,
+        }.toList();
         final visible = _statusFilter == null
             ? applications
             : applications
@@ -3042,31 +3011,21 @@ class _WorkerApplicationsState extends State<_WorkerApplications> {
                                   decoration: _filterFieldDecoration(
                                     hintText: 'All Status',
                                   ),
-                                  items: const [
-                                    DropdownMenuItem<String?>(
+                                  // The statuses the list actually has, in
+                                  // the backend's words, as on the web: a
+                                  // fixed list missed Rejected, Withdrawn,
+                                  // Hired and more (mobile worker audit,
+                                  // 2026-11-23).
+                                  items: [
+                                    const DropdownMenuItem<String?>(
                                       value: null,
                                       child: Text('All Status'),
                                     ),
-                                    DropdownMenuItem<String?>(
-                                      value: 'Pending',
-                                      child: Text('Pending'),
-                                    ),
-                                    DropdownMenuItem<String?>(
-                                      value: 'In Progress',
-                                      child: Text('In Progress'),
-                                    ),
-                                    DropdownMenuItem<String?>(
-                                      value: 'Awaiting confirmation',
-                                      child: Text('Awaiting Confirmation'),
-                                    ),
-                                    DropdownMenuItem<String?>(
-                                      value: 'Waiting to be marked done',
-                                      child: Text('Waiting to be marked done'),
-                                    ),
-                                    DropdownMenuItem<String?>(
-                                      value: 'Completed',
-                                      child: Text('Completed'),
-                                    ),
+                                    for (final status in statusOptions)
+                                      DropdownMenuItem<String?>(
+                                        value: status,
+                                        child: Text(status),
+                                      ),
                                   ],
                                   onChanged: (value) =>
                                       setState(() => _statusFilter = value),
@@ -3233,8 +3192,10 @@ class _WorkerApplicationRow extends StatelessWidget {
                 child: _ApplicationFact(
                   label: 'Rate',
                   // Same wording as the Find Jobs cards and the web.
-                  value:
-                      'PHP ${application.serviceRate.toStringAsFixed(2)}/${application.rateTypeLabel.toLowerCase()}',
+                  value: formatJobRate(
+                    application.serviceRate,
+                    application.rateTypeLabel,
+                  ),
                 ),
               ),
             ],
@@ -3264,6 +3225,8 @@ class _WorkerApplicationRow extends StatelessWidget {
             finished:
                 application.statusStage == 'completed' ||
                 application.jobStatus.toLowerCase() == 'completed',
+            // "Planned", not "Started", for a job that never took place.
+            cancelled: application.jobStatus.toLowerCase() == 'cancelled',
             scheduleLabel: _workerApplicationScheduleType(application),
           ),
           if (application.distanceKm != null) ...[
@@ -3359,10 +3322,13 @@ class _ApplicationFact extends StatelessWidget {
 /// label, so it doesn't depend on the exact wording of that label.
 Color _applicationStatusColor(String stage) {
   return switch (stage.toLowerCase()) {
-    'completed' || 'in_progress' => GawaGoColors.leafDeep,
+    'completed' || 'in_progress' || 'hired' => GawaGoColors.leafDeep,
     'awaiting_confirmation' => GawaGoColors.leafDeep,
     'rejected' || 'cancelled' => GawaGoColors.danger,
-    'withdrawn' || 'closed' => GawaGoColors.textMuted,
+    'withdrawn' ||
+    'closed' ||
+    'invitation_withdrawn' ||
+    'declined' => GawaGoColors.textMuted,
     _ => const Color(0xFFB07B12),
   };
 }
@@ -3450,9 +3416,11 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
         // active work from finished history.
         // awaiting_mark_done is a hired job past its last day: still the
         // worker's until the household marks it done.
+        // hired is a job not started yet (it read "In progress").
         final inProgress = applications.where((item) {
           final stage = _workerApplicationStage(item);
-          return stage == 'in_progress' ||
+          return stage == 'hired' ||
+              stage == 'in_progress' ||
               stage == 'awaiting_confirmation' ||
               stage == 'awaiting_mark_done';
         }).toList();
@@ -3524,10 +3492,34 @@ class _WorkerMyJobsState extends State<_WorkerMyJobs> {
                     review: reviews
                         .where((r) => r.jobId == job.jobId)
                         .firstOrNull,
-                    // The detail page holds "Leave Feedback for Household"
-                    // and "Report an issue"; without this they were only
+                    // The detail page holds the household's contact and
+                    // "File a Complaint"; without this they were only
                     // reachable from a notification.
                     onOpen: () => _openDetail(job.jobId),
+                    // "Job marked done" leads here, so the rating is on the
+                    // card, as on the web (mobile worker audit, 2026-11-23).
+                    onRate: job.canReview
+                        ? () async {
+                            final sent = await _rateHousehold(
+                              context,
+                              widget.repository,
+                              householdName: job.householdName,
+                              householdUsername: job.householdUsername,
+                              jobId: job.jobId,
+                              jobTitle: job.jobTitle,
+                            );
+                            if (!sent || !context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Thanks! Your rating was sent to the household.',
+                                ),
+                              ),
+                            );
+                            _reload();
+                            widget.onChanged();
+                          }
+                        : null,
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -3625,7 +3617,7 @@ class _WorkerInProgressJobCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'PHP ${job.serviceRate.toStringAsFixed(2)}/${job.rateTypeLabel.toLowerCase()}',
+            formatJobRate(job.serviceRate, job.rateTypeLabel),
             style: const TextStyle(color: GawaGoColors.textMuted, fontSize: 13),
           ),
           if (job.jobStartDate.isNotEmpty || job.jobEndDate.isNotEmpty) ...[
@@ -3688,6 +3680,49 @@ class _WorkerInProgressJobCard extends StatelessWidget {
 /// The worker steps away from a job (fourth scan, 2026-11-01): a pending
 /// application is taken back after a confirm; a hire is given up before the
 /// job starts, with a reason the household reads. True once it went through.
+/// Rates the household of a finished job with the shared Rate & Review
+/// dialog -- from the job page and from a My Jobs card. True once sent.
+Future<bool> _rateHousehold(
+  BuildContext context,
+  WorkerRepository repository, {
+  required String householdName,
+  required String householdUsername,
+  required int jobId,
+  required String jobTitle,
+}) {
+  final name = householdName.isNotEmpty
+      ? householdName
+      : householdUsername.isNotEmpty
+      ? householdUsername
+      : 'Household';
+  return showRateReviewDialog(
+    context: context,
+    workerName: name,
+    workerInitial: _initial(name),
+    workerVerified: false,
+    feedbackHint: 'Share details about working with this household...',
+    onSubmit:
+        ({
+          required double rating,
+          required String feedback,
+          int? qualityOfWork,
+          int? punctuality,
+          int? communication,
+          int? professionalism,
+        }) => repository.rateHousehold(
+          householdUsername: householdUsername,
+          jobId: jobId,
+          jobTitle: jobTitle,
+          rating: rating,
+          feedback: feedback,
+          qualityOfWork: qualityOfWork,
+          punctuality: punctuality,
+          communication: communication,
+          professionalism: professionalism,
+        ),
+  );
+}
+
 Future<bool> _stepAwayFromJob(
   BuildContext context,
   WorkerRepository repository,
@@ -3766,11 +3801,15 @@ class _WorkerCompletedJobCard extends StatelessWidget {
     required this.job,
     required this.review,
     required this.onOpen,
+    this.onRate,
   });
 
   final WorkerApplication job;
   final GawaGoReview? review;
   final VoidCallback onOpen;
+
+  /// Rate the household; null once rated.
+  final VoidCallback? onRate;
 
   @override
   Widget build(BuildContext context) {
@@ -3830,7 +3869,7 @@ class _WorkerCompletedJobCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'PHP ${job.serviceRate.toStringAsFixed(2)}/${job.rateTypeLabel.toLowerCase()}',
+              formatJobRate(job.serviceRate, job.rateTypeLabel),
               style: const TextStyle(
                 color: GawaGoColors.textMuted,
                 fontSize: 13,
@@ -3841,8 +3880,8 @@ class _WorkerCompletedJobCard extends StatelessWidget {
               review?.rating == null
                   ? 'No rating yet'
                   : review!.isAutomatic
-                  ? "Automatic rating: ${review!.rating!.toStringAsFixed(1)} / 5 (the household didn't rate in time)"
-                  : 'Rating received: ${review!.rating!.toStringAsFixed(1)} / 5',
+                  ? "Automatic rating: ${formatRating(review!.rating!)} / 5 (the household didn't rate in time)"
+                  : 'Rating received: ${formatRating(review!.rating!)} / 5',
               style: const TextStyle(
                 color: GawaGoColors.textMuted,
                 fontSize: 13,
@@ -3871,6 +3910,29 @@ class _WorkerCompletedJobCard extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
+            const SizedBox(height: 4),
+            if (onRate != null)
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: onRate,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: GawaGoColors.primary,
+                    foregroundColor: GawaGoColors.onPrimary,
+                  ),
+                  icon: const Icon(Icons.star_outline),
+                  label: const Text('Rate household'),
+                ),
+              )
+            else
+              const Text(
+                'You rated this household.',
+                style: TextStyle(
+                  color: GawaGoColors.textMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
           ],
         ),
       ),
@@ -4005,6 +4067,54 @@ class _ProfileFormState extends State<_ProfileForm> {
   String? _photoPath;
   bool _saving = false;
 
+  /// Problems shown under each field, from the checks below or the server.
+  /// They came back as a passing SnackBar only, and the phone wasn't
+  /// checked before saving (mobile worker audit, 2026-11-23).
+  Map<String, String> _fieldErrors = {};
+  final Map<String, GlobalKey> _fieldKeys = {
+    for (final field in const [
+      'first',
+      'last',
+      'email',
+      'emailPassword',
+      'phone',
+      'street',
+      'bio',
+      'hourly',
+      'daily',
+      'years',
+    ])
+      field: GlobalKey(),
+  };
+
+  void _clearFieldError(String field) {
+    if (_fieldErrors.containsKey(field)) {
+      setState(() => _fieldErrors = {..._fieldErrors}..remove(field));
+    }
+  }
+
+  /// Shows [errors] and brings the first one on screen: the Save button is
+  /// at the bottom and the field may be far above it.
+  void _showFieldErrors(Map<String, String> errors) {
+    setState(() => _fieldErrors = errors);
+    final first = _fieldKeys.entries
+        .where((entry) => errors.containsKey(entry.key))
+        .map((entry) => entry.value.currentContext)
+        .whereType<BuildContext>()
+        .firstOrNull;
+    if (first != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (first.mounted) {
+          Scrollable.ensureVisible(
+            first,
+            duration: const Duration(milliseconds: 300),
+            alignment: 0.2,
+          );
+        }
+      });
+    }
+  }
+
   /// The page reads first and edits on request, like the web profile: the
   /// fields stay visible but locked until "Edit Profile" is pressed.
   bool _editing = false;
@@ -4059,6 +4169,7 @@ class _ProfileFormState extends State<_ProfileForm> {
         ..clear()
         ..addAll(profile.availabilityWindows);
       _photoPath = null;
+      _fieldErrors = {};
       _editing = false;
     });
   }
@@ -4069,11 +4180,45 @@ class _ProfileFormState extends State<_ProfileForm> {
       _message('Select your exact Tayabas location on the map.');
       return;
     }
-    if ((double.tryParse(_hourly.text) ?? 0) <= 0 &&
-        (double.tryParse(_daily.text) ?? 0) <= 0) {
-      _message('Enter an hourly or daily service rate.');
+    final errors = <String, String>{};
+    if (_firstName.text.trim().isEmpty) {
+      errors['first'] = 'Enter your first name.';
+    }
+    if (_lastName.text.trim().isEmpty) errors['last'] = 'Enter your last name.';
+    if (!isValidEmailAddress(_email.text)) {
+      errors['email'] =
+          'Enter a complete email address, e.g. juan@example.com.';
+    }
+    if (_emailChanged && _emailPassword.text.isEmpty) {
+      errors['emailPassword'] =
+          'Enter your current password to change your email.';
+    }
+    if (!isValidMobileNumber(_phone.text)) errors['phone'] = phoneFormatMessage;
+    final hourlyError = rateProblem(_hourly.text, max: maxHourlyRate);
+    final dailyError = rateProblem(_daily.text, max: maxDailyRate);
+    if (hourlyError != null) errors['hourly'] = hourlyError;
+    if (dailyError != null) errors['daily'] = dailyError;
+    if (hourlyError == null &&
+        dailyError == null &&
+        (double.tryParse(_hourly.text.trim()) ?? 0) <= 0 &&
+        (double.tryParse(_daily.text.trim()) ?? 0) <= 0) {
+      errors['hourly'] = 'Enter an hourly or daily rate.';
+    }
+    final years = int.tryParse(
+      _experience.text.trim().isEmpty ? '0' : _experience.text.trim(),
+    );
+    if (years == null) {
+      errors['years'] = 'Enter years of experience as a whole number.';
+    } else if (years < 0) {
+      errors['years'] = "Years of experience can't be negative.";
+    } else if (years > 60) {
+      errors['years'] = 'Enter 60 years or fewer.';
+    }
+    if (errors.isNotEmpty) {
+      _showFieldErrors(errors);
       return;
     }
+    setState(() => _fieldErrors = {});
     // "Other" is never saved as a skill (an older profile may still hold it).
     final skills = resolveWorkerSkills(_skills, '');
     if (skills.isEmpty) {
@@ -4082,10 +4227,6 @@ class _ProfileFormState extends State<_ProfileForm> {
     }
     if (_availabilityWindows.any((item) => item.startTime == item.endTime)) {
       _message('Availability start and end time must be different.');
-      return;
-    }
-    if (_emailChanged && _emailPassword.text.isEmpty) {
-      _message('Enter your current password to change your email.');
       return;
     }
     setState(() => _saving = true);
@@ -4099,7 +4240,7 @@ class _ProfileFormState extends State<_ProfileForm> {
         'bio': _bio.text.trim(),
         'hourly_rate': _hourly.text.trim(),
         'daily_rate': _daily.text.trim(),
-        'years_experience': int.tryParse(_experience.text) ?? 0,
+        'years_experience': years,
         'location_label': _location.text.trim(),
         'latitude': _coordinateForApi(_profilePin!.latitude),
         'longitude': _coordinateForApi(_profilePin!.longitude),
@@ -4119,7 +4260,27 @@ class _ProfileFormState extends State<_ProfileForm> {
       }
       widget.onSaved();
     } catch (error) {
-      if (mounted) _message(friendlyApiError(error));
+      if (!mounted) return;
+      final fieldErrors = error is ApiException
+          ? serverFieldErrors(error.data, const {
+              'first_name': 'first',
+              'last_name': 'last',
+              'email': 'email',
+              'current_password': 'emailPassword',
+              'phone': 'phone',
+              'location_label': 'street',
+              'bio': 'bio',
+              'hourly_rate': 'hourly',
+              'daily_rate': 'daily',
+              'service_rate': 'hourly',
+              'years_experience': 'years',
+            })
+          : const <String, String>{};
+      if (fieldErrors.isNotEmpty) {
+        _showFieldErrors(fieldErrors);
+      } else {
+        _message(friendlyApiError(error));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -4541,38 +4702,58 @@ class _ProfileFormState extends State<_ProfileForm> {
                   const SizedBox(height: 18),
                 ],
                 _ProfileField(
+                  key: _fieldKeys['first'],
                   label: 'First Name',
                   controller: _firstName,
                   enabled: _editing,
+                  errorText: _fieldErrors['first'],
+                  onChanged: (_) => _clearFieldError('first'),
                 ),
                 _ProfileField(
+                  key: _fieldKeys['last'],
                   label: 'Last Name',
                   controller: _lastName,
                   enabled: _editing,
+                  errorText: _fieldErrors['last'],
+                  onChanged: (_) => _clearFieldError('last'),
                 ),
                 _ProfileField(
+                  key: _fieldKeys['email'],
                   label: 'Email',
                   controller: _email,
                   enabled: _editing,
                   keyboardType: TextInputType.emailAddress,
-                  onChanged: (_) => setState(() {}),
+                  errorText: _fieldErrors['email'],
+                  onChanged: (_) => setState(
+                    () => _fieldErrors = {..._fieldErrors}..remove('email'),
+                  ),
                 ),
                 if (_editing && _emailChanged)
                   _ProfileField(
+                    key: _fieldKeys['emailPassword'],
                     label: 'Current password (needed to change your email)',
                     controller: _emailPassword,
                     enabled: true,
                     obscureText: true,
+                    errorText: _fieldErrors['emailPassword'],
+                    onChanged: (_) => _clearFieldError('emailPassword'),
                   ),
                 _ProfileField(
+                  key: _fieldKeys['phone'],
                   label: 'Phone Number',
                   controller: _phone,
                   enabled: _editing,
+                  keyboardType: TextInputType.phone,
+                  errorText: _fieldErrors['phone'],
+                  onChanged: (_) => _clearFieldError('phone'),
                 ),
                 _ProfileField(
+                  key: _fieldKeys['street'],
                   label: 'Street / House No.',
                   controller: _location,
                   enabled: _editing,
+                  errorText: _fieldErrors['street'],
+                  onChanged: (_) => _clearFieldError('street'),
                 ),
                 if (_editing) ...[
                   const _FieldLabel('Pin your exact location'),
@@ -4581,8 +4762,18 @@ class _ProfileFormState extends State<_ProfileForm> {
                     borderRadius: BorderRadius.circular(10),
                     child: SizedBox(
                       height: 220,
+                      // One finger scrolls the page: with every gesture on,
+                      // a swipe over the map moved it instead and the form
+                      // stopped scrolling (mobile worker audit, 2026-11-23).
+                      // Two fingers move or zoom; a tap still pins.
                       child: FlutterMap(
                         options: MapOptions(
+                          interactionOptions: const InteractionOptions(
+                            flags:
+                                InteractiveFlag.pinchZoom |
+                                InteractiveFlag.pinchMove |
+                                InteractiveFlag.doubleTapZoom,
+                          ),
                           initialCenter:
                               _profilePin ?? const LatLng(14.0253, 121.5929),
                           initialZoom: 14,
@@ -4609,6 +4800,16 @@ class _ProfileFormState extends State<_ProfileForm> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Tap the map to place the pin. Use two fingers to move or '
+                    'zoom it.',
+                    style: TextStyle(
+                      color: GawaGoColors.textMuted,
+                      fontSize: 12.5,
+                      height: 1.35,
+                    ),
+                  ),
                   const SizedBox(height: 16),
                 ],
               ],
@@ -4621,38 +4822,54 @@ class _ProfileFormState extends State<_ProfileForm> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _ProfileField(
+                  key: _fieldKeys['bio'],
                   label: 'Bio',
                   controller: _bio,
                   enabled: _editing,
                   lines: 3,
+                  errorText: _fieldErrors['bio'],
+                  onChanged: (_) => _clearFieldError('bio'),
                 ),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: _ProfileField(
+                        key: _fieldKeys['hourly'],
                         label: 'Hourly Rate',
                         controller: _hourly,
                         enabled: _editing,
-                        keyboardType: TextInputType.number,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        errorText: _fieldErrors['hourly'],
+                        onChanged: (_) => _clearFieldError('hourly'),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: _ProfileField(
+                        key: _fieldKeys['daily'],
                         label: 'Daily Rate',
                         controller: _daily,
                         enabled: _editing,
-                        keyboardType: TextInputType.number,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        errorText: _fieldErrors['daily'],
+                        onChanged: (_) => _clearFieldError('daily'),
                       ),
                     ),
                   ],
                 ),
                 _ProfileField(
+                  key: _fieldKeys['years'],
                   label: 'Years of Experience',
                   controller: _experience,
                   enabled: _editing,
                   keyboardType: TextInputType.number,
+                  errorText: _fieldErrors['years'],
+                  onChanged: (_) => _clearFieldError('years'),
                 ),
                 const _FieldLabel('Skill categories used for matching'),
                 const SizedBox(height: 8),
@@ -5018,6 +5235,7 @@ class _ProfileFormState extends State<_ProfileForm> {
 /// ones so the page does not jump when editing starts.
 class _ProfileField extends StatelessWidget {
   const _ProfileField({
+    super.key,
     required this.label,
     required this.controller,
     required this.enabled,
@@ -5025,6 +5243,7 @@ class _ProfileField extends StatelessWidget {
     this.keyboardType,
     this.obscureText = false,
     this.onChanged,
+    this.errorText,
   });
 
   final String label;
@@ -5034,6 +5253,10 @@ class _ProfileField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool obscureText;
   final ValueChanged<String>? onChanged;
+
+  /// Shown under the field: a bad phone number only came back as a passing
+  /// SnackBar (mobile worker audit, 2026-11-23).
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
@@ -5066,6 +5289,8 @@ class _ProfileField extends StatelessWidget {
             ),
             decoration: InputDecoration(
               isDense: true,
+              errorText: errorText,
+              errorMaxLines: 3,
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 14,
                 vertical: 14,
@@ -5088,6 +5313,17 @@ class _ProfileField extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
                 borderSide: const BorderSide(
                   color: GawaGoColors.primary,
+                  width: 1.4,
+                ),
+              ),
+              errorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: GawaGoColors.danger),
+              ),
+              focusedErrorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(
+                  color: GawaGoColors.danger,
                   width: 1.4,
                 ),
               ),
@@ -5134,6 +5370,19 @@ class _CertificationDialogState extends State<_CertificationDialog> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // A problem the worker has fixed stops showing: "Enter the certificate
+    // name." stayed after the name was typed (mobile worker audit,
+    // 2026-11-23).
+    _name.addListener(_clearError);
+  }
+
+  void _clearError() {
+    if (_error != null) setState(() => _error = null);
+  }
+
+  @override
   void dispose() {
     _name.dispose();
     _issuer.dispose();
@@ -5146,7 +5395,12 @@ class _CertificationDialogState extends State<_CertificationDialog> {
       extensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
     );
     final file = await openFile(acceptedTypeGroups: [group]);
-    if (file != null && mounted) setState(() => _filePath = file.path);
+    if (file != null && mounted) {
+      setState(() {
+        _filePath = file.path;
+        _error = null;
+      });
+    }
   }
 
   Future<void> _pickDate({required bool expiry}) async {
@@ -5170,6 +5424,7 @@ class _CertificationDialogState extends State<_CertificationDialog> {
     );
     if (picked == null || !mounted) return;
     setState(() {
+      _error = null;
       if (expiry) {
         _expiryDate = picked;
       } else {
@@ -5327,6 +5582,17 @@ class _WorkSampleDialogState extends State<_WorkSampleDialog> {
   bool get _isEdit => widget.existing != null;
 
   @override
+  void initState() {
+    super.initState();
+    // As in the certificate dialog: a fixed problem stops showing.
+    _title.addListener(_clearError);
+  }
+
+  void _clearError() {
+    if (_error != null) setState(() => _error = null);
+  }
+
+  @override
   void dispose() {
     _title.dispose();
     _description.dispose();
@@ -5341,6 +5607,7 @@ class _WorkSampleDialogState extends State<_WorkSampleDialog> {
     final file = await openFile(acceptedTypeGroups: [group]);
     if (file == null || !mounted) return;
     setState(() {
+      _error = null;
       if (after) {
         _afterPath = file.path;
       } else {
@@ -5489,8 +5756,10 @@ class _WorkerProfileSummary extends StatelessWidget {
             padding: EdgeInsets.symmetric(vertical: 18),
             child: Divider(height: 1, color: GawaGoColors.border),
           ),
+          // The whole location (barangay and street), so not "Barangay"
+          // (mobile worker audit, 2026-11-23).
           _SummaryFact(
-            label: 'Barangay',
+            label: 'Location',
             value: profile.locationLabel.isEmpty
                 ? 'Not set'
                 : profile.locationLabel,
@@ -5651,6 +5920,7 @@ class _WorkerNotifications extends StatefulWidget {
     required this.onOpenJob,
     required this.onOpenReviews,
     required this.onOpenMyJobs,
+    required this.onOpenMyReports,
     required this.onToolbarChanged,
     required this.onNotificationsChanged,
   });
@@ -5663,6 +5933,9 @@ class _WorkerNotifications extends StatefulWidget {
 
   /// "Job marked done": the household is rated from My Jobs.
   final VoidCallback onOpenMyJobs;
+
+  /// A complaint update: My Complaints shows its status and resolution.
+  final VoidCallback onOpenMyReports;
   final VoidCallback onToolbarChanged;
   final VoidCallback onNotificationsChanged;
 
@@ -5727,6 +6000,13 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
       _reload();
       return;
     }
+    // A complaint update opened a bare dialog without the resolution
+    // (mobile worker audit, 2026-11-23).
+    if (item.actionType == 'complaint') {
+      widget.onOpenMyReports();
+      _reload();
+      return;
+    }
     final jobId = item.targetJobId;
     if (jobId != null) {
       widget.onOpenJob(jobId);
@@ -5776,13 +6056,16 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
                       ),
                     ),
                     const SizedBox(height: 6),
+                    // Light on the dark green header: the title was ink on
+                    // cardGreen and all but invisible (mobile worker audit,
+                    // 2026-11-23).
                     Text(
                       job?.title ?? item.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontFamily: GawaGoColors.fontHeading,
-                        color: GawaGoColors.ink,
+                        color: GawaGoColors.cream,
                         fontSize: 24,
                         fontWeight: FontWeight.w700,
                         height: 1.05,
@@ -5795,7 +6078,7 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
                           ? 'A household wants to hire you for this job.'
                           : item.message,
                       style: const TextStyle(
-                        color: GawaGoColors.textMuted,
+                        color: GawaGoColors.mutedText,
                         height: 1.3,
                         letterSpacing: 0,
                       ),
@@ -5814,42 +6097,64 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
                       : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 10,
-                              children: [
-                                SizedBox(
-                                  width: 260,
-                                  child: _HireRequestFact(
-                                    label: 'Household',
-                                    value: job.householdName.isEmpty
-                                        ? job.householdUsername
-                                        : job.householdName,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 260,
-                                  child: _HireRequestFact(
-                                    label: 'Rate',
-                                    value:
-                                        'PHP ${job.serviceRate.toStringAsFixed(2)} / ${job.rateTypeLabel}',
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 260,
-                                  child: _HireRequestFact(
-                                    label: 'Schedule',
-                                    value: _scheduleLabel(job.schedule),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 260,
-                                  child: _HireRequestFact(
-                                    label: 'Distance',
-                                    value: _distanceLabel(job.distanceKm),
-                                  ),
-                                ),
-                              ],
+                            // Two even columns when there is room, one when
+                            // not: fixed 260 px boxes left a ragged column
+                            // on a phone. The dates were missing, so a
+                            // worker accepted without knowing when (mobile
+                            // worker audit, 2026-11-23).
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                // Shown only once the job loaded.
+                                final shown = job!;
+                                final width = constraints.maxWidth >= 480
+                                    ? (constraints.maxWidth - 10) / 2
+                                    : constraints.maxWidth;
+                                // Each fact keeps its own 8 px bottom
+                                // margin, like the ones below.
+                                return Wrap(
+                                  spacing: 10,
+                                  children: [
+                                    for (final fact in [
+                                      (
+                                        'Household',
+                                        shown.householdName.isEmpty
+                                            ? shown.householdUsername
+                                            : shown.householdName,
+                                      ),
+                                      (
+                                        'When',
+                                        formatJobPeriod(
+                                          shown.jobStartDate,
+                                          shown.jobEndDate,
+                                        ),
+                                      ),
+                                      (
+                                        'Rate',
+                                        formatJobRate(
+                                          shown.serviceRate,
+                                          shown.rateTypeLabel,
+                                        ),
+                                      ),
+                                      (
+                                        'Schedule',
+                                        _scheduleLabel(
+                                          shown.scheduleType.isNotEmpty
+                                              ? shown.scheduleType
+                                              : shown.schedule,
+                                        ),
+                                      ),
+                                      ('Distance', _jobDistanceText(shown)),
+                                    ])
+                                      SizedBox(
+                                        width: width,
+                                        child: _HireRequestFact(
+                                          label: fact.$1,
+                                          value: fact.$2,
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
                             ),
                             const SizedBox(height: 10),
                             _HireRequestFact(
@@ -6004,10 +6309,9 @@ class _WorkerNotificationsState extends State<_WorkerNotifications> {
           children: [
             Text(item.message),
             const SizedBox(height: 12),
-            if (item.actorUsername.isNotEmpty)
-              Text('From: @${item.actorUsername}'),
-            if (item.applicationId != null)
-              Text('Application: #${item.applicationId}'),
+            // No sender handle or internal application number: an admin's
+            // username showed on certificate decisions (mobile worker audit,
+            // 2026-11-23).
             Text(item.displayDate),
           ],
         ),
@@ -6604,6 +6908,13 @@ String _jobDate(String value) {
 String _distanceLabel(double? value) => value == null
     ? 'Distance unavailable'
     : '${value.toStringAsFixed(1)} km away';
+
+/// The backend's distance wording ("Within 1 km", "2.0 km away") when it
+/// sent one, so a job reads the same on its card, its page and the hire
+/// request (mobile worker audit, 2026-11-23).
+String _jobDistanceText(WorkerJob job) => job.distanceLabel.isNotEmpty
+    ? job.distanceLabel
+    : _distanceLabel(job.distanceKm);
 
 String _clockLabel(DateTime value) {
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;

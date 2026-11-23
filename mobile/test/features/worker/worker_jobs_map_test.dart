@@ -93,6 +93,9 @@ void main() {
     expect(find.text('Repairman'), findsOneWidget);
     expect(find.text('Other Job'), findsOneWidget);
 
+    // The panel scrolls; its height is capped at 42% of the screen.
+    await tester.ensureVisible(find.text('View Details'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('View Details'));
     expect(viewed?.title, 'Repairman');
 

@@ -91,13 +91,37 @@ class WorkerRepository {
     int? punctuality,
     int? communication,
     int? professionalism,
+  }) => rateHousehold(
+    householdUsername: job.householdUsername,
+    jobId: job.id,
+    jobTitle: job.title,
+    rating: rating,
+    feedback: feedback,
+    qualityOfWork: qualityOfWork,
+    punctuality: punctuality,
+    communication: communication,
+    professionalism: professionalism,
+  );
+
+  /// The same review from a My Jobs card, which holds the application rather
+  /// than the job.
+  Future<void> rateHousehold({
+    required String householdUsername,
+    required int jobId,
+    required String jobTitle,
+    required double rating,
+    required String feedback,
+    int? qualityOfWork,
+    int? punctuality,
+    int? communication,
+    int? professionalism,
   }) async {
     await GawaGoApi.post(
       '/reviews/',
       body: {
-        'target_username': job.householdUsername,
-        'job_id': job.id,
-        'job_title': job.title,
+        'target_username': householdUsername,
+        'job_id': jobId,
+        'job_title': jobTitle,
         'rating': rating,
         'feedback': feedback,
         'quality_of_work': ?qualityOfWork,

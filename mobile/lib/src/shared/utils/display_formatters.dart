@@ -116,6 +116,38 @@ String formatClockTime(DateTime date) {
   return '$hour:$minute ${date.hour >= 12 ? 'PM' : 'AM'}';
 }
 
+/// The average of [ratings] to one decimal place, halves rounding up -- the
+/// backend's round_rating, so a page's summary matches the profile figure.
+/// Each rating has one decimal already; summing them as whole tenths keeps
+/// 4.35 from rounding down as the double 4.3499... (mobile worker audit,
+/// 2026-11-23).
+double? averageRating(Iterable<double> ratings) {
+  final tenths = ratings.map((value) => (value * 10).round()).toList();
+  if (tenths.isEmpty) return null;
+  final total = tenths.fold<int>(0, (sum, value) => sum + value);
+  return ((2 * total + tenths.length) ~/ (2 * tenths.length)) / 10;
+}
+
+/// "4.3": a rating to one decimal place, halves rounding up like the
+/// backend (the small nudge keeps 4.35, stored as 4.3499..., at 4.4).
+String formatRating(double value) =>
+    ((value * 10 + 1e-9).round() / 10).toStringAsFixed(1);
+
+/// What a rate is per, for "PHP 650.00 / day": "day", "hour", or "job" for a
+/// fixed rate, from the backend's rate type label ("Per Day", "Per Hour",
+/// "Fixed Rate") or value ("per_day"). Screens wrote "/per day",
+/// "/ PER DAY" and "/ Per Day" (mobile worker audit, 2026-11-23).
+String rateUnit(String rateType) {
+  final value = rateType.toLowerCase();
+  if (value.contains('hour')) return 'hour';
+  if (value.contains('fixed')) return 'job';
+  return 'day';
+}
+
+/// "PHP 650.00 / day", the same wording as the web's formatRate.
+String formatJobRate(double amount, String rateType) =>
+    'PHP ${amount.toStringAsFixed(2)} / ${rateUnit(rateType)}';
+
 String formatJobDate(String? value, {String fallback = 'Not set'}) {
   final normalized = (value ?? '').trim();
   if (normalized.isEmpty) return fallback;

@@ -7,11 +7,15 @@ class Notification(models.Model):
     ACTION_HIRE_REQUEST = "hire_request"
     ACTION_JOB_DETAIL = "job_detail"
     ACTION_REVIEW = "review"
+    # Opens My Complaints, where the filer reads the resolution (mobile worker
+    # audit, 2026-11-23).
+    ACTION_COMPLAINT = "complaint"
     ACTION_CHOICES = [
         (ACTION_NONE, "No action"),
         (ACTION_HIRE_REQUEST, "Hire request"),
         (ACTION_JOB_DETAIL, "Job detail"),
         (ACTION_REVIEW, "Review"),
+        (ACTION_COMPLAINT, "Complaint"),
     ]
 
     TYPE_APPLICATION = "application"

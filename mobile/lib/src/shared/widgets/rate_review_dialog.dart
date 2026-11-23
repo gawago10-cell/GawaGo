@@ -23,7 +23,9 @@ typedef RateReviewSubmit =
       int? professionalism,
     });
 
-/// "Rate & Review" -- always tied to one hired worker on one job. Shown as a
+/// "Rate & Review" -- always tied to one person on one finished job: a
+/// household rating its hired worker, or the worker rating the household
+/// (the "worker" names below are the person being rated). Shown as a
 /// modal, matching web's dashboard rating card, so the dashboard, My Jobs
 /// history, and an applicant's detail page can all open the exact same UI
 /// instead of three forked review forms.
@@ -35,6 +37,7 @@ Future<bool> showRateReviewDialog({
   required String workerInitial,
   required bool workerVerified,
   required RateReviewSubmit onSubmit,
+  String feedbackHint = "Share details about the worker's performance...",
 }) async {
   final result = await showDialog<bool>(
     context: context,
@@ -43,6 +46,7 @@ Future<bool> showRateReviewDialog({
       workerInitial: workerInitial,
       workerVerified: workerVerified,
       onSubmit: onSubmit,
+      feedbackHint: feedbackHint,
     ),
   );
   return result ?? false;
@@ -54,12 +58,17 @@ class _RateReviewDialog extends StatefulWidget {
     required this.workerInitial,
     required this.workerVerified,
     required this.onSubmit,
+    required this.feedbackHint,
   });
 
   final String workerName;
   final String workerInitial;
   final bool workerVerified;
   final RateReviewSubmit onSubmit;
+
+  /// The feedback box's hint: workers rate households with the same dialog
+  /// (mobile worker audit, 2026-11-23).
+  final String feedbackHint;
 
   @override
   State<_RateReviewDialog> createState() => _RateReviewDialogState();
@@ -261,8 +270,7 @@ class _RateReviewDialogState extends State<_RateReviewDialog> {
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: GawaGoColors.input,
-                        hintText:
-                            "Share details about the worker's performance...",
+                        hintText: widget.feedbackHint,
                         hintStyle: const TextStyle(
                           color: GawaGoColors.textMuted,
                           fontSize: 13,

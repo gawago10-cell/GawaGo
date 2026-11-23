@@ -1035,6 +1035,9 @@ class _SignupFormPanelState extends State<_SignupFormPanel> {
               'first_name': SignupField.firstName,
               'last_name': SignupField.lastName,
               'skills': SignupField.skills,
+              'hourly_rate': SignupField.rate,
+              'daily_rate': SignupField.rate,
+              'service_rate': SignupField.rate,
             })
           : const <String, String>{};
       if (fieldErrors.isNotEmpty) {

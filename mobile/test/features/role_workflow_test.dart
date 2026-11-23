@@ -233,9 +233,11 @@ void main() {
     expect(find.text('3 DAYS'), findsOneWidget);
     expect(find.text('0/2 HIRED'), findsOneWidget);
 
-    // A hire request routes the worker back where they came from.
-    await scrollTo('Back to Notifications');
-    expect(find.text('Back to Notifications'), findsOneWidget);
+    // Back names where the page was opened from -- here Find Jobs, even with
+    // a hire request waiting (mobile worker audit, 2026-11-23).
+    await scrollTo('Back to Find Jobs');
+    expect(find.text('Back to Find Jobs'), findsOneWidget);
+    expect(find.text('Back to Notifications'), findsNothing);
 
     await scrollTo('Distance & Locations');
     expect(find.text('Distance & Locations'), findsOneWidget);
@@ -366,7 +368,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Get Verified'), findsNothing);
-    expect(find.text('Reviews & Feedback'), findsNothing);
+    // Reviews has its own menu entry now: only a review notification reached
+    // it before (mobile worker audit, 2026-11-23).
+    expect(
+      find.descendant(of: drawer, matching: find.text('Reviews & Feedback')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('unverified household sees the posting restriction', (

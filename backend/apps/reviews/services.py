@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from datetime import timedelta
 
 from django.core.cache import cache
@@ -12,6 +12,17 @@ from apps.reviews.models import Review
 
 DEFAULT_NO_FEEDBACK_RATING = Decimal("3.5")
 DEFAULT_NO_FEEDBACK_AFTER_HOURS = 72
+RATING_STEP = Decimal("0.1")
+
+
+def round_rating(value):
+    """A rating to one decimal place, halves rounding up (4.25 -> 4.3,
+    4.35 -> 4.4), or None. Every rating on screen goes through this, so one
+    review can't read 4.3 in one place and 4.2 in another (mobile worker
+    audit, 2026-11-23)."""
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(RATING_STEP, rounding=ROUND_HALF_UP)
 
 
 def effective_review_rating(review) -> Decimal:
@@ -26,8 +37,8 @@ def effective_review_rating(review) -> Decimal:
     metrics = [review.quality_of_work, review.punctuality, review.communication, review.professionalism]
     valid_metrics = [m for m in metrics if m is not None]
     if not valid_metrics:
-        return review.rating
-    return Decimal(sum(valid_metrics)) / Decimal(len(valid_metrics))
+        return round_rating(review.rating)
+    return round_rating(Decimal(sum(valid_metrics)) / Decimal(len(valid_metrics)))
 
 
 def recalculate_user_rating(user) -> None:
@@ -55,7 +66,10 @@ def recalculate_user_rating(user) -> None:
         profile.rating_count = 0
     else:
         total_rating = sum(effective_ratings, Decimal("0.0"))
-        profile.average_rating = total_rating / rating_count
+        # Stored at one decimal like each review, so the profile's figure is
+        # the one every screen shows (it read 4.38 beside reviews of 4.3 and
+        # 4.5).
+        profile.average_rating = round_rating(total_rating / rating_count)
         profile.rating_count = rating_count
     profile.save(update_fields=["average_rating", "rating_count"])
 

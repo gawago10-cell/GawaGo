@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/gawago_colors.dart';
+import '../utils/display_formatters.dart';
 
 /// A white card with the green title bar the web profile pages use, and an
 /// optional action button on the right of that bar.
@@ -237,7 +238,7 @@ class ProfileSkillTile extends StatelessWidget {
                       SoftGreenPill(label: proficiencyLabel),
                     if (averageRating != null)
                       Text(
-                        '${averageRating!.toStringAsFixed(2)} from $ratingCount '
+                        '${formatRating(averageRating!)} from $ratingCount '
                         '${ratingCount == 1 ? 'rating' : 'ratings'}',
                         style: const TextStyle(
                           color: GawaGoColors.textMuted,
