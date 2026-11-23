@@ -14,6 +14,13 @@ cd "$(dirname "$0")/../backend"
 python manage.py collectstatic --noinput
 python manage.py migrate --noinput
 
+# The defense demo (seed_defense_demo), only when SEED_DEFENSE_DEMO=True is
+# set on the service; DEMO_PASSWORD holds the demo accounts' password. A
+# failed seed is reported but never stops the site from starting.
+if [ "${SEED_DEFENSE_DEMO:-}" = "True" ]; then
+    python manage.py seed_defense_demo ${SEED_DEFENSE_DEMO_ARGS:-} || echo "render_start: demo seed failed" >&2
+fi
+
 python manage.py qcluster &
 QCLUSTER_PID=$!
 
